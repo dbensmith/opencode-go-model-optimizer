@@ -8,17 +8,17 @@ import sys
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="opencode-go-model-optimizer",
-        description="Dynamic model tiering, Pareto efficiency ranker, and GSD selector for OpenCode Go",
+        description="Dynamic model tiering and Pareto efficiency optimizer for OpenCode Go",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # select subcommand
-    select_parser = subparsers.add_parser("select", help="Select models for tier mapping")
+    select_parser = subparsers.add_parser("select", help="Select optimal models across capability tiers")
     select_parser.add_argument(
         "--format",
-        choices=["gsd", "json", "compact"],
-        default="gsd",
-        help="Output format (default: gsd)",
+        choices=["json", "table", "compact"],
+        default="json",
+        help="Output format (default: json)",
     )
     select_parser.add_argument(
         "--mode",
@@ -33,7 +33,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     # rank subcommand
-    rank_parser = subparsers.add_parser("rank", help="Rank all active models")
+    rank_parser = subparsers.add_parser("rank", help="Rank all active models in the catalog")
     rank_parser.add_argument(
         "--table",
         action="store_true",

@@ -4,9 +4,9 @@ from opencode_go_model_optimizer.cli import main, parse_args
 
 
 def test_parse_args_select():
-    args = parse_args(["select", "--format", "gsd", "--mode", "allowance"])
+    args = parse_args(["select", "--format", "json", "--mode", "allowance"])
     assert args.command == "select"
-    assert args.format == "gsd"
+    assert args.format == "json"
     assert args.mode == "allowance"
 
 

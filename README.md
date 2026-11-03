@@ -1,16 +1,14 @@
 # OpenCode Go Model Optimizer (`opencode-go-model-optimizer`)
 
-Dynamic model tiering, Pareto efficiency ranker, and GSD selector for OpenCode Go ($10/mo tier).
+Dynamic model tiering and Pareto efficiency optimizer for OpenCode Go ($10/mo subscription).
 
-Available as a standalone Python CLI via `pipx` / `uvx` and consumable by configuration frameworks (Open GSD, Chezmoi dotfiles, Paseo agent profiles, and Ansible control nodes).
+Evaluates the active OpenCode Go model catalog and computes optimal model assignments across industry-standard capability tiers based on live pricing regimes, monthly allowances, and benchmark intelligence metrics.
 
 ---
 
 ## Overview & Architecture
 
-`opencode-go-model-optimizer` unifies two complementary capabilities:
-1. **Mathematical Pareto Efficiency & Quality Ranking:** Multi-objective optimization (Quality vs. Monthly Burn) with natural clustering across 4 tiers (Opus, Sonnet, Haiku, Free).
-2. **Operational Tier Selection:** Fast, deterministic model selection for Open GSD and agent profile overrides based on monthly allowance ceilings and release recency.
+`opencode-go-model-optimizer` provides a clean, decoupled engine that evaluates the OpenCode Go catalog without being bound to any specific consumer framework or agent runner.
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -26,21 +24,29 @@ Available as a standalone Python CLI via `pipx` / `uvx` and consumable by config
 │                                                       │                │
 │                                                       ▼                │
 │                                         ┌───────────────────────────┐  │
-│                                         │      Output Adapters      │  │
-│                                         │ - Full Report (Markdown)  │  │
-│                                         │ - GSD opencode-go-model   │  │
-│                                         │ - Raw JSON Snapshot       │  │
+│                                         │      Standard Outputs     │  │
+│                                         │ - Structured JSON Schema  │  │
+│                                         │ - Markdown / ASCII Table  │  │
+│                                         │ - Raw Ingested Snapshot   │  │
 │                                         └───────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Principles
+### Industry-Standard Model Tiers
 
-- **Separation of Concerns:** Core model evaluation is cleanly isolated from local process supervisors or dotfiles tools. Downstream hooks (e.g. `chezmoi apply`, `paseo daemon restart`) consume output via standard formats.
-- **Dual-Mode Operation:**
-  - **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Coding Indices) against monthly turn burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks breaks into 4 tiers.
-  - **Allowance Mode (`--mode allowance`):** Zero-API-key mode ranking paid models by maximum monthly allowance from the published Go plan tables and free models by recency.
-- **Rigor & Determinism:** Offline fixtures for all network inputs, zero silent degradation, and deterministic tie-breaking (release date &rarr; context window &rarr; model ID).
+Rather than proprietary or vendor-specific labels, models are classified into standard capability tiers:
+
+- **`flagship`**: Top-frontier reasoning and complex task capability.
+- **`balanced`**: High-capability, cost-effective daily workhorse.
+- **`fast`**: High-throughput, low-latency, lightweight models.
+- **`free`**: Active zero-cost models (promos, contributor tiers, or unmetered).
+
+Consumers (such as Chezmoi dotfiles, Open GSD, Paseo, or custom agent orchestrators) map these standard tiers to their own internal configs.
+
+### Operating Modes
+
+- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Coding Indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks natural breaks.
+- **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
 
 ---
 
@@ -52,22 +58,37 @@ pipx install opencode-go-model-optimizer
 opencode-go-model-optimizer --help
 ```
 
-### Via `uvx` (Ephemerally)
+### Via `uvx` (Ephemeral run)
 ```bash
-uvx opencode-go-model-optimizer select --format gsd
+uvx opencode-go-model-optimizer select --format json
 ```
 
 ### Commands
 
-- **`select`**: Selects operational models for tier mappings.
+- **`select`**: Selects and outputs optimal models for each capability tier:
   ```bash
-  opencode-go-model-optimizer select --format gsd --output dot_gsd/opencode-go-model.json
+  opencode-go-model-optimizer select --format json
   ```
-- **`rank`**: Generates full catalog ranking and tier assignments.
+  Example JSON output:
+  ```json
+  {
+    "tiers": {
+      "flagship": "opencode-go/qwen3.8-max",
+      "balanced": "opencode-go/deepseek-v4.1-flash",
+      "fast": "opencode-go/glm-5.3-flash",
+      "free": "opencode-go/iceman-contributor-free"
+    },
+    "evaluated_at": "2026-11-03T23:50:00Z",
+    "mode": "allowance"
+  }
+  ```
+
+- **`rank`**: Produces a full comparison table across all models in the catalog:
   ```bash
   opencode-go-model-optimizer rank --table
   ```
-- **`fetch`**: Captures an immutable normalized `snapshot.json` from live endpoints.
+
+- **`fetch`**: Captures a normalized, timestamped `snapshot.json` from upstream sources:
   ```bash
   opencode-go-model-optimizer fetch --out snapshot.json
   ```
