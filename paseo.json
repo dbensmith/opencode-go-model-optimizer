@@ -1,0 +1,21 @@
+{
+  "scripts": {
+    "test": {
+      "command": "uv run pytest"
+    },
+    "lint": {
+      "command": "uv run ruff check"
+    },
+    "format": {
+      "command": "uv run ruff format --check"
+    }
+  },
+  "metadataGeneration": {
+    "commitMessage": {
+      "instructions": "Use Conventional Commits with a scope. Format: type(scope): description."
+    },
+    "pullRequest": {
+      "instructions": "Use Conventional Commits with a scope. Lead with a one-paragraph summary. Include a Why and a Test Plan section."
+    }
+  }
+}
