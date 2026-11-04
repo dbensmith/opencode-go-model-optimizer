@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
@@ -48,10 +48,12 @@ def ssd(arr: Sequence[float]) -> float:
 
 def fisher_jenks_3_clusters(
     models: list[NormalizedModel],
+    key: Callable[[NormalizedModel], float] | None = None,
 ) -> tuple[list[NormalizedModel], list[NormalizedModel], list[NormalizedModel]]:
-    """1D Fisher-Jenks Natural Breaks into 3 clusters by AA Intelligence (WCSS minimization)."""
-    sorted_m = sorted(models, key=lambda x: x.aa_iq or 0.0, reverse=True)
-    qs = [x.aa_iq or 0.0 for x in sorted_m]
+    """1D Fisher-Jenks Natural Breaks into 3 clusters (WCSS minimization)."""
+    val_fn = key or (lambda x: x.aa_iq or 0.0)
+    sorted_m = sorted(models, key=val_fn, reverse=True)
+    qs = [val_fn(x) for x in sorted_m]
     n = len(qs)
 
     if n <= 1:
@@ -66,7 +68,7 @@ def fisher_jenks_3_clusters(
 
     for i in range(1, n - 1):
         for j in range(i + 1, n):
-            # Avoid splitting identical intelligence values
+            # Avoid splitting identical values
             if qs[i - 1] == qs[i] or qs[j - 1] == qs[j]:
                 continue
             wcss = ssd(qs[:i]) + ssd(qs[i:j]) + ssd(qs[j:])

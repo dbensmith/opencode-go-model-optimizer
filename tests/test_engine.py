@@ -137,9 +137,12 @@ def test_fisher_jenks_clustering():
 
 def test_pareto_evaluation():
     models = _get_fixture_models()
+    qwen = next(m for m in models if m.id == "qwen3.8-max")
+    deepseek = next(m for m in models if m.id == "deepseek-v4.1-flash")
+    qwen.aa_iq = 45.0
+    deepseek.aa_iq = 45.0
     evaluated = evaluate_pareto(models)
-    qwen = next(m for m in evaluated if m.id == "qwen3.8-max")
-    deepseek = next(m for m in evaluated if m.id == "deepseek-v4.1-flash")
+    assert len(evaluated) == len(models)
 
     assert qwen.composite_burn_pct is not None
     assert deepseek.composite_burn_pct is not None
@@ -172,6 +175,8 @@ def test_allocate_tiers_with_preferences_and_skips():
 
 def test_allocate_tiers_pareto():
     models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
     tiers = allocate_tiers_pareto(models)
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
     assert all(tiers.values())

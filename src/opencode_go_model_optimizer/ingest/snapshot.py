@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,43 +14,62 @@ from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
 from opencode_go_model_optimizer.ingest.docs import fetch_docs_mdx, norm_name, parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
 
-# Known reference benchmarks from Artificial Analysis (used as reference/fallback)
-KNOWN_AA_BENCHMARKS: dict[str, dict[str, Any]] = {
-    "kimi-k3.1-pro": {"iq": 55.0, "coding": None, "tps": 73.0},
-    "gemini-4-argon": {"iq": 53.0, "coding": 53.0, "tps": 79.1},
-    "muse-spark-1.3-contributor": {"iq": 48.0, "coding": None, "tps": 125.0},
-    "mimo-v2.6-pro": {"iq": 46.0, "coding": None, "tps": 55.0},
-    "grok-4.7": {"iq": 46.0, "coding": 47.0, "tps": 96.6},
-    "deepseek-v4.1-flash": {"iq": 45.0, "coding": 46.0, "tps": 195.0},
-    "glm-5.3": {"iq": 45.0, "coding": 49.0, "tps": 85.0},
-    "qwen3.8-max": {"iq": 45.0, "coding": None, "tps": 42.0},
-    "step-5-preview": {"iq": 44.0, "coding": None, "tps": 229.0},
-    "claude-haiku-5-5": {"iq": 43.0, "coding": None, "tps": 235.6},
-    "minimax-m3.1-flash": {"iq": 43.0, "coding": None, "tps": 96.0},
-    "glm-5.3-flash": {"iq": 42.0, "coding": None, "tps": 69.0},
-    "qwen3.8-flash": {"iq": 40.0, "coding": None, "tps": 52.0},
-    "mimo-v2.6-flash": {"iq": 38.0, "coding": None, "tps": 59.0},
-    "gpt-6-luna": {"iq": 38.0, "coding": None, "tps": 137.0},
-    "beam-free": {"iq": 30.0, "coding": 20.0, "tps": 337.0},
-    "hy3": {"iq": 25.0, "coding": None, "tps": 82.4},
-    "longcat-2.0": {"iq": 19.0, "coding": None, "tps": 76.8},
-}
+
+def fetch_aa_benchmarks(
+    api_key: str,
+    client: httpx.Client | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Fetch live benchmark metrics from Artificial Analysis API."""
+    close_client = False
+    if client is None:
+        client = httpx.Client(
+            timeout=10.0,
+            headers={"x-api-key": api_key, "User-Agent": "opencode-go-model-optimizer/0.1.0"},
+        )
+        close_client = True
+
+    try:
+        r = client.get("https://artificialanalysis.ai/api/v2/data/llms/models")
+        r.raise_for_status()
+        data = r.json()
+        models = data if isinstance(data, list) else data.get("data", [])
+        benchmarks: dict[str, dict[str, Any]] = {}
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            slug = item.get("slug") or item.get("id") or ""
+            evals = item.get("evaluations", {})
+            iq = evals.get("artificial_analysis_intelligence_index")
+            coding = evals.get("artificial_analysis_coding_index")
+            tps = item.get("median_output_tokens_per_second")
+            if slug:
+                benchmarks[slug] = {
+                    "iq": float(iq) if iq is not None else None,
+                    "coding": float(coding) if coding is not None else None,
+                    "tps": float(tps) if tps is not None else None,
+                }
+        return benchmarks
+    except (httpx.HTTPError, ValueError):
+        return {}
+    finally:
+        if close_client:
+            client.close()
 
 
 def merge_docs_pricing(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
+    aa_benchmarks: dict[str, dict[str, Any]] | None = None,
 ) -> list[NormalizedModel]:
     """Merge published monthly allowances and prices into catalog models."""
+    benchmarks = aa_benchmarks or {}
     for m in models:
-        # Match by normalized name or normalized id
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
 
         info = pricing.get(key_name) or pricing.get(key_id)
         if info:
             m.monthly_allowance = info["allowance"]
-            # If catalog had 0 cost or missing cost, backfill from docs
             if m.cost.output == 0.0 and info["output_cost"] > 0:
                 m.cost.output = info["output_cost"]
             if m.cost.input == 0.0 and info["input_cost"] > 0:
@@ -57,15 +77,14 @@ def merge_docs_pricing(
             if m.cost.cache_read == 0.0 and info["cached_read_cost"] > 0:
                 m.cost.cache_read = info["cached_read_cost"]
 
-        # Backfill reference AA metrics if available and not set
-        bench = KNOWN_AA_BENCHMARKS.get(m.id)
+        bench = benchmarks.get(m.id) or benchmarks.get(key_id)
         if bench:
             if m.aa_iq is None:
-                m.aa_iq = bench["iq"]
+                m.aa_iq = bench.get("iq")
             if m.aa_coding is None:
-                m.aa_coding = bench["coding"]
+                m.aa_coding = bench.get("coding")
             if m.speed_tps is None:
-                m.speed_tps = bench["tps"]
+                m.speed_tps = bench.get("tps")
 
     return models
 
@@ -74,11 +93,12 @@ def create_snapshot(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
     plan: str = "go",
+    aa_benchmarks: dict[str, dict[str, Any]] | None = None,
     source_catalogue: str = "live",
     source_docs: str = "live",
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
-    merged_models = merge_docs_pricing(models, pricing)
+    merged_models = merge_docs_pricing(models, pricing, aa_benchmarks=aa_benchmarks)
     now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     return Snapshot(
@@ -119,4 +139,10 @@ def fetch_and_build_snapshot(
     models = fetch_catalogue(client=client)
     docs_text = fetch_docs_mdx(client=client)
     pricing = parse_go_pricing(docs_text, plan=plan)
-    return create_snapshot(models, pricing, plan=plan)
+
+    aa_benchmarks = None
+    aa_key = os.environ.get("AA_API_KEY")
+    if aa_key:
+        aa_benchmarks = fetch_aa_benchmarks(aa_key, client=client)
+
+    return create_snapshot(models, pricing, plan=plan, aa_benchmarks=aa_benchmarks)

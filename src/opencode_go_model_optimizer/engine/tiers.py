@@ -9,47 +9,12 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
 
 
-def is_heavy_candidate(m: NormalizedModel) -> bool:
-    """Identify whether a model qualifies for the heavy reasoning tier."""
-    id_lower = m.id.lower()
-    name_lower = m.name.lower()
-
-    # Explicit heavy / max / pro reasoning indicators
-    if (
-        any(
-            k in id_lower or k in name_lower
-            for k in ["max", "pro", "ultra", "argon", "grok", "kimi-k3"]
-        )
-        and "flash" not in id_lower
-        and "lite" not in id_lower
-    ):
-        return True
-
-    # Higher pricing profile (output cost >= $2.00 or input cost >= $1.00)
-    return bool(m.cost.output >= 2.0 or m.cost.input >= 1.0)
-
-
-def is_light_candidate(m: NormalizedModel) -> bool:
-    """Identify whether a model qualifies for the light/high-throughput tier."""
-    id_lower = m.id.lower()
-    name_lower = m.name.lower()
-
-    if any(
-        k in id_lower or k in name_lower
-        for k in ["flash", "mini", "haiku", "luna", "lite", "small"]
-    ):
-        return True
-
-    # Low token price profile (output <= $0.60 and input <= $0.20)
-    return bool(m.cost.output <= 0.60 and m.cost.input <= 0.20)
-
-
 def allocate_tiers_allowance(
     models: list[NormalizedModel],
     preferred_tiers: dict[str, str] | None = None,
     skip_models: set[str] | None = None,
 ) -> dict[str, str]:
-    """Allocate models to tiers using allowance heuristic."""
+    """Allocate models to tiers using allowance heuristic and natural cost clustering."""
     preferred = preferred_tiers or {}
     skips = set(skip_models or set())
 
@@ -64,7 +29,6 @@ def allocate_tiers_allowance(
     for tier in STANDARD_TIERS:
         pref = preferred.get(tier)
         if pref:
-            # Check if preferred model is in models and active
             hit = next(
                 (m for m in models if (m.full_id == pref or m.id == pref) and m.status == "active"),
                 None,
@@ -91,76 +55,56 @@ def allocate_tiers_allowance(
         elif free_ranked:
             selected["free"] = free_ranked[0].full_id
 
-    # Heavy tier assignment
-    if "heavy" not in selected:
-        heavy_pick = next(
-            (
-                m
-                for m in paid_ranked
-                if is_heavy_candidate(m)
-                and m.id not in used_model_ids
-                and m.full_id not in used_model_ids
-            ),
-            None,
-        )
-        if heavy_pick:
-            selected["heavy"] = heavy_pick.full_id
-            used_model_ids.add(heavy_pick.id)
-            used_model_ids.add(heavy_pick.full_id)
+    # Cluster eligible paid models by output token cost into 3 natural tiers: heavy, balanced, light
+    eligible_paid = [
+        m for m in paid_ranked if m.id not in used_model_ids and m.full_id not in used_model_ids
+    ]
 
-    # Balanced tier assignment (daily driver: highest available allowance / workhorse)
-    if "balanced" not in selected:
-        balanced_pick = next(
-            (
-                m
-                for m in paid_ranked
-                if m.id not in used_model_ids and m.full_id not in used_model_ids
-            ),
-            None,
+    if eligible_paid:
+        c_heavy, c_balanced, c_light = fisher_jenks_3_clusters(
+            eligible_paid, key=lambda m: m.cost.output
         )
-        if balanced_pick:
-            selected["balanced"] = balanced_pick.full_id
-            used_model_ids.add(balanced_pick.id)
-            used_model_ids.add(balanced_pick.full_id)
 
-    # Light tier assignment (lightweight, high throughput)
-    if "light" not in selected:
-        light_pick = next(
-            (
-                m
-                for m in paid_ranked
-                if is_light_candidate(m)
-                and m.id not in used_model_ids
-                and m.full_id not in used_model_ids
-            ),
-            None,
-        )
-        if light_pick:
-            selected["light"] = light_pick.full_id
-            used_model_ids.add(light_pick.id)
-            used_model_ids.add(light_pick.full_id)
-        else:
-            # Fallback to next unused paid model
-            fallback = next(
-                (
-                    m
-                    for m in paid_ranked
-                    if m.id not in used_model_ids and m.full_id not in used_model_ids
-                ),
-                None,
-            )
-            if fallback:
-                selected["light"] = fallback.full_id
-                used_model_ids.add(fallback.id)
-                used_model_ids.add(fallback.full_id)
+        def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
+            cluster_ranked = rank_paid_models(cluster)
+            for m in cluster_ranked:
+                if m.id not in used_model_ids and m.full_id not in used_model_ids:
+                    return m
+            return cluster_ranked[0] if cluster_ranked else None
 
-    # Ensure all 4 tiers exist, even if fallback needed
+        if "heavy" not in selected and c_heavy:
+            m = pick_best(c_heavy)
+            if m:
+                selected["heavy"] = m.full_id
+                used_model_ids.add(m.id)
+                used_model_ids.add(m.full_id)
+
+        if "balanced" not in selected and c_balanced:
+            m = pick_best(c_balanced)
+            if m:
+                selected["balanced"] = m.full_id
+                used_model_ids.add(m.id)
+                used_model_ids.add(m.full_id)
+
+        if "light" not in selected and c_light:
+            m = pick_best(c_light)
+            if m:
+                selected["light"] = m.full_id
+                used_model_ids.add(m.id)
+                used_model_ids.add(m.full_id)
+
+    # Fallback to any remaining unused paid models
     for tier in STANDARD_TIERS:
         if tier not in selected:
             if tier == "free" and free_ranked:
                 selected["free"] = free_ranked[0].full_id
             elif paid_ranked:
-                selected[tier] = paid_ranked[0].full_id
+                fallback = next(
+                    (m for m in paid_ranked if m.id not in used_model_ids),
+                    paid_ranked[0],
+                )
+                selected[tier] = fallback.full_id
+                used_model_ids.add(fallback.id)
             else:
                 selected[tier] = ""
 
@@ -215,12 +159,13 @@ def allocate_tiers_pareto(
         used_model_ids.add(free_ranked[0].full_id)
 
     if benchmarked:
-        f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(benchmarked)
+        f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(
+            benchmarked, key=lambda m: m.aa_iq or 0.0
+        )
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
             if not cluster:
                 return None
-            # Sort by BPE desc, burn asc, release_date desc
             ranked = sorted(
                 cluster,
                 key=lambda m: (
