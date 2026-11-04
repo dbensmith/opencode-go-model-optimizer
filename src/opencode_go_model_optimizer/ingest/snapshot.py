@@ -73,6 +73,7 @@ def merge_docs_pricing(
 def create_snapshot(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
+    plan: str = "go",
     source_catalogue: str = "live",
     source_docs: str = "live",
 ) -> Snapshot:
@@ -83,7 +84,7 @@ def create_snapshot(
     return Snapshot(
         schema_version=1,
         fetched_at=now_utc,
-        plan="go",
+        plan=plan,
         models=merged_models,
         metadata=SnapshotMetadata(
             source_catalogue=source_catalogue,
@@ -111,10 +112,11 @@ def load_snapshot(path: str | Path) -> Snapshot:
 
 
 def fetch_and_build_snapshot(
+    plan: str = "go",
     client: httpx.Client | None = None,
 ) -> Snapshot:
     """Fetch live data from catalogue and docs and build a Snapshot."""
     models = fetch_catalogue(client=client)
     docs_text = fetch_docs_mdx(client=client)
-    pricing = parse_go_pricing(docs_text)
-    return create_snapshot(models, pricing)
+    pricing = parse_go_pricing(docs_text, plan=plan)
+    return create_snapshot(models, pricing, plan=plan)

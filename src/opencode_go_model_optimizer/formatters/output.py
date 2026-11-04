@@ -11,11 +11,13 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel
 def format_select_json(
     tiers: dict[str, str],
     mode: str,
+    plan: str = "go",
     evaluated_at: str | None = None,
 ) -> str:
     """Format tier selection as standard JSON."""
     ts = evaluated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload = {
+        "plan": plan,
         "tiers": tiers,
         "evaluated_at": ts,
         "mode": mode,
@@ -32,12 +34,13 @@ def format_select_compact(tiers: dict[str, str]) -> str:
 def format_select_table(
     tiers: dict[str, str],
     models: list[NormalizedModel],
+    plan: str = "go",
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
     model_map = {m.full_id: m for m in models}
     model_map.update({m.id: m for m in models})
 
-    headers = ["Tier", "Model ID", "Allowance", "Output Cost", "Context"]
+    headers = ["Tier", "Model ID", f"Allowance ({plan})", "Output Cost", "Context"]
     rows: list[list[str]] = []
 
     for tier, full_id in tiers.items():

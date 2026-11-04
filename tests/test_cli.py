@@ -44,6 +44,7 @@ def test_cli_select_json(tmp_path, capsys):
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert "tiers" in data
+    assert data["plan"] == "go"
     assert data["tiers"]["flagship"] == "opencode-go/qwen3.8-max"
     assert data["tiers"]["balanced"] == "opencode-go/deepseek-v4.1-flash"
     assert data["tiers"]["fast"] == "opencode-go/glm-5.3-flash"
@@ -59,6 +60,35 @@ def test_cli_select_table(tmp_path, capsys):
     assert "Tier" in captured.out
     assert "flagship" in captured.out
     assert "opencode-go/qwen3.8-max" in captured.out
+
+
+def test_cli_select_plan_switch(tmp_path):
+    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
+    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
+    out_snap_go = tmp_path / "snap_go.json"
+    out_snap_plus = tmp_path / "snap_plus.json"
+
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=parse_catalogue_cli(cli_text),
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
+    ):
+        main(["fetch", "--plan", "go", "--out", str(out_snap_go)])
+        main(["fetch", "--plan", "go-plus", "--out", str(out_snap_plus)])
+
+    snap_go = json.loads(out_snap_go.read_text(encoding="utf-8"))
+    snap_plus = json.loads(out_snap_plus.read_text(encoding="utf-8"))
+
+    assert snap_go["plan"] == "go"
+    assert snap_plus["plan"] == "go-plus"
+
+    # GLM-5.3-Flash allowance is $60 under go, but $200 under go-plus in the fixture
+    glm_go = next(m for m in snap_go["models"] if m["id"] == "glm-5.3-flash")
+    glm_plus = next(m for m in snap_plus["models"] if m["id"] == "glm-5.3-flash")
+    assert glm_go["monthly_allowance"] == 60.0
+    assert glm_plus["monthly_allowance"] == 200.0
 
 
 def test_cli_select_compact(tmp_path, capsys):

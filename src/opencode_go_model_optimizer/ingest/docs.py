@@ -73,8 +73,10 @@ def parse_price_value(cell: str) -> float:
     return 0.0
 
 
-def parse_go_pricing(mdx_content: str) -> dict[str, dict[str, Any]]:
-    """Parse `<PlanTabs id="go-pricing">` `<div slot="go">` table from MDX.
+def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, Any]]:
+    """Parse `<PlanTabs id="go-pricing">` `<div slot="{plan}">` table from MDX.
+
+    Supported plan slots: 'go', 'go-plus', 'go-teams'.
 
     Returns a dict mapping normalized model name to a dictionary containing:
       - allowance: float (or float('inf') for unlimited)
@@ -83,7 +85,13 @@ def parse_go_pricing(mdx_content: str) -> dict[str, dict[str, Any]]:
       - cached_read_cost: float
       - raw_name: str
     """
-    section = extract_plan_section(mdx_content, plan_id="go-pricing", slot="go")
+    # Normalize plan alias (e.g., 'plus' -> 'go-plus', 'teams' -> 'go-teams')
+    slot = plan if plan.startswith("go") else f"go-{plan}"
+    section = extract_plan_section(mdx_content, plan_id="go-pricing", slot=slot)
+    if not section:
+        # Fallback to base 'go' if custom slot not found
+        slot = "go"
+        section = extract_plan_section(mdx_content, plan_id="go-pricing", slot="go")
     rows = parse_table_rows(section)
 
     pricing_by_norm_name: dict[str, dict[str, Any]] = {}

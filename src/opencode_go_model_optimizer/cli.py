@@ -48,6 +48,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ranking mode (default: auto)",
     )
     select_parser.add_argument(
+        "--plan",
+        choices=["go", "go-plus", "go-teams"],
+        default="go",
+        help="OpenCode plan tier (default: go)",
+    )
+    select_parser.add_argument(
         "-o",
         "--output",
         help="Output file path (default: stdout)",
@@ -77,6 +83,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ranking mode (default: auto)",
     )
     rank_parser.add_argument(
+        "--plan",
+        choices=["go", "go-plus", "go-teams"],
+        default="go",
+        help="OpenCode plan tier (default: go)",
+    )
+    rank_parser.add_argument(
         "--snapshot",
         help="Path to offline snapshot JSON file",
     )
@@ -88,6 +100,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # fetch subcommand
     fetch_parser = subparsers.add_parser("fetch", help="Fetch and save snapshot data")
+    fetch_parser.add_argument(
+        "--plan",
+        choices=["go", "go-plus", "go-teams"],
+        default="go",
+        help="OpenCode plan tier (default: go)",
+    )
     fetch_parser.add_argument(
         "--out",
         default="snapshot.json",
@@ -106,13 +124,16 @@ def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
     return "allowance"
 
 
-def _load_or_fetch_models(snapshot_path: str | None = None) -> list[NormalizedModel]:
+def _load_or_fetch_models(
+    snapshot_path: str | None = None,
+    plan: str = "go",
+) -> tuple[list[NormalizedModel], str]:
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
     if snapshot_path:
         snap = load_snapshot(snapshot_path)
-        return snap.models
-    snap = fetch_and_build_snapshot()
-    return snap.models
+        return snap.models, snap.plan
+    snap = fetch_and_build_snapshot(plan=plan)
+    return snap.models, snap.plan
 
 
 def _write_output(content: str, out_path: str | None = None) -> None:
@@ -128,15 +149,16 @@ def _write_output(content: str, out_path: str | None = None) -> None:
 
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
-    models = _load_or_fetch_models(args.snapshot)
+    target_plan = getattr(args, "plan", "go") or "go"
+    models, plan = _load_or_fetch_models(args.snapshot, plan=target_plan)
     mode = _resolve_mode(args.mode, models)
 
     tiers = allocate_tiers(models, mode=mode)
 
     if args.format == "json":
-        out = format_select_json(tiers, mode=mode)
+        out = format_select_json(tiers, mode=mode, plan=plan)
     elif args.format == "table":
-        out = format_select_table(tiers, models)
+        out = format_select_table(tiers, models, plan=plan)
     else:
         out = format_select_compact(tiers)
 
@@ -146,7 +168,8 @@ def handle_select(args: argparse.Namespace) -> int:
 
 def handle_rank(args: argparse.Namespace) -> int:
     """Handle the 'rank' command."""
-    models = _load_or_fetch_models(args.snapshot)
+    target_plan = getattr(args, "plan", "go") or "go"
+    models, _ = _load_or_fetch_models(args.snapshot, plan=target_plan)
     mode = _resolve_mode(args.mode, models)
 
     ranked = rank_catalog(models, mode=mode)
@@ -162,10 +185,11 @@ def handle_rank(args: argparse.Namespace) -> int:
 
 def handle_fetch(args: argparse.Namespace) -> int:
     """Handle the 'fetch' command."""
-    snap = fetch_and_build_snapshot()
+    target_plan = getattr(args, "plan", "go") or "go"
+    snap = fetch_and_build_snapshot(plan=target_plan)
     save_snapshot(snap, args.out)
     print(
-        f"opencode-go-model-optimizer: saved snapshot with {len(snap.models)} models to {args.out}",
+        f"opencode-go-model-optimizer: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",
         file=sys.stderr,
     )
     return 0
