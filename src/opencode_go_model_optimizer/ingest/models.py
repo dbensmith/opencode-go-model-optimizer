@@ -46,7 +46,7 @@ class NormalizedModel(BaseModel):
     is_contributor: bool = False
     is_zero_cost: bool = False
 
-    # Assigned tier: "flagship", "balanced", "efficient", "free"
+    # Assigned tier: "heavy", "balanced", "light", "free"
     tier: str | None = None
 
     # Ranking & Pareto metrics

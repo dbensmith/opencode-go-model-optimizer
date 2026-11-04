@@ -29,9 +29,9 @@ This project extracts and unifies two disparate OpenCode Go model selection impl
 2. **Industry-Standard Model Tiers:**
    - Do **not** hardcode Claude-specific tier names (Opus, Sonnet, Haiku).
    - Use industry-standard capability tiers:
-     - **`flagship`**: Top-frontier reasoning, architecture, and complex coding.
+     - **`heavy`**: Top reasoning, architecture, and complex coding.
      - **`balanced`**: High-capability, cost-effective daily driver.
-     - **`efficient`**: Low-latency, high-throughput, lightweight tasks.
+     - **`light`**: Low-latency, high-throughput, lightweight tasks.
      - **`free`**: Active zero-cost models (promos, contributor tier, unmetered).
 3. **Dual-Mode Engine:**
    - **`--mode allowance` (Heuristic, zero external keys):** Ranks paid models by published monthly allowance &rarr; cheapest output &rarr; recency &rarr; context window. Picks free models by recency.
@@ -70,7 +70,7 @@ This project extracts and unifies two disparate OpenCode Go model selection impl
 ### Step 2: Selection & Ranking Engines (`src/opencode_go_model_optimizer/engine/`)
 - **Allowance Engine:** Implement deterministic sorting matching the proven dotfiles heuristic.
 - **Pareto Engine:** Implement BPE and Fisher-Jenks natural breaks over Intelligence Index vs. Quota Burn.
-- **Tier Allocator:** Map ranked models into `flagship`, `balanced`, `efficient`, `free`.
+- **Tier Allocator:** Map ranked models into `heavy`, `balanced`, `light`, `free`.
 
 ### Step 3: Tests & Offline Fixtures (`tests/`)
 - Add offline fixtures for catalogue and MDX docs (do not hit external networks during `pytest`).

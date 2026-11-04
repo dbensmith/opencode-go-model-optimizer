@@ -36,9 +36,9 @@ Evaluates the active OpenCode Go model catalog and computes optimal model assign
 
 Rather than proprietary or vendor-specific labels, models are classified into standard capability tiers:
 
-- **`flagship`**: Top-frontier reasoning and complex task capability.
+- **`heavy`**: High-compute, complex tasks and deep reasoning.
 - **`balanced`**: High-capability, cost-effective daily workhorse.
-- **`efficient`**: High-throughput, low-latency, lightweight models.
+- **`light`**: High-throughput, low-latency, lightweight models.
 - **`free`**: Active zero-cost models (promos, contributor tiers, or unmetered).
 
 Consumers (such as Chezmoi dotfiles, Open GSD, Paseo, or custom agent orchestrators) map these standard tiers to their own internal configs.
@@ -73,9 +73,9 @@ uvx opencode-go-model-optimizer select --format json
   ```json
   {
     "tiers": {
-      "flagship": "opencode-go/qwen3.8-max",
+      "heavy": "opencode-go/qwen3.8-max",
       "balanced": "opencode-go/deepseek-v4.1-flash",
-      "efficient": "opencode-go/glm-5.3-flash",
+      "light": "opencode-go/glm-5.3-flash",
       "free": "opencode-go/iceman-contributor-free"
     },
     "evaluated_at": "2026-11-03T23:50:00Z",

@@ -6,15 +6,15 @@ from opencode_go_model_optimizer.engine.allowance import rank_free_models, rank_
 from opencode_go_model_optimizer.engine.pareto import evaluate_pareto, fisher_jenks_3_clusters
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
-STANDARD_TIERS = ["flagship", "balanced", "efficient", "free"]
+STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
 
 
-def is_flagship_candidate(m: NormalizedModel) -> bool:
-    """Identify whether a model qualifies for the flagship reasoning tier."""
+def is_heavy_candidate(m: NormalizedModel) -> bool:
+    """Identify whether a model qualifies for the heavy reasoning tier."""
     id_lower = m.id.lower()
     name_lower = m.name.lower()
 
-    # Explicit flagship / max / pro / heavy reasoning indicators
+    # Explicit heavy / max / pro reasoning indicators
     if (
         any(
             k in id_lower or k in name_lower
@@ -29,8 +29,8 @@ def is_flagship_candidate(m: NormalizedModel) -> bool:
     return bool(m.cost.output >= 2.0 or m.cost.input >= 1.0)
 
 
-def is_efficient_candidate(m: NormalizedModel) -> bool:
-    """Identify whether a model qualifies for the efficient/lightweight tier."""
+def is_light_candidate(m: NormalizedModel) -> bool:
+    """Identify whether a model qualifies for the light/high-throughput tier."""
     id_lower = m.id.lower()
     name_lower = m.name.lower()
 
@@ -42,10 +42,6 @@ def is_efficient_candidate(m: NormalizedModel) -> bool:
 
     # Low token price profile (output <= $0.60 and input <= $0.20)
     return bool(m.cost.output <= 0.60 and m.cost.input <= 0.20)
-
-
-# Backwards compatibility alias
-is_fast_candidate = is_efficient_candidate
 
 
 def allocate_tiers_allowance(
@@ -67,8 +63,6 @@ def allocate_tiers_allowance(
     # Check preferences first
     for tier in STANDARD_TIERS:
         pref = preferred.get(tier)
-        if not pref and tier == "efficient":
-            pref = preferred.get("fast") or preferred.get("flash")
         if pref:
             # Check if preferred model is in models and active
             hit = next(
@@ -97,22 +91,22 @@ def allocate_tiers_allowance(
         elif free_ranked:
             selected["free"] = free_ranked[0].full_id
 
-    # Flagship tier assignment
-    if "flagship" not in selected:
-        flagship_pick = next(
+    # Heavy tier assignment
+    if "heavy" not in selected:
+        heavy_pick = next(
             (
                 m
                 for m in paid_ranked
-                if is_flagship_candidate(m)
+                if is_heavy_candidate(m)
                 and m.id not in used_model_ids
                 and m.full_id not in used_model_ids
             ),
             None,
         )
-        if flagship_pick:
-            selected["flagship"] = flagship_pick.full_id
-            used_model_ids.add(flagship_pick.id)
-            used_model_ids.add(flagship_pick.full_id)
+        if heavy_pick:
+            selected["heavy"] = heavy_pick.full_id
+            used_model_ids.add(heavy_pick.id)
+            used_model_ids.add(heavy_pick.full_id)
 
     # Balanced tier assignment (daily driver: highest available allowance / workhorse)
     if "balanced" not in selected:
@@ -129,22 +123,22 @@ def allocate_tiers_allowance(
             used_model_ids.add(balanced_pick.id)
             used_model_ids.add(balanced_pick.full_id)
 
-    # Efficient tier assignment (lightweight, high throughput)
-    if "efficient" not in selected:
-        efficient_pick = next(
+    # Light tier assignment (lightweight, high throughput)
+    if "light" not in selected:
+        light_pick = next(
             (
                 m
                 for m in paid_ranked
-                if is_efficient_candidate(m)
+                if is_light_candidate(m)
                 and m.id not in used_model_ids
                 and m.full_id not in used_model_ids
             ),
             None,
         )
-        if efficient_pick:
-            selected["efficient"] = efficient_pick.full_id
-            used_model_ids.add(efficient_pick.id)
-            used_model_ids.add(efficient_pick.full_id)
+        if light_pick:
+            selected["light"] = light_pick.full_id
+            used_model_ids.add(light_pick.id)
+            used_model_ids.add(light_pick.full_id)
         else:
             # Fallback to next unused paid model
             fallback = next(
@@ -156,7 +150,7 @@ def allocate_tiers_allowance(
                 None,
             )
             if fallback:
-                selected["efficient"] = fallback.full_id
+                selected["light"] = fallback.full_id
                 used_model_ids.add(fallback.id)
                 used_model_ids.add(fallback.full_id)
 
@@ -205,8 +199,6 @@ def allocate_tiers_pareto(
     # Preferences
     for tier in STANDARD_TIERS:
         pref = preferred.get(tier)
-        if not pref and tier == "efficient":
-            pref = preferred.get("fast") or preferred.get("flash")
         if pref:
             hit = next(
                 (m for m in models if (m.full_id == pref or m.id == pref) and m.status == "active"),
@@ -223,7 +215,7 @@ def allocate_tiers_pareto(
         used_model_ids.add(free_ranked[0].full_id)
 
     if benchmarked:
-        f_flagship, f_balanced, f_efficient = fisher_jenks_3_clusters(benchmarked)
+        f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(benchmarked)
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
             if not cluster:
@@ -243,10 +235,10 @@ def allocate_tiers_pareto(
                     return m
             return ranked[0]
 
-        if "flagship" not in selected and f_flagship:
-            m = pick_best(f_flagship)
+        if "heavy" not in selected and f_heavy:
+            m = pick_best(f_heavy)
             if m:
-                selected["flagship"] = m.full_id
+                selected["heavy"] = m.full_id
                 used_model_ids.add(m.id)
                 used_model_ids.add(m.full_id)
 
@@ -257,10 +249,10 @@ def allocate_tiers_pareto(
                 used_model_ids.add(m.id)
                 used_model_ids.add(m.full_id)
 
-        if "efficient" not in selected and f_efficient:
-            m = pick_best(f_efficient)
+        if "light" not in selected and f_light:
+            m = pick_best(f_light)
             if m:
-                selected["efficient"] = m.full_id
+                selected["light"] = m.full_id
                 used_model_ids.add(m.id)
                 used_model_ids.add(m.full_id)
 

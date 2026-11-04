@@ -150,23 +150,19 @@ def test_allocate_tiers_allowance():
     models = _get_fixture_models()
     tiers = allocate_tiers_allowance(models)
 
-    assert set(tiers.keys()) == {"flagship", "balanced", "efficient", "free"}
-    assert tiers["flagship"] == "opencode-go/qwen3.8-max"
+    assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
+    assert tiers["heavy"] == "opencode-go/qwen3.8-max"
     assert tiers["balanced"] == "opencode-go/deepseek-v4.1-flash"
-    assert tiers["efficient"] == "opencode-go/glm-5.3-flash"
+    assert tiers["light"] == "opencode-go/glm-5.3-flash"
     assert tiers["free"] == "opencode-go/iceman-contributor-free"
 
 
 def test_allocate_tiers_with_preferences_and_skips():
     models = _get_fixture_models()
-    # Pin preferred model for efficient (supporting both "efficient" and backwards-compatible "fast")
-    prefs = {"efficient": "opencode-go/qwen3.8-max"}
+    # Pin preferred model for light
+    prefs = {"light": "opencode-go/qwen3.8-max"}
     tiers = allocate_tiers_allowance(models, preferred_tiers=prefs)
-    assert tiers["efficient"] == "opencode-go/qwen3.8-max"
-
-    prefs_alias = {"fast": "opencode-go/qwen3.8-max"}
-    tiers_alias = allocate_tiers_allowance(models, preferred_tiers=prefs_alias)
-    assert tiers_alias["efficient"] == "opencode-go/qwen3.8-max"
+    assert tiers["light"] == "opencode-go/qwen3.8-max"
 
     # Skip deepseek
     skips = {"deepseek-v4.1-flash"}
@@ -177,7 +173,7 @@ def test_allocate_tiers_with_preferences_and_skips():
 def test_allocate_tiers_pareto():
     models = _get_fixture_models()
     tiers = allocate_tiers_pareto(models)
-    assert set(tiers.keys()) == {"flagship", "balanced", "efficient", "free"}
+    assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
     assert all(tiers.values())
 
 

@@ -45,9 +45,9 @@ def test_cli_select_json(tmp_path, capsys):
     data = json.loads(captured.out)
     assert "tiers" in data
     assert data["plan"] == "go"
-    assert data["tiers"]["flagship"] == "opencode-go/qwen3.8-max"
+    assert data["tiers"]["heavy"] == "opencode-go/qwen3.8-max"
     assert data["tiers"]["balanced"] == "opencode-go/deepseek-v4.1-flash"
-    assert data["tiers"]["efficient"] == "opencode-go/glm-5.3-flash"
+    assert data["tiers"]["light"] == "opencode-go/glm-5.3-flash"
     assert data["tiers"]["free"] == "opencode-go/iceman-contributor-free"
     assert data["mode"] == "allowance"
 
@@ -58,7 +58,7 @@ def test_cli_select_table(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert "Tier" in captured.out
-    assert "flagship" in captured.out
+    assert "heavy" in captured.out
     assert "opencode-go/qwen3.8-max" in captured.out
 
 
@@ -97,9 +97,9 @@ def test_cli_select_compact(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     lines = captured.out.strip().splitlines()
-    assert "flagship opencode-go/qwen3.8-max" in lines
+    assert "heavy opencode-go/qwen3.8-max" in lines
     assert "balanced opencode-go/deepseek-v4.1-flash" in lines
-    assert "efficient opencode-go/glm-5.3-flash" in lines
+    assert "light opencode-go/glm-5.3-flash" in lines
 
 
 def test_cli_select_output_file(tmp_path):
