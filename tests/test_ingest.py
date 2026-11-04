@@ -15,6 +15,8 @@ from opencode_go_model_optimizer.ingest.docs import (
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
+    get_reference_snapshot_path,
+    load_reference_snapshot,
     load_snapshot,
     save_snapshot,
 )
@@ -130,3 +132,15 @@ def test_snapshot_lifecycle(tmp_path):
     assert loaded.schema_version == snap.schema_version
     assert len(loaded.models) == len(snap.models)
     assert loaded.models[0].id == snap.models[0].id
+
+
+def test_reference_snapshot_loading():
+    ref_path = get_reference_snapshot_path()
+    assert ref_path.exists()
+    snap = load_reference_snapshot()
+    assert snap is not None
+    assert snap.schema_version == 1
+    assert len(snap.models) > 0
+    # Confirm AA intelligence index is present on benchmarked models
+    benchmarked = [m for m in snap.models if m.aa_iq is not None]
+    assert len(benchmarked) > 0

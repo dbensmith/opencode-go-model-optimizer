@@ -88,9 +88,15 @@ def evaluate_pareto(
     for m in models:
         m.composite_burn_pct = compute_quota_burn_pct(m)
 
-    # Models with benchmark intelligence
+    # Models with benchmark intelligence (excluding contributor promos and previews)
     benchmarked = [
-        m for m in models if m.status == "active" and m.aa_iq is not None and not m.is_zero_cost
+        m
+        for m in models
+        if m.status == "active"
+        and m.aa_iq is not None
+        and not m.is_zero_cost
+        and not m.is_contributor
+        and not m.is_preview
     ]
     if not benchmarked:
         return models

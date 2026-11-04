@@ -149,3 +149,27 @@ def test_cli_fetch(tmp_path):
         data = json.loads(out_snap.read_text(encoding="utf-8"))
         assert data["schema_version"] == 1
         assert len(data["models"]) == 7
+
+
+def test_cli_fetch_update_reference(tmp_path):
+    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
+    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
+    fake_ref_path = tmp_path / "reference_snapshot.json"
+
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=parse_catalogue_cli(cli_text),
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
+            return_value=fake_ref_path,
+        ),
+    ):
+        rc = main(["fetch", "--update-reference"])
+        assert rc == 0
+        assert fake_ref_path.exists()
+        data = json.loads(fake_ref_path.read_text(encoding="utf-8"))
+        assert data["schema_version"] == 1
+        assert len(data["models"]) == 7

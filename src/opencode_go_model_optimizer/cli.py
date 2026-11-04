@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
+
+import httpx
 
 from opencode_go_model_optimizer.engine.tiers import allocate_tiers, rank_catalog
 from opencode_go_model_optimizer.formatters.output import (
@@ -18,8 +19,10 @@ from opencode_go_model_optimizer.formatters.output import (
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 from opencode_go_model_optimizer.ingest.snapshot import (
     fetch_and_build_snapshot,
+    load_reference_snapshot,
     load_snapshot,
     save_snapshot,
+    update_reference_snapshot,
 )
 
 
@@ -111,6 +114,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="snapshot.json",
         help="Destination path for snapshot (default: snapshot.json)",
     )
+    fetch_parser.add_argument(
+        "--update-reference",
+        action="store_true",
+        help="Fetch live data and update repository reference snapshot",
+    )
 
     return parser.parse_args(argv)
 
@@ -119,7 +127,7 @@ def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
     """Resolve auto mode to either pareto or allowance based on API key and data."""
     if mode != "auto":
         return mode
-    if os.environ.get("AA_API_KEY"):
+    if any(m.aa_iq is not None for m in models):
         return "pareto"
     return "allowance"
 
@@ -132,8 +140,14 @@ def _load_or_fetch_models(
     if snapshot_path:
         snap = load_snapshot(snapshot_path)
         return snap.models, snap.plan
-    snap = fetch_and_build_snapshot(plan=plan)
-    return snap.models, snap.plan
+    try:
+        snap = fetch_and_build_snapshot(plan=plan)
+        return snap.models, snap.plan
+    except (httpx.HTTPError, OSError, ValueError):
+        ref_snap = load_reference_snapshot()
+        if ref_snap:
+            return ref_snap.models, ref_snap.plan
+        raise
 
 
 def _write_output(content: str, out_path: str | None = None) -> None:
@@ -186,6 +200,14 @@ def handle_rank(args: argparse.Namespace) -> int:
 def handle_fetch(args: argparse.Namespace) -> int:
     """Handle the 'fetch' command."""
     target_plan = getattr(args, "plan", "go") or "go"
+    if getattr(args, "update_reference", False):
+        path = update_reference_snapshot(plan=target_plan)
+        print(
+            f"opencode-go-model-optimizer: updated reference snapshot at {path}",
+            file=sys.stderr,
+        )
+        return 0
+
     snap = fetch_and_build_snapshot(plan=target_plan)
     save_snapshot(snap, args.out)
     print(

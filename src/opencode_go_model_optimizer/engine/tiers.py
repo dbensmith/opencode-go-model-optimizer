@@ -133,6 +133,8 @@ def allocate_tiers_pareto(
         if m.status == "active"
         and m.aa_iq is not None
         and not m.is_zero_cost
+        and not m.is_contributor
+        and not m.is_preview
         and m.id not in skips
         and m.full_id not in skips
     ]
@@ -159,9 +161,25 @@ def allocate_tiers_pareto(
         used_model_ids.add(free_ranked[0].full_id)
 
     if benchmarked:
-        f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(
-            benchmarked, key=lambda m: m.aa_iq or 0.0
-        )
+        frontier = [m for m in benchmarked if m.is_pareto]
+        if len(frontier) >= 3:
+            f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(
+                frontier, key=lambda m: m.aa_iq or 0.0
+            )
+            heavy_cutoff = (min(m.aa_iq for m in f_heavy) + max(m.aa_iq for m in f_balanced)) / 2.0
+            balanced_cutoff = (
+                min(m.aa_iq for m in f_balanced) + max(m.aa_iq for m in f_light)
+            ) / 2.0
+
+            tier_heavy = [m for m in benchmarked if (m.aa_iq or 0.0) >= heavy_cutoff]
+            tier_balanced = [
+                m for m in benchmarked if heavy_cutoff > (m.aa_iq or 0.0) >= balanced_cutoff
+            ]
+            tier_light = [m for m in benchmarked if (m.aa_iq or 0.0) < balanced_cutoff]
+        else:
+            tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
+                benchmarked, key=lambda m: m.aa_iq or 0.0
+            )
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
             if not cluster:
@@ -180,22 +198,22 @@ def allocate_tiers_pareto(
                     return m
             return ranked[0]
 
-        if "heavy" not in selected and f_heavy:
-            m = pick_best(f_heavy)
+        if "heavy" not in selected and tier_heavy:
+            m = pick_best(tier_heavy)
             if m:
                 selected["heavy"] = m.full_id
                 used_model_ids.add(m.id)
                 used_model_ids.add(m.full_id)
 
-        if "balanced" not in selected and f_balanced:
-            m = pick_best(f_balanced)
+        if "balanced" not in selected and tier_balanced:
+            m = pick_best(tier_balanced)
             if m:
                 selected["balanced"] = m.full_id
                 used_model_ids.add(m.id)
                 used_model_ids.add(m.full_id)
 
-        if "light" not in selected and f_light:
-            m = pick_best(f_light)
+        if "light" not in selected and tier_light:
+            m = pick_best(tier_light)
             if m:
                 selected["light"] = m.full_id
                 used_model_ids.add(m.id)

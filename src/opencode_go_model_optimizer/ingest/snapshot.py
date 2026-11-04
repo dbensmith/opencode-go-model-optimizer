@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -131,18 +132,62 @@ def load_snapshot(path: str | Path) -> Snapshot:
     return Snapshot.model_validate(data)
 
 
+def get_reference_snapshot_path() -> Path:
+    """Return path to bundled reference snapshot JSON file."""
+    ref = files("opencode_go_model_optimizer").joinpath("data", "reference_snapshot.json")
+    p = Path(str(ref))
+    if p.exists():
+        return p
+    return Path(__file__).resolve().parent.parent / "data" / "reference_snapshot.json"
+
+
+def load_reference_snapshot() -> Snapshot | None:
+    """Load bundled reference snapshot if present."""
+    p = get_reference_snapshot_path()
+    if p.exists():
+        try:
+            return load_snapshot(p)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return None
+    return None
+
+
 def fetch_and_build_snapshot(
     plan: str = "go",
     client: httpx.Client | None = None,
+    use_reference_benchmarks: bool = True,
 ) -> Snapshot:
     """Fetch live data from catalogue and docs and build a Snapshot."""
     models = fetch_catalogue(client=client)
     docs_text = fetch_docs_mdx(client=client)
     pricing = parse_go_pricing(docs_text, plan=plan)
 
-    aa_benchmarks = None
+    aa_benchmarks: dict[str, dict[str, Any]] | None = None
     aa_key = os.environ.get("AA_API_KEY")
     if aa_key:
         aa_benchmarks = fetch_aa_benchmarks(aa_key, client=client)
+    elif use_reference_benchmarks:
+        ref_snap = load_reference_snapshot()
+        if ref_snap:
+            aa_benchmarks = {
+                m.id: {
+                    "iq": m.aa_iq,
+                    "coding": m.aa_coding,
+                    "tps": m.speed_tps,
+                }
+                for m in ref_snap.models
+                if m.aa_iq is not None
+            }
 
     return create_snapshot(models, pricing, plan=plan, aa_benchmarks=aa_benchmarks)
+
+
+def update_reference_snapshot(
+    plan: str = "go",
+    client: httpx.Client | None = None,
+) -> Path:
+    """Fetch live data and update the repository reference snapshot file."""
+    snap = fetch_and_build_snapshot(plan=plan, client=client, use_reference_benchmarks=True)
+    target_path = get_reference_snapshot_path()
+    save_snapshot(snap, target_path)
+    return target_path
