@@ -1,0 +1,52 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3.8-max",
+      "name": "Qwen3.8 Max",
+      "status": "active",
+      "release_date": "2026-09-15",
+      "limit": {
+        "context": 1000000,
+        "output": 32768
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 2.0,
+            "cache": {
+              "read": 0.25,
+              "write": 2.5
+            }
+          },
+          "output": {
+            "price": 6.0
+          }
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "status": "active",
+      "release_date": "2026-09-10",
+      "limit": {
+        "context": 1000000,
+        "output": 384000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.15,
+            "cache": {
+              "read": 0.003
+            }
+          },
+          "output": {
+            "price": 0.6
+          }
+        }
+      }
+    }
+  ]
+}

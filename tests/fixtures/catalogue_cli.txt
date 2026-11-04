@@ -1,0 +1,140 @@
+opencode-go/qwen3.8-max
+{
+  "id": "qwen3.8-max",
+  "providerID": "opencode-go",
+  "name": "Qwen3.8 Max",
+  "status": "active",
+  "cost": {
+    "input": 2.0,
+    "output": 6.0,
+    "cache": {
+      "read": 0.25,
+      "write": 2.5
+    }
+  },
+  "limit": {
+    "context": 1000000,
+    "output": 32768
+  },
+  "release_date": "2026-09-15"
+}
+opencode-go/deepseek-v4.1-flash
+{
+  "id": "deepseek-v4.1-flash",
+  "providerID": "opencode-go",
+  "name": "DeepSeek V4.1 Flash",
+  "status": "active",
+  "cost": {
+    "input": 0.15,
+    "output": 0.6,
+    "cache": {
+      "read": 0.003,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 1000000,
+    "output": 384000
+  },
+  "release_date": "2026-09-10"
+}
+opencode-go/glm-5.3-flash
+{
+  "id": "glm-5.3-flash",
+  "providerID": "opencode-go",
+  "name": "GLM-5.3-Flash",
+  "status": "active",
+  "cost": {
+    "input": 0.15,
+    "output": 0.5,
+    "cache": {
+      "read": 0.03,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 1000000,
+    "output": 32768
+  },
+  "release_date": "2026-09-08"
+}
+opencode-go/iceman-contributor-free
+{
+  "id": "iceman-contributor-free",
+  "providerID": "opencode-go",
+  "name": "Iceman Contributor Free",
+  "status": "active",
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 1000000,
+    "output": 32768
+  },
+  "release_date": "2026-09-12"
+}
+opencode-go/beam-free
+{
+  "id": "beam-free",
+  "providerID": "opencode-go",
+  "name": "Beam Free",
+  "status": "active",
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 1048576,
+    "output": 131072
+  },
+  "release_date": "2026-09-01"
+}
+opencode-go/step-5-preview
+{
+  "id": "step-5-preview",
+  "providerID": "opencode-go",
+  "name": "Step 5 Preview",
+  "status": "active",
+  "cost": {
+    "input": 1.0,
+    "output": 2.7,
+    "cache": {
+      "read": 0.1,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 1000000,
+    "output": 32768
+  },
+  "release_date": "2026-09-18"
+}
+opencode-go/deprecated-old-model
+{
+  "id": "deprecated-old-model",
+  "providerID": "opencode-go",
+  "name": "Deprecated Old Model",
+  "status": "deprecated",
+  "cost": {
+    "input": 1.0,
+    "output": 1.0,
+    "cache": {
+      "read": 0.1,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 100000,
+    "output": 4096
+  },
+  "release_date": "2025-01-01"
+}
