@@ -14,6 +14,8 @@ from opencode_go_model_optimizer.formatters.output import (
     format_rank_json,
     format_rank_table,
     format_select_compact,
+    format_select_env,
+    format_select_github_output,
     format_select_json,
     format_select_table,
 )
@@ -43,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     select_parser.add_argument(
         "--format",
-        choices=["json", "table", "compact"],
+        choices=["json", "table", "compact", "env", "github-output"],
         default="json",
         help="Output format (default: json)",
     )
@@ -73,6 +75,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
         help="Cache TTL in seconds for live snapshot fetches (default: 0)",
+    )
+    select_parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="Model ID to exclude (can be specified multiple times)",
+    )
+    select_parser.add_argument(
+        "--prefer",
+        action="append",
+        default=[],
+        help="Pin a model to a tier, e.g. --prefer heavy=kimi-k3.1-pro (can be specified multiple times)",
+    )
+    select_parser.add_argument(
+        "--min-context",
+        type=int,
+        default=0,
+        help="Minimum context window in tokens (default: 0)",
+    )
+    select_parser.add_argument(
+        "--no-contributor",
+        action="store_true",
+        help="Exclude contributor-tier models from free tier selection",
     )
 
     # rank subcommand
@@ -109,6 +134,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
         help="Cache TTL in seconds for live snapshot fetches (default: 0)",
+    )
+    rank_parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="Model ID to exclude (can be specified multiple times)",
+    )
+    rank_parser.add_argument(
+        "--min-context",
+        type=int,
+        default=0,
+        help="Minimum context window in tokens (default: 0)",
+    )
+    rank_parser.add_argument(
+        "--no-contributor",
+        action="store_true",
+        help="Exclude contributor-tier models from free tier selection",
     )
     rank_parser.add_argument(
         "-o",
@@ -187,6 +229,21 @@ def _write_output(content: str, out_path: str | None = None) -> None:
         print(content)
 
 
+def _parse_preferred_tiers(prefer_list: list[str] | None) -> dict[str, str]:
+    """Parse --prefer key=value arguments into a dictionary."""
+    preferred: dict[str, str] = {}
+    if not prefer_list:
+        return preferred
+    for item in prefer_list:
+        if "=" in item:
+            tier, model_id = item.split("=", 1)
+            tier = tier.strip()
+            model_id = model_id.strip()
+            if tier and model_id:
+                preferred[tier] = model_id
+    return preferred
+
+
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
     target_plan = getattr(args, "plan", "go") or "go"
@@ -194,12 +251,28 @@ def handle_select(args: argparse.Namespace) -> int:
     models, plan = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
     mode = _resolve_mode(args.mode, models)
 
-    tiers = allocate_tiers(models, mode=mode)
+    skip_models = set(getattr(args, "skip", []) or [])
+    preferred_tiers = _parse_preferred_tiers(getattr(args, "prefer", []))
+    min_context = getattr(args, "min_context", 0) or 0
+    allow_contributor = not getattr(args, "no_contributor", False)
+
+    tiers = allocate_tiers(
+        models,
+        mode=mode,
+        preferred_tiers=preferred_tiers,
+        skip_models=skip_models,
+        allow_contributor=allow_contributor,
+        min_context=min_context,
+    )
 
     if args.format == "json":
         out = format_select_json(tiers, mode=mode, plan=plan)
     elif args.format == "table":
         out = format_select_table(tiers, models, plan=plan)
+    elif args.format == "env":
+        out = format_select_env(tiers)
+    elif args.format == "github-output":
+        out = format_select_github_output(tiers)
     else:
         out = format_select_compact(tiers)
 
@@ -214,7 +287,17 @@ def handle_rank(args: argparse.Namespace) -> int:
     models, _ = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
     mode = _resolve_mode(args.mode, models)
 
-    ranked = rank_catalog(models, mode=mode)
+    skip_models = set(getattr(args, "skip", []) or [])
+    min_context = getattr(args, "min_context", 0) or 0
+    allow_contributor = not getattr(args, "no_contributor", False)
+
+    ranked = rank_catalog(
+        models,
+        mode=mode,
+        skip_models=skip_models,
+        allow_contributor=allow_contributor,
+        min_context=min_context,
+    )
 
     if args.format == "json" and not args.table:
         out = format_rank_json(ranked)

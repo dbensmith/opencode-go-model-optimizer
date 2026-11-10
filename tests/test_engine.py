@@ -678,3 +678,44 @@ def test_model_roundtripping_and_allowance_normalization():
     # full_id resolution when "/" is not in id
     m_noslash = NormalizedModel(id="my-model", provider_id="prov")
     assert m_noslash.full_id == "prov/my-model"
+
+
+def test_min_context_and_allow_contributor():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+
+    # Test allow_contributor=False in allowance mode
+    tiers_no_contrib = allocate_tiers_allowance(models, allow_contributor=False)
+    assert tiers_no_contrib["free"] == "opencode-go/beam-free"
+
+    # Test allow_contributor=False in pareto mode
+    tiers_pareto_no_contrib = allocate_tiers_pareto(models, allow_contributor=False)
+    assert tiers_pareto_no_contrib["free"] != "opencode-go/iceman-contributor-free"
+
+    # Test min_context filter in allowance mode
+    tiers_min_ctx = allocate_tiers_allowance(models, min_context=500000)
+    for model_id in tiers_min_ctx.values():
+        if model_id:
+            m = next(x for x in models if x.full_id == model_id)
+            assert m.limit.context >= 500000
+
+    # Test min_context filter in pareto mode
+    tiers_pareto_min_ctx = allocate_tiers_pareto(models, min_context=500000)
+    for model_id in tiers_pareto_min_ctx.values():
+        if model_id:
+            m = next(x for x in models if x.full_id == model_id)
+            assert m.limit.context >= 500000
+
+    # Test min_context filter in rank_catalog
+    ranked_min_ctx = rank_catalog(models, min_context=500000)
+    assert len(ranked_min_ctx) > 0
+    assert all(m.limit.context >= 500000 for m in ranked_min_ctx)
+
+    # Test allocate_tiers unified with min_context and allow_contributor
+    unified_p = allocate_tiers(models, mode="pareto", min_context=100000, allow_contributor=False)
+    assert unified_p["free"] != "opencode-go/iceman-contributor-free"
+    unified_a = allocate_tiers(
+        models, mode="allowance", min_context=100000, allow_contributor=False
+    )
+    assert unified_a["free"] == "opencode-go/beam-free"

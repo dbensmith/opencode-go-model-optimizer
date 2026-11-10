@@ -21,6 +21,8 @@ def is_eligible_free(m: NormalizedModel, allow_contributor: bool = True) -> bool
     """Determine if a model is eligible for the free tier."""
     if m.status != "active" or m.is_preview:
         return False
+    if not allow_contributor and m.is_contributor:
+        return False
     if m.is_zero_cost:
         return True
     return bool(

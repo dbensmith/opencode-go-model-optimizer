@@ -19,13 +19,17 @@ def allocate_tiers_allowance(
     models: list[NormalizedModel],
     preferred_tiers: dict[str, str] | None = None,
     skip_models: set[str] | None = None,
+    allow_contributor: bool = True,
+    min_context: int = 0,
 ) -> dict[str, str]:
     """Allocate models to tiers using allowance heuristic and natural cost clustering."""
     preferred = preferred_tiers or {}
     skips = set(skip_models or set())
+    if min_context > 0:
+        models = [m for m in models if m.limit.context >= min_context]
 
     # 1. Rank free and paid models
-    free_ranked = rank_free_models(models, skip_models=skips)
+    free_ranked = rank_free_models(models, skip_models=skips, allow_contributor=allow_contributor)
     paid_ranked = rank_paid_models(models, skip_models=skips)
 
     selected: dict[str, str] = {}
@@ -141,16 +145,22 @@ def allocate_tiers_pareto(
     models: list[NormalizedModel],
     preferred_tiers: dict[str, str] | None = None,
     skip_models: set[str] | None = None,
+    allow_contributor: bool = True,
+    min_context: int = 0,
 ) -> dict[str, str]:
     """Allocate models to tiers using Pareto efficiency and Fisher-Jenks natural breaks."""
     preferred = preferred_tiers or {}
     skips = set(skip_models or set())
+    if min_context > 0:
+        models = [m for m in models if m.limit.context >= min_context]
 
     # 1. Evaluate BPE on models
     evaluated = evaluate_pareto(models)
 
     # Free tier
-    free_ranked = rank_free_models(evaluated, skip_models=skips)
+    free_ranked = rank_free_models(
+        evaluated, skip_models=skips, allow_contributor=allow_contributor
+    )
 
     # Paid benchmarked models
     benchmarked = [
@@ -248,7 +258,11 @@ def allocate_tiers_pareto(
     # Fallback to allowance allocation if any tier is missing
     if len(selected) < len(STANDARD_TIERS):
         allowance_picks = allocate_tiers_allowance(
-            models, preferred_tiers=preferred, skip_models=skips
+            models,
+            preferred_tiers=preferred,
+            skip_models=skips,
+            allow_contributor=allow_contributor,
+            min_context=min_context,
         )
         for t in STANDARD_TIERS:
             if t not in selected:
@@ -262,15 +276,25 @@ def allocate_tiers(
     mode: str = "allowance",
     preferred_tiers: dict[str, str] | None = None,
     skip_models: set[str] | None = None,
+    allow_contributor: bool = True,
+    min_context: int = 0,
 ) -> dict[str, str]:
     """Unified entrypoint to allocate models into capability tiers."""
     if mode == "pareto":
         res = allocate_tiers_pareto(
-            models, preferred_tiers=preferred_tiers, skip_models=skip_models
+            models,
+            preferred_tiers=preferred_tiers,
+            skip_models=skip_models,
+            allow_contributor=allow_contributor,
+            min_context=min_context,
         )
     else:
         res = allocate_tiers_allowance(
-            models, preferred_tiers=preferred_tiers, skip_models=skip_models
+            models,
+            preferred_tiers=preferred_tiers,
+            skip_models=skip_models,
+            allow_contributor=allow_contributor,
+            min_context=min_context,
         )
     return {k: res.get(k, "") for k in STANDARD_TIERS}
 
@@ -279,9 +303,13 @@ def rank_catalog(
     models: list[NormalizedModel],
     mode: str = "allowance",
     skip_models: set[str] | None = None,
+    allow_contributor: bool = True,
+    min_context: int = 0,
 ) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models."""
     skips = set(skip_models or set())
+    if min_context > 0:
+        models = [m for m in models if m.limit.context >= min_context]
     active_models = [
         m for m in models if m.status == "active" and m.id not in skips and m.full_id not in skips
     ]
@@ -300,7 +328,9 @@ def rank_catalog(
         )
     else:
         paid = rank_paid_models(active_models, skip_models=skips)
-        free = rank_free_models(active_models, skip_models=skips)
+        free = rank_free_models(
+            active_models, skip_models=skips, allow_contributor=allow_contributor
+        )
         seen = {m.full_id for m in paid} | {m.full_id for m in free}
         remaining = sorted(
             [m for m in active_models if m.full_id not in seen],
@@ -308,7 +338,13 @@ def rank_catalog(
         )
         ranked = paid + free + remaining
 
-    tiers_map = allocate_tiers(active_models, mode=mode, skip_models=skips)
+    tiers_map = allocate_tiers(
+        active_models,
+        mode=mode,
+        skip_models=skips,
+        allow_contributor=allow_contributor,
+        min_context=min_context,
+    )
     tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
 
     # Assign rank index (1-based) and tier
