@@ -8,6 +8,9 @@
     },
     "format": {
       "command": "uv run ruff format --check"
+    },
+    "update-snapshot": {
+      "command": "uv run opencode-go-model-optimizer fetch --update-reference"
     }
   },
   "metadataGeneration": {
