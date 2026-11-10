@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -19,8 +20,10 @@ from opencode_go_model_optimizer.formatters.output import (
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 from opencode_go_model_optimizer.ingest.snapshot import (
     fetch_and_build_snapshot,
+    load_cached_snapshot,
     load_reference_snapshot,
     load_snapshot,
+    save_cached_snapshot,
     save_snapshot,
     update_reference_snapshot,
 )
@@ -65,6 +68,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--snapshot",
         help="Path to offline snapshot JSON file",
     )
+    select_parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
+        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
+    )
 
     # rank subcommand
     rank_parser = subparsers.add_parser("rank", help="Rank all active models in the catalog")
@@ -94,6 +103,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rank_parser.add_argument(
         "--snapshot",
         help="Path to offline snapshot JSON file",
+    )
+    rank_parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
+        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
     )
     rank_parser.add_argument(
         "-o",
@@ -137,13 +152,22 @@ def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
 def _load_or_fetch_models(
     snapshot_path: str | None = None,
     plan: str = "go",
+    cache_ttl: int = 0,
 ) -> tuple[list[NormalizedModel], str]:
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
     if snapshot_path:
         snap = load_snapshot(snapshot_path)
         return snap.models, snap.plan
+
+    if cache_ttl > 0:
+        cached = load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)
+        if cached:
+            return cached.models, cached.plan
+
     try:
         snap = fetch_and_build_snapshot(plan=plan)
+        if cache_ttl > 0:
+            save_cached_snapshot(snap)
         return snap.models, snap.plan
     except (httpx.HTTPError, OSError, ValueError):
         ref_snap = load_reference_snapshot()
@@ -166,7 +190,8 @@ def _write_output(content: str, out_path: str | None = None) -> None:
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
     target_plan = getattr(args, "plan", "go") or "go"
-    models, plan = _load_or_fetch_models(args.snapshot, plan=target_plan)
+    cache_ttl = getattr(args, "cache_ttl", 0) or 0
+    models, plan = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
     mode = _resolve_mode(args.mode, models)
 
     tiers = allocate_tiers(models, mode=mode)
@@ -185,7 +210,8 @@ def handle_select(args: argparse.Namespace) -> int:
 def handle_rank(args: argparse.Namespace) -> int:
     """Handle the 'rank' command."""
     target_plan = getattr(args, "plan", "go") or "go"
-    models, _ = _load_or_fetch_models(args.snapshot, plan=target_plan)
+    cache_ttl = getattr(args, "cache_ttl", 0) or 0
+    models, _ = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
     mode = _resolve_mode(args.mode, models)
 
     ranked = rank_catalog(models, mode=mode)

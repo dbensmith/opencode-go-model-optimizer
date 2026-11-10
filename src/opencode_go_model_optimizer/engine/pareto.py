@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Callable, Sequence
 
@@ -75,6 +76,20 @@ def fisher_jenks_3_clusters(
     if n == 3:
         return sorted_m[:1], sorted_m[1:2], sorted_m[2:]
 
+    p1 = [0.0] * (n + 1)
+    p2 = [0.0] * (n + 1)
+    for idx, val in enumerate(qs, start=1):
+        p1[idx] = p1[idx - 1] + val
+        p2[idx] = p2[idx - 1] + val * val
+
+    def range_ssd(start: int, end: int) -> float:
+        cnt = end - start
+        if cnt <= 1:
+            return 0.0
+        s1 = p1[end] - p1[start]
+        s2 = p2[end] - p2[start]
+        return max(0.0, s2 - (s1 * s1) / cnt)
+
     best_wcss = float("inf")
     best_splits = (1, 2)
 
@@ -83,7 +98,7 @@ def fisher_jenks_3_clusters(
             # Avoid splitting identical values
             if qs[i - 1] == qs[i] or qs[j - 1] == qs[j]:
                 continue
-            wcss = ssd(qs[:i]) + ssd(qs[i:j]) + ssd(qs[j:])
+            wcss = range_ssd(0, i) + range_ssd(i, j) + range_ssd(j, n)
             if wcss < best_wcss:
                 best_wcss = wcss
                 best_splits = (i, j)
@@ -92,7 +107,7 @@ def fisher_jenks_3_clusters(
     if best_wcss == float("inf"):
         for i in range(1, n - 1):
             for j in range(i + 1, n):
-                wcss = ssd(qs[:i]) + ssd(qs[i:j]) + ssd(qs[j:])
+                wcss = range_ssd(0, i) + range_ssd(i, j) + range_ssd(j, n)
                 if wcss < best_wcss:
                     best_wcss = wcss
                     best_splits = (i, j)
@@ -123,21 +138,46 @@ def evaluate_pareto(
         return models
 
     # 2. Compute BPE over benchmarked pool
-    for m in benchmarked:
-        q = effective_quality(m)
-        burn = m.composite_burn_pct or 0.0
+    qb_list = [(effective_quality(m), m.composite_burn_pct or 0.0) for m in benchmarked]
+
+    # Precompute min_burn_at_q using unique qualities sorted descending
+    unique_qs = sorted({q for q, _ in qb_list}, reverse=True)
+    q_to_min_burn: dict[float, float] = {}
+    running_min_burn = float("inf")
+    for uq in unique_qs:
+        burns_at_uq = [b for q, b in qb_list if q == uq]
+        running_min_burn = min(running_min_burn, min(burns_at_uq))
+        q_to_min_burn[uq] = running_min_burn
+
+    # Precompute max_q_at_burn using models sorted by burn ascending
+    sorted_by_burn = sorted(
+        [item for item in qb_list if not math.isnan(item[1])],
+        key=lambda x: x[1],
+    )
+    burns_sorted = [x[1] for x in sorted_by_burn]
+    prefix_max_q: list[float] = []
+    curr_max_q = -float("inf")
+    for q_val, _ in sorted_by_burn:
+        curr_max_q = max(curr_max_q, q_val)
+        prefix_max_q.append(curr_max_q)
+
+    for idx, m in enumerate(benchmarked):
+        q, burn = qb_list[idx]
 
         # Factor 1: Burn Efficiency against peers with Quality >= q
-        peers_ge_q = [p for p in benchmarked if effective_quality(p) >= q]
-        min_burn_at_q = min(p.composite_burn_pct or 0.0 for p in peers_ge_q) if peers_ge_q else burn
+        min_burn_at_q = q_to_min_burn.get(q, burn)
         if math.isinf(burn) or math.isnan(burn) or burn <= 0.0:
             burn_eff = 1.0 if burn == 0.0 else 0.0
         else:
             burn_eff = min(1.0, min_burn_at_q / burn)
 
         # Factor 2: Quality Efficiency against peers with burn <= burn
-        peers_le_burn = [p for p in benchmarked if (p.composite_burn_pct or 0.0) <= burn + 1e-9]
-        max_q_at_burn = max(effective_quality(p) for p in peers_le_burn) if peers_le_burn else q
+        if math.isnan(burn) or not burns_sorted:
+            max_q_at_burn = q
+        else:
+            idx_b = bisect.bisect_right(burns_sorted, burn + 1e-9)
+            max_q_at_burn = prefix_max_q[idx_b - 1] if idx_b > 0 else q
+
         qual_eff = min(1.0, (q / max_q_at_burn) ** 2) if max_q_at_burn > 0 else 1.0
 
         if math.isnan(burn_eff):

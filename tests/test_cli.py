@@ -38,10 +38,17 @@ def _create_temp_snapshot(tmp_path: Path) -> Path:
 
 
 def test_parse_args_select():
-    args = parse_args(["select", "--format", "json", "--mode", "allowance"])
+    args = parse_args(["select", "--format", "json", "--mode", "allowance", "--cache-ttl", "300"])
     assert args.command == "select"
     assert args.format == "json"
     assert args.mode == "allowance"
+    assert args.cache_ttl == 300
+
+
+def test_parse_args_rank():
+    args = parse_args(["rank", "--format", "json", "--cache-ttl", "600"])
+    assert args.command == "rank"
+    assert args.cache_ttl == 600
 
 
 def test_main_no_args(capsys):
@@ -230,6 +237,26 @@ def test_load_or_fetch_models(tmp_path):
         models, plan = _load_or_fetch_models(plan="go-plus")
         assert len(models) == 1
         assert plan == "go-plus"
+
+    # Cache hit when cache_ttl > 0
+    with patch(
+        "opencode_go_model_optimizer.cli.load_cached_snapshot",
+        return_value=dummy_snap,
+    ) as mock_load:
+        models, plan = _load_or_fetch_models(plan="go-plus", cache_ttl=3600)
+        assert len(models) == 1
+        assert plan == "go-plus"
+        mock_load.assert_called_once_with(plan="go-plus", ttl_seconds=3600)
+
+    # Cache miss when cache_ttl > 0 -> fetches and saves cache
+    with (
+        patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=None),
+        patch("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", return_value=dummy_snap),
+        patch("opencode_go_model_optimizer.cli.save_cached_snapshot") as mock_save,
+    ):
+        models, plan = _load_or_fetch_models(plan="go-plus", cache_ttl=3600)
+        assert len(models) == 1
+        mock_save.assert_called_once_with(dummy_snap)
 
     # Live fetch fails with network error, falls back to reference snapshot
     ref_snap = Snapshot(

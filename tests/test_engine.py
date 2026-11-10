@@ -199,10 +199,13 @@ def test_rank_catalog():
 
 
 def test_tie_break_key():
+    from opencode_go_model_optimizer.engine.allowance import _desc_str_key
+
     m1 = NormalizedModel(id="mod1", release_date="2026-05-01", limit=ModelLimit(context=128000))
-    assert tie_break_key(m1) == ("2026-05-01", 128000, "mod1")
+    assert tie_break_key(m1) == (_desc_str_key("2026-05-01"), -128000, "mod1")
     m2 = NormalizedModel(id="mod2", release_date="", limit=ModelLimit(context=64000))
-    assert tie_break_key(m2) == ("", 64000, "mod2")
+    assert tie_break_key(m2) == (_desc_str_key(""), -64000, "mod2")
+    assert _desc_str_key("2026-05-01") < _desc_str_key("2026-04-30")
 
 
 def test_compute_turn_cost_zero_cost():

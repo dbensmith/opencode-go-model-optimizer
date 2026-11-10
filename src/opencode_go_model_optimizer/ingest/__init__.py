@@ -24,8 +24,11 @@ from opencode_go_model_optimizer.ingest.models import (
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
     fetch_and_build_snapshot,
+    get_cache_snapshot_path,
+    load_cached_snapshot,
     load_snapshot,
     merge_docs_pricing,
+    save_cached_snapshot,
     save_snapshot,
 )
 
@@ -40,6 +43,8 @@ __all__ = [
     "fetch_and_build_snapshot",
     "fetch_catalogue",
     "fetch_docs_mdx",
+    "get_cache_snapshot_path",
+    "load_cached_snapshot",
     "load_snapshot",
     "merge_docs_pricing",
     "model_from_dict",
@@ -49,5 +54,6 @@ __all__ = [
     "parse_go_pricing",
     "parse_price_value",
     "parse_table_rows",
+    "save_cached_snapshot",
     "save_snapshot",
 ]
