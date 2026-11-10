@@ -77,6 +77,8 @@ def merge_docs_pricing(
                 m.cost.input = info["input_cost"]
             if m.cost.cache_read == 0.0 and info["cached_read_cost"] > 0:
                 m.cost.cache_read = info["cached_read_cost"]
+            if m.cost.cache_write == 0.0 and info.get("cached_write_cost", 0) > 0:
+                m.cost.cache_write = info["cached_write_cost"]
 
         bench = benchmarks.get(m.id) or benchmarks.get(key_id)
         if bench:

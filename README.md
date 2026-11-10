@@ -41,7 +41,7 @@ Rather than proprietary or vendor-specific labels, models are classified into st
 - **`light`**: High-throughput, low-latency, lightweight models.
 - **`free`**: Active zero-cost models (promos, contributor tiers, or unmetered).
 
-Consumers (such as Chezmoi dotfiles, Open GSD, Paseo, or custom agent orchestrators) map these standard tiers to their own internal configs.
+Consumers (such as agent orchestrators, developer tools, CI workflows, or configuration managers) map these standard tiers to their own internal configs.
 
 ### Operating Modes
 

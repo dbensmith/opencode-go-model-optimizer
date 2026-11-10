@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -127,7 +128,7 @@ def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
     """Resolve auto mode to either pareto or allowance based on API key and data."""
     if mode != "auto":
         return mode
-    if any(m.aa_iq is not None for m in models):
+    if os.environ.get("AA_API_KEY") and any(m.aa_iq is not None for m in models):
         return "pareto"
     return "allowance"
 
@@ -188,10 +189,10 @@ def handle_rank(args: argparse.Namespace) -> int:
 
     ranked = rank_catalog(models, mode=mode)
 
-    if args.table or args.format == "table":
-        out = format_rank_table(ranked, mode=mode)
-    else:
+    if args.format == "json" and not args.table:
         out = format_rank_json(ranked)
+    else:
+        out = format_rank_table(ranked, mode=mode)
 
     _write_output(out, args.output)
     return 0

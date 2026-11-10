@@ -96,15 +96,35 @@ def allocate_tiers_allowance(
     # Fallback to any remaining unused paid models
     for tier in STANDARD_TIERS:
         if tier not in selected:
-            if tier == "free" and free_ranked:
-                selected["free"] = free_ranked[0].full_id
-            elif paid_ranked:
-                fallback = next(
-                    (m for m in paid_ranked if m.id not in used_model_ids),
-                    paid_ranked[0],
+            if tier == "free":
+                free_pick = next(
+                    (
+                        m
+                        for m in free_ranked
+                        if m.id not in used_model_ids and m.full_id not in used_model_ids
+                    ),
+                    None,
                 )
-                selected[tier] = fallback.full_id
-                used_model_ids.add(fallback.id)
+                selected["free"] = (
+                    free_pick.full_id
+                    if free_pick
+                    else (free_ranked[0].full_id if free_ranked else "")
+                )
+            elif eligible_paid:
+                fallback = next(
+                    (
+                        m
+                        for m in paid_ranked
+                        if m.id not in used_model_ids and m.full_id not in used_model_ids
+                    ),
+                    None,
+                )
+                if fallback:
+                    selected[tier] = fallback.full_id
+                    used_model_ids.add(fallback.id)
+                    used_model_ids.add(fallback.full_id)
+                else:
+                    selected[tier] = ""
             else:
                 selected[tier] = ""
 
@@ -156,9 +176,20 @@ def allocate_tiers_pareto(
                 used_model_ids.add(hit.full_id)
 
     if "free" not in selected and free_ranked:
-        selected["free"] = free_ranked[0].full_id
-        used_model_ids.add(free_ranked[0].id)
-        used_model_ids.add(free_ranked[0].full_id)
+        free_pick = next(
+            (
+                m
+                for m in free_ranked
+                if m.id not in used_model_ids and m.full_id not in used_model_ids
+            ),
+            None,
+        )
+        if free_pick:
+            selected["free"] = free_pick.full_id
+            used_model_ids.add(free_pick.id)
+            used_model_ids.add(free_pick.full_id)
+        elif free_ranked:
+            selected["free"] = free_ranked[0].full_id
 
     if benchmarked:
         frontier = [m for m in benchmarked if m.is_pareto]
@@ -166,16 +197,25 @@ def allocate_tiers_pareto(
             f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(
                 frontier, key=lambda m: m.aa_iq or 0.0
             )
-            heavy_cutoff = (min(m.aa_iq for m in f_heavy) + max(m.aa_iq for m in f_balanced)) / 2.0
-            balanced_cutoff = (
-                min(m.aa_iq for m in f_balanced) + max(m.aa_iq for m in f_light)
-            ) / 2.0
+            if f_heavy and f_balanced and f_light:
+                heavy_cutoff = (
+                    min((m.aa_iq or 0.0) for m in f_heavy)
+                    + max((m.aa_iq or 0.0) for m in f_balanced)
+                ) / 2.0
+                balanced_cutoff = (
+                    min((m.aa_iq or 0.0) for m in f_balanced)
+                    + max((m.aa_iq or 0.0) for m in f_light)
+                ) / 2.0
 
-            tier_heavy = [m for m in benchmarked if (m.aa_iq or 0.0) >= heavy_cutoff]
-            tier_balanced = [
-                m for m in benchmarked if heavy_cutoff > (m.aa_iq or 0.0) >= balanced_cutoff
-            ]
-            tier_light = [m for m in benchmarked if (m.aa_iq or 0.0) < balanced_cutoff]
+                tier_heavy = [m for m in benchmarked if (m.aa_iq or 0.0) >= heavy_cutoff]
+                tier_balanced = [
+                    m for m in benchmarked if heavy_cutoff > (m.aa_iq or 0.0) >= balanced_cutoff
+                ]
+                tier_light = [m for m in benchmarked if (m.aa_iq or 0.0) < balanced_cutoff]
+            else:
+                tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
+                    benchmarked, key=lambda m: m.aa_iq or 0.0
+                )
         else:
             tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
                 benchmarked, key=lambda m: m.aa_iq or 0.0

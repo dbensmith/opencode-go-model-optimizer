@@ -1,7 +1,7 @@
 [project]
 name = "opencode-go-model-optimizer"
 version = "0.1.0"
-description = "Dynamic model tiering, Pareto efficiency ranker, and GSD selector for OpenCode Go"
+description = "Dynamic model tiering, Pareto efficiency ranker, and capability tier selector for OpenCode Go"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -23,6 +23,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.8.0",
 ]
 

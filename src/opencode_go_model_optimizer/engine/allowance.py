@@ -1,4 +1,4 @@
-"""Allowance ranking engine matching the proven dotfiles heuristic."""
+"""Allowance ranking engine using deterministic allowance and cost heuristics."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 def tie_break_key(m: NormalizedModel) -> tuple[str, int, str]:
     """Deterministic tie-breaking key: release_date desc, context desc, id asc."""
-    # Negate context for descending numerical sort
-    # Reverse string for release_date by using raw string in reverse or sort lambda
     return (m.release_date or "", m.limit.context, m.id)
 
 
@@ -67,18 +65,7 @@ def rank_paid_models(
         m for m in models if is_eligible_paid(m) and m.id not in skips and m.full_id not in skips
     ]
 
-    # Deterministic multi-key sort:
-    # 1. allowance DESC -> -allowance
-    # 2. cost.output ASC -> cost.output
-    # 3. release_date DESC -> inverted via custom tuple comparison or multi-pass stable sort
-    def sort_key(m: NormalizedModel) -> tuple[float, float, str, int, str]:
-        allowance = m.monthly_allowance or 0.0
-        return (
-            -allowance,
-            m.cost.output,
-        )
-
-    # Use stable sort passes from least significant to most significant:
+    # Stable multi-pass sort from least significant to most significant:
     # 1. id ASC
     pass1 = sorted(eligible, key=lambda m: m.id)
     # 2. context DESC
