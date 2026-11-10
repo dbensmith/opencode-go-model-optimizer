@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
+import time
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -25,12 +27,15 @@ def fetch_aa_benchmarks(
     if client is None:
         client = httpx.Client(
             timeout=10.0,
-            headers={"x-api-key": api_key, "User-Agent": "opencode-go-model-optimizer/0.1.0"},
+            headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"},
         )
         close_client = True
 
     try:
-        r = client.get("https://artificialanalysis.ai/api/v2/data/llms/models")
+        r = client.get(
+            "https://artificialanalysis.ai/api/v2/data/llms/models",
+            headers={"x-api-key": api_key},
+        )
         r.raise_for_status()
         data = r.json()
         models = data if isinstance(data, list) else data.get("data", [])
@@ -159,34 +164,86 @@ def load_reference_snapshot() -> Snapshot | None:
     return None
 
 
+def get_cache_snapshot_path(plan: str = "go") -> Path:
+    """Return filesystem path for the local cached snapshot."""
+    base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return base / "opencode-go-model-optimizer" / f"snapshot-{plan}.json"
+
+
+def load_cached_snapshot(plan: str = "go", ttl_seconds: int = 3600) -> Snapshot | None:
+    """Load cached snapshot if within TTL, else return None."""
+    if ttl_seconds <= 0:
+        return None
+    path = get_cache_snapshot_path(plan=plan)
+    if not path.exists():
+        return None
+    try:
+        if time.time() - path.stat().st_mtime <= ttl_seconds:
+            return load_snapshot(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def save_cached_snapshot(snapshot: Snapshot) -> Path | None:
+    """Write snapshot to local cache directory and return the path."""
+    target_path = get_cache_snapshot_path(plan=snapshot.plan)
+    try:
+        save_snapshot(snapshot, target_path)
+        return target_path
+    except OSError:
+        return None
+
+
 def fetch_and_build_snapshot(
     plan: str = "go",
     client: httpx.Client | None = None,
     use_reference_benchmarks: bool = True,
 ) -> Snapshot:
     """Fetch live data from catalogue and docs and build a Snapshot."""
-    models = fetch_catalogue(client=client)
-    docs_text = fetch_docs_mdx(client=client)
-    pricing = parse_go_pricing(docs_text, plan=plan)
+    close_client = False
+    active_client = client
+    if active_client is None:
+        active_client = httpx.Client(
+            timeout=10.0,
+            headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"},
+        )
+        close_client = True
 
-    aa_benchmarks: dict[str, dict[str, Any]] | None = None
-    aa_key = os.environ.get("AA_API_KEY")
-    if aa_key:
-        aa_benchmarks = fetch_aa_benchmarks(aa_key, client=client)
-    elif use_reference_benchmarks:
-        ref_snap = load_reference_snapshot()
-        if ref_snap:
-            aa_benchmarks = {
-                m.id: {
-                    "iq": m.aa_iq,
-                    "coding": m.aa_coding,
-                    "tps": m.speed_tps,
+    try:
+        aa_key = os.environ.get("AA_API_KEY")
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            fut_cat = executor.submit(fetch_catalogue, client=active_client)
+            fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
+            fut_aa = (
+                executor.submit(fetch_aa_benchmarks, aa_key, client=active_client)
+                if aa_key
+                else None
+            )
+
+            models = fut_cat.result()
+            docs_text = fut_docs.result()
+            aa_benchmarks = fut_aa.result() if fut_aa is not None else None
+
+        pricing = parse_go_pricing(docs_text, plan=plan)
+
+        if not aa_benchmarks and not aa_key and use_reference_benchmarks:
+            ref_snap = load_reference_snapshot()
+            if ref_snap:
+                aa_benchmarks = {
+                    m.id: {
+                        "iq": m.aa_iq,
+                        "coding": m.aa_coding,
+                        "tps": m.speed_tps,
+                    }
+                    for m in ref_snap.models
+                    if m.aa_iq is not None
                 }
-                for m in ref_snap.models
-                if m.aa_iq is not None
-            }
 
-    return create_snapshot(models, pricing, plan=plan, aa_benchmarks=aa_benchmarks)
+        return create_snapshot(models, pricing, plan=plan, aa_benchmarks=aa_benchmarks)
+    finally:
+        if close_client and active_client:
+            active_client.close()
 
 
 def update_reference_snapshot(

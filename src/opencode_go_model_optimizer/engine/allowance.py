@@ -7,9 +7,14 @@ import math
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
-def tie_break_key(m: NormalizedModel) -> tuple[str, int, str]:
+def _desc_str_key(s: str) -> tuple[int, ...]:
+    """Produce a sort key that reverses lexicographical string order in a single pass."""
+    return (*(-ord(c) for c in s), 0)
+
+
+def tie_break_key(m: NormalizedModel) -> tuple[tuple[int, ...], int, str]:
     """Deterministic tie-breaking key: release_date desc, context desc, id asc."""
-    return (m.release_date or "", m.limit.context, m.id)
+    return (_desc_str_key(m.release_date or ""), -m.limit.context, m.id)
 
 
 def is_eligible_free(m: NormalizedModel, allow_contributor: bool = True) -> bool:
@@ -48,11 +53,10 @@ def rank_free_models(
         and m.full_id not in skips
     ]
 
-    # Stable multi-pass sort: id ASC -> context DESC -> release_date DESC
-    pass1 = sorted(eligible, key=lambda m: m.id)
-    pass2 = sorted(pass1, key=lambda m: m.limit.context, reverse=True)
-    pass3 = sorted(pass2, key=lambda m: m.release_date or "", reverse=True)
-    return pass3
+    return sorted(
+        eligible,
+        key=lambda m: (_desc_str_key(m.release_date or ""), -m.limit.context, m.id),
+    )
 
 
 def rank_paid_models(
@@ -65,16 +69,13 @@ def rank_paid_models(
         m for m in models if is_eligible_paid(m) and m.id not in skips and m.full_id not in skips
     ]
 
-    # Stable multi-pass sort from least significant to most significant:
-    # 1. id ASC
-    pass1 = sorted(eligible, key=lambda m: m.id)
-    # 2. context DESC
-    pass2 = sorted(pass1, key=lambda m: m.limit.context, reverse=True)
-    # 3. release_date DESC
-    pass3 = sorted(pass2, key=lambda m: m.release_date or "", reverse=True)
-    # 4. output cost ASC
-    pass4 = sorted(pass3, key=lambda m: m.cost.output)
-    # 5. allowance DESC
-    pass5 = sorted(pass4, key=lambda m: m.monthly_allowance or 0.0, reverse=True)
-
-    return pass5
+    return sorted(
+        eligible,
+        key=lambda m: (
+            -(m.monthly_allowance or 0.0),
+            m.cost.output,
+            _desc_str_key(m.release_date or ""),
+            -m.limit.context,
+            m.id,
+        ),
+    )

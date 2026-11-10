@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,10 +37,13 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
     fetch_aa_benchmarks,
     fetch_and_build_snapshot,
+    get_cache_snapshot_path,
     get_reference_snapshot_path,
+    load_cached_snapshot,
     load_reference_snapshot,
     load_snapshot,
     merge_docs_pricing,
+    save_cached_snapshot,
     save_snapshot,
     update_reference_snapshot,
 )
@@ -663,3 +667,78 @@ def test_fetch_and_build_and_update_reference(tmp_path):
         ret_path = update_reference_snapshot(plan="go")
         assert ret_path == ref_target
         assert ref_target.exists()
+
+
+def test_cache_snapshot_paths_and_operations(tmp_path):
+    # 1. get_cache_snapshot_path with XDG_CACHE_HOME
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        p1 = get_cache_snapshot_path("go-plus")
+        assert p1 == tmp_path / "opencode-go-model-optimizer" / "snapshot-go-plus.json"
+
+    # 2. get_cache_snapshot_path without XDG_CACHE_HOME
+    with patch.dict(os.environ, {}, clear=True):
+        p2 = get_cache_snapshot_path("go")
+        assert ".cache" in str(p2)
+
+    # 3. load_cached_snapshot with ttl <= 0
+    assert load_cached_snapshot("go", ttl_seconds=0) is None
+    assert load_cached_snapshot("go", ttl_seconds=-5) is None
+
+    # 4. load_cached_snapshot when file doesn't exist
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        assert load_cached_snapshot("go", ttl_seconds=3600) is None
+
+    # 5. save_cached_snapshot and load_cached_snapshot roundtrip
+    snap = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[NormalizedModel(id="cached-m")],
+        metadata=SnapshotMetadata(),
+    )
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        saved_path = save_cached_snapshot(snap)
+        assert saved_path is not None
+        assert saved_path.exists()
+
+        # Load fresh cache (valid TTL)
+        loaded = load_cached_snapshot("go", ttl_seconds=3600)
+        assert loaded is not None
+        assert loaded.models[0].id == "cached-m"
+
+        # Expired cache (time exceeded)
+        with patch("time.time", return_value=time.time() + 10000):
+            expired = load_cached_snapshot("go", ttl_seconds=60)
+            assert expired is None
+
+        # Corrupt cache file
+        saved_path.write_text("{ corrupt json", encoding="utf-8")
+        assert load_cached_snapshot("go", ttl_seconds=3600) is None
+
+        # OSError during save_cached_snapshot
+        with patch(
+            "opencode_go_model_optimizer.ingest.snapshot.save_snapshot",
+            side_effect=OSError("Disk full"),
+        ):
+            assert save_cached_snapshot(snap) is None
+
+
+def test_fetch_and_build_snapshot_custom_client():
+    # Test fetch_and_build_snapshot with user-provided client (should not close user client)
+    custom_client = httpx.Client()
+    dummy_model = NormalizedModel(id="custom-m")
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[dummy_model],
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.parse_go_pricing",
+            return_value={},
+        ),
+    ):
+        snap = fetch_and_build_snapshot(plan="go", client=custom_client)
+        assert len(snap.models) == 1
+        assert not custom_client.is_closed
+    custom_client.close()
