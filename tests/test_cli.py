@@ -1,7 +1,6 @@
 """Tests for opencode-go-model-optimizer CLI."""
 
 import json
-import os
 import runpy
 from pathlib import Path
 from unittest.mock import patch
@@ -192,20 +191,21 @@ def test_cli_fetch_update_reference(tmp_path):
 
 def test_resolve_mode():
     m_with_iq = NormalizedModel(id="m1", aa_iq=60.0)
-    m_no_iq = NormalizedModel(id="m2")
+    m_with_coding = NormalizedModel(id="m2", aa_coding=75.0)
+    m_no_bench = NormalizedModel(id="m3")
+    m_inactive = NormalizedModel(id="m4", aa_iq=80.0, status="deprecated")
 
     # Explicit modes return as-is
     assert _resolve_mode("allowance", [m_with_iq]) == "allowance"
     assert _resolve_mode("pareto", [m_with_iq]) == "pareto"
 
-    # Auto mode with AA_API_KEY set and IQ present
-    with patch.dict(os.environ, {"AA_API_KEY": "test-key"}):
-        assert _resolve_mode("auto", [m_with_iq]) == "pareto"
-        assert _resolve_mode("auto", [m_no_iq]) == "allowance"
+    # Auto mode resolves to pareto whenever any active model has benchmark data
+    assert _resolve_mode("auto", [m_with_iq]) == "pareto"
+    assert _resolve_mode("auto", [m_with_coding]) == "pareto"
 
-    # Auto mode without AA_API_KEY
-    with patch.dict(os.environ, {}, clear=True):
-        assert _resolve_mode("auto", [m_with_iq]) == "allowance"
+    # Auto mode returns allowance if no active models have benchmarks
+    assert _resolve_mode("auto", [m_no_bench]) == "allowance"
+    assert _resolve_mode("auto", [m_inactive]) == "allowance"
 
 
 def test_load_or_fetch_models(tmp_path):

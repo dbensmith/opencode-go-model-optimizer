@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -125,10 +124,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
-    """Resolve auto mode to either pareto or allowance based on API key and data."""
+    """Resolve auto mode to either pareto or allowance based on benchmark data."""
     if mode != "auto":
         return mode
-    if os.environ.get("AA_API_KEY") and any(m.aa_iq is not None for m in models):
+    if any(
+        (m.aa_iq is not None or m.aa_coding is not None) for m in models if m.status == "active"
+    ):
         return "pareto"
     return "allowance"
 

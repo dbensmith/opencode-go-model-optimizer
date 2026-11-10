@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import math
+
 from opencode_go_model_optimizer.engine.allowance import rank_free_models, rank_paid_models
-from opencode_go_model_optimizer.engine.pareto import evaluate_pareto, fisher_jenks_3_clusters
+from opencode_go_model_optimizer.engine.pareto import (
+    effective_quality,
+    evaluate_pareto,
+    fisher_jenks_3_clusters,
+)
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
@@ -62,7 +68,7 @@ def allocate_tiers_allowance(
 
     if eligible_paid:
         c_heavy, c_balanced, c_light = fisher_jenks_3_clusters(
-            eligible_paid, key=lambda m: m.cost.output
+            eligible_paid, key=lambda m: math.log1p(m.cost.output)
         )
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
@@ -151,7 +157,7 @@ def allocate_tiers_pareto(
         m
         for m in evaluated
         if m.status == "active"
-        and m.aa_iq is not None
+        and (m.aa_iq is not None or m.aa_coding is not None)
         and not m.is_zero_cost
         and not m.is_contributor
         and not m.is_preview
@@ -192,43 +198,23 @@ def allocate_tiers_pareto(
             selected["free"] = free_ranked[0].full_id
 
     if benchmarked:
-        frontier = [m for m in benchmarked if m.is_pareto]
-        if len(frontier) >= 3:
-            f_heavy, f_balanced, f_light = fisher_jenks_3_clusters(
-                frontier, key=lambda m: m.aa_iq or 0.0
-            )
-            if f_heavy and f_balanced and f_light:
-                heavy_cutoff = (
-                    min((m.aa_iq or 0.0) for m in f_heavy)
-                    + max((m.aa_iq or 0.0) for m in f_balanced)
-                ) / 2.0
-                balanced_cutoff = (
-                    min((m.aa_iq or 0.0) for m in f_balanced)
-                    + max((m.aa_iq or 0.0) for m in f_light)
-                ) / 2.0
-
-                tier_heavy = [m for m in benchmarked if (m.aa_iq or 0.0) >= heavy_cutoff]
-                tier_balanced = [
-                    m for m in benchmarked if heavy_cutoff > (m.aa_iq or 0.0) >= balanced_cutoff
-                ]
-                tier_light = [m for m in benchmarked if (m.aa_iq or 0.0) < balanced_cutoff]
-            else:
-                tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
-                    benchmarked, key=lambda m: m.aa_iq or 0.0
-                )
-        else:
-            tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
-                benchmarked, key=lambda m: m.aa_iq or 0.0
-            )
+        min_pareto_q = min((effective_quality(m) for m in benchmarked if m.is_pareto), default=0.0)
+        competitive = [
+            m
+            for m in benchmarked
+            if (m.bpe or 0.0) >= 0.05 and effective_quality(m) >= min_pareto_q * 0.8
+        ]
+        pool = competitive if len(competitive) >= 3 else benchmarked
+        tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(pool, key=effective_quality)
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
-            if not cluster:
-                return None
             ranked = sorted(
                 cluster,
                 key=lambda m: (
+                    bool(m.is_pareto),
                     m.bpe or 0.0,
                     -(m.composite_burn_pct or 0.0),
+                    m.speed_tps or 0.0,
                     m.release_date or "",
                 ),
                 reverse=True,
@@ -236,7 +222,7 @@ def allocate_tiers_pareto(
             for m in ranked:
                 if m.id not in used_model_ids and m.full_id not in used_model_ids:
                     return m
-            return ranked[0]
+            return ranked[0] if ranked else None
 
         if "heavy" not in selected and tier_heavy:
             m = pick_best(tier_heavy)
@@ -302,12 +288,12 @@ def rank_catalog(
 
     if mode == "pareto":
         evaluated = evaluate_pareto(active_models)
-        # Sort by BPE desc, aa_iq desc, composite_burn asc
+        # Sort by BPE desc, effective_quality desc, composite_burn asc
         ranked = sorted(
             evaluated,
             key=lambda m: (
                 m.bpe or 0.0,
-                m.aa_iq or 0.0,
+                effective_quality(m),
                 -(m.composite_burn_pct or 0.0),
             ),
             reverse=True,
@@ -315,10 +301,19 @@ def rank_catalog(
     else:
         paid = rank_paid_models(active_models, skip_models=skips)
         free = rank_free_models(active_models, skip_models=skips)
-        ranked = paid + free
+        seen = {m.full_id for m in paid} | {m.full_id for m in free}
+        remaining = sorted(
+            [m for m in active_models if m.full_id not in seen],
+            key=lambda m: m.id,
+        )
+        ranked = paid + free + remaining
 
-    # Assign rank index (1-based)
+    tiers_map = allocate_tiers(active_models, mode=mode, skip_models=skips)
+    tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
+
+    # Assign rank index (1-based) and tier
     for idx, m in enumerate(ranked, start=1):
         m.rank = idx
+        m.tier = tier_by_full_id.get(m.full_id)
 
     return ranked

@@ -10,6 +10,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.pareto import (
     compute_quota_burn_pct,
     compute_turn_cost,
+    effective_quality,
     evaluate_pareto,
     fisher_jenks_3_clusters,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "allocate_tiers_pareto",
     "compute_quota_burn_pct",
     "compute_turn_cost",
+    "effective_quality",
     "evaluate_pareto",
     "fisher_jenks_3_clusters",
     "is_eligible_free",
