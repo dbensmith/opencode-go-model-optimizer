@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fetched_at": "2026-11-10T03:03:01+00:00",
+  "fetched_at": "2026-11-10T21:45:55+00:00",
   "plan": "go",
   "models": [
     {
@@ -20,7 +20,7 @@
         "context": 1048576,
         "output": 131072
       },
-      "monthly_allowance": null,
+      "monthly_allowance": "unlimited",
       "aa_iq": 30.0,
       "aa_coding": null,
       "speed_tps": 130.0,
@@ -97,9 +97,9 @@
       "id": "deepseek-v4.1-flash",
       "provider_id": "opencode-go",
       "full_id": "opencode-go/deepseek-v4.1-flash",
-      "name": "DeepSeek V4.1 Flash",
+      "name": "DeepSeek V4.1 Flash 1017",
       "status": "active",
-      "release_date": "2026-09-10",
+      "release_date": "2026-10-17",
       "cost": {
         "input": 0.15,
         "output": 0.6,
@@ -440,7 +440,7 @@
         "context": 262144,
         "output": 131072
       },
-      "monthly_allowance": null,
+      "monthly_allowance": "unlimited",
       "aa_iq": null,
       "aa_coding": null,
       "speed_tps": null,
@@ -590,7 +590,7 @@
         "context": 1000000,
         "output": 262144
       },
-      "monthly_allowance": null,
+      "monthly_allowance": "unlimited",
       "aa_iq": null,
       "aa_coding": null,
       "speed_tps": null,
