@@ -443,6 +443,7 @@ def test_fetch_aa_benchmarks():
             {"missing_slug": True},
             {
                 "slug": "model-slug-1",
+                "name": "Model Slug 1 Name",
                 "evaluations": {
                     "artificial_analysis_intelligence_index": 85.5,
                     "artificial_analysis_coding_index": 78.0,
@@ -464,9 +465,12 @@ def test_fetch_aa_benchmarks():
         )
         benchmarks = fetch_aa_benchmarks("valid-key")
         assert "model-slug-1" in benchmarks
+        assert "modelslug1" in benchmarks
+        assert "modelslug1name" in benchmarks
         assert benchmarks["model-slug-1"]["iq"] == 85.5
         assert benchmarks["model-slug-1"]["coding"] == 78.0
         assert benchmarks["model-slug-1"]["tps"] == 45.2
+        assert benchmarks["modelslug1name"]["iq"] == 85.5
 
         assert "model-id-2" in benchmarks
         assert benchmarks["model-id-2"]["iq"] is None
@@ -484,6 +488,8 @@ def test_merge_docs_pricing_and_benchmarks():
         name="Test Model",
         cost=TokenCost(input=0.0, output=0.0, cache_read=0.0, cache_write=0.0),
     )
+    assert m.is_zero_cost is True
+
     pricing = {
         "testmodel": {
             "allowance": 80.0,
@@ -494,7 +500,7 @@ def test_merge_docs_pricing_and_benchmarks():
         }
     }
     benchmarks = {
-        "test-model": {
+        "testmodel": {
             "iq": 72.0,
             "coding": 68.0,
             "tps": 50.0,
@@ -506,9 +512,36 @@ def test_merge_docs_pricing_and_benchmarks():
     assert merged[0].cost.output == 3.50
     assert merged[0].cost.cache_read == 0.15
     assert merged[0].cost.cache_write == 0.40
+    assert merged[0].is_zero_cost is False
     assert merged[0].aa_iq == 72.0
     assert merged[0].aa_coding == 68.0
     assert merged[0].speed_tps == 50.0
+
+    # Test benchmark lookup by norm_name(name) and is_zero_cost remains True for 0 cost
+    m2 = NormalizedModel(
+        id="model-custom-id",
+        name="Custom Display Name",
+        cost=TokenCost(input=0.0, output=0.0),
+    )
+    pricing2 = {
+        "modelcustomid": {
+            "allowance": 100.0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "cached_read_cost": 0.0,
+        }
+    }
+    benchmarks2 = {
+        "customdisplayname": {
+            "iq": 90.0,
+            "coding": 85.0,
+            "tps": 60.0,
+        }
+    }
+    merged2 = merge_docs_pricing([m2], pricing2, aa_benchmarks=benchmarks2)
+    assert merged2[0].is_zero_cost is True
+    assert merged2[0].aa_iq == 90.0
+    assert merged2[0].aa_coding == 85.0
 
 
 def test_reference_snapshot_paths_and_corrupt_fallback(tmp_path):

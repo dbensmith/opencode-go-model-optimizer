@@ -44,11 +44,15 @@ def fetch_aa_benchmarks(
             coding = evals.get("artificial_analysis_coding_index")
             tps = item.get("median_output_tokens_per_second")
             if slug:
-                benchmarks[slug] = {
+                entry = {
                     "iq": float(iq) if iq is not None else None,
                     "coding": float(coding) if coding is not None else None,
                     "tps": float(tps) if tps is not None else None,
                 }
+                benchmarks[slug] = entry
+                benchmarks[norm_name(slug)] = entry
+                if item.get("name") and norm_name(str(item["name"])):
+                    benchmarks[norm_name(str(item["name"]))] = entry
         return benchmarks
     except (httpx.HTTPError, ValueError):
         return {}
@@ -79,8 +83,9 @@ def merge_docs_pricing(
                 m.cost.cache_read = info["cached_read_cost"]
             if m.cost.cache_write == 0.0 and info.get("cached_write_cost", 0) > 0:
                 m.cost.cache_write = info["cached_write_cost"]
+            m.is_zero_cost = m.cost.input == 0.0 and m.cost.output == 0.0
 
-        bench = benchmarks.get(m.id) or benchmarks.get(key_id)
+        bench = benchmarks.get(m.id) or benchmarks.get(key_id) or benchmarks.get(key_name)
         if bench:
             if m.aa_iq is None:
                 m.aa_iq = bench.get("iq")

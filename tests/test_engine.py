@@ -11,6 +11,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.pareto import (
     compute_quota_burn_pct,
     compute_turn_cost,
+    effective_quality,
     evaluate_pareto,
     fisher_jenks_3_clusters,
     ssd,
@@ -237,6 +238,24 @@ def test_compute_quota_burn_pct_guards():
     assert burn_default > 0.0
 
 
+def test_effective_quality():
+    # Both IQ and coding index present: 0.7 * iq + 0.3 * coding
+    m_both = NormalizedModel(id="m1", aa_iq=80.0, aa_coding=90.0)
+    assert abs(effective_quality(m_both) - (0.7 * 80.0 + 0.3 * 90.0)) < 1e-9
+
+    # Only IQ present
+    m_iq = NormalizedModel(id="m2", aa_iq=75.0)
+    assert effective_quality(m_iq) == 75.0
+
+    # Only coding present
+    m_coding = NormalizedModel(id="m3", aa_coding=85.0)
+    assert effective_quality(m_coding) == 85.0
+
+    # Neither present
+    m_none = NormalizedModel(id="m4")
+    assert effective_quality(m_none) == 0.0
+
+
 def test_ssd_empty_and_single():
     assert ssd([]) == 0.0
     assert ssd([10.0]) == 0.0
@@ -294,11 +313,15 @@ def test_evaluate_pareto_edge_cases():
     mC = NormalizedModel(
         id="mC", aa_iq=0.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
     )
-    models = [mA, mB, mC]
+    m_coding = NormalizedModel(
+        id="m_coding", aa_coding=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    models = [mA, mB, mC, m_coding]
     evaluate_pareto(models)
     assert mA.composite_burn_pct == 0.0
     assert mA.bpe is not None
     assert mC.bpe is not None
+    assert m_coding.bpe is not None
 
     # Test extreme burn (inf/nan) and nan guards for burn_eff and qual_eff
     mD = NormalizedModel(
@@ -365,18 +388,18 @@ def test_allocate_tiers_pareto_comprehensive():
     assert tiers_cutoffs["light"] == "opencode-go/f-light"
     assert tiers_cutoffs["free"] == "opencode-go/free-1"
 
-    # 3. Empty cluster fallback in cutoff calculation:
+    # 3. Empty cluster missing tier falls back to allowance picks
     with patch(
         "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
         side_effect=[
-            ([m1, m2], [m3], []),  # f_light is empty -> triggers else branch
-            ([m1, m4], [m2, m5], [m3, m6]),  # fallback clustering
+            ([m1, m2], [m3], []),  # tier_light is empty
+            ([m1], [m2], [m3]),  # fallback allocate_tiers_allowance
         ],
     ):
         tiers_fb = allocate_tiers_pareto(catalog)
         assert set(tiers_fb.keys()) == {"heavy", "balanced", "light", "free"}
 
-    # 4. len(frontier) < 3 branch:
+    # 4. Small benchmarked list (len < 3):
     t_small = allocate_tiers_pareto([m1, m2, m_free])
     assert set(t_small.keys()) == {"heavy", "balanced", "light", "free"}
 
@@ -392,26 +415,14 @@ def test_allocate_tiers_pareto_comprehensive():
     assert t_free_pinned["balanced"] == "opencode-go/free-1"
     assert t_free_pinned["free"] == "opencode-go/free-1"
 
-    # 7. Cluster returning None when empty in pick_best (line 218)
-    class _ToggleCluster(list):
-        def __init__(self, items):
-            super().__init__(items)
-            self.count = 0
-
-        def __bool__(self):
-            self.count += 1
-            return self.count == 1
-
+    # 7. Cluster returning ranked[0] when all models already in used_model_ids
     with patch(
         "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
-        side_effect=[
-            ([m1, m2], [m3], []),  # frontier clustering fails truthy check
-            (_ToggleCluster([m1]), [m2], [m3]),  # benchmarked clustering with toggle
-            ([m1], [m2], [m3]),  # fallback allocate_tiers_allowance
-        ],
+        return_value=([m1], [m1], [m2]),
     ):
-        t_toggle = allocate_tiers_pareto(catalog)
-        assert set(t_toggle.keys()) == {"heavy", "balanced", "light", "free"}
+        t_dup = allocate_tiers_pareto([m1, m2, m_free])
+        assert t_dup["heavy"] == "opencode-go/f-heavy"
+        assert t_dup["balanced"] == "opencode-go/f-heavy"
 
 
 def test_allocate_tiers_allowance_edge_cases():
@@ -456,19 +467,142 @@ def test_allocate_tiers_allowance_edge_cases():
         assert t_dup["balanced"] == "opencode-go/p1"
 
 
+def test_allocate_tiers_pareto_pick_best_sorting():
+    # 1. Pareto-optimal model beats non-Pareto even with lower BPE
+    m_pareto = NormalizedModel(
+        id="m_pareto",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.5,
+    )
+    m_non_pareto = NormalizedModel(
+        id="m_non_pareto",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=False,
+        bpe=0.9,
+    )
+    # 2. Lower burn beats higher burn when both Pareto and BPE tied
+    m_lower_burn = NormalizedModel(
+        id="m_lower_burn",
+        aa_iq=60.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=5.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=2.0,
+    )
+    m_higher_burn = NormalizedModel(
+        id="m_higher_burn",
+        aa_iq=60.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=5.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=10.0,
+    )
+    # 3. Higher speed_tps beats lower speed when burn tied
+    m_faster = NormalizedModel(
+        id="m_faster",
+        aa_iq=30.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        is_pareto=True,
+        bpe=0.7,
+        composite_burn_pct=1.0,
+        speed_tps=100.0,
+        release_date="2026-09-01",
+    )
+    m_slower = NormalizedModel(
+        id="m_slower",
+        aa_iq=30.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        is_pareto=True,
+        bpe=0.7,
+        composite_burn_pct=1.0,
+        speed_tps=50.0,
+        release_date="2026-09-01",
+    )
+    # 4. Newer release date beats older release date when speed tied
+    m_newer = NormalizedModel(
+        id="m_newer",
+        aa_iq=30.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        is_pareto=True,
+        bpe=0.7,
+        composite_burn_pct=1.0,
+        speed_tps=50.0,
+        release_date="2026-10-01",
+    )
+    m_older = NormalizedModel(
+        id="m_older",
+        aa_iq=30.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        is_pareto=True,
+        bpe=0.7,
+        composite_burn_pct=1.0,
+        speed_tps=50.0,
+        release_date="2026-09-01",
+    )
+    m_free = NormalizedModel(id="free-m", is_zero_cost=True)
+
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+        return_value=(
+            [m_pareto, m_non_pareto],
+            [m_lower_burn, m_higher_burn],
+            [m_faster, m_slower],
+        ),
+    ):
+        res = allocate_tiers_pareto(
+            [m_pareto, m_non_pareto, m_lower_burn, m_higher_burn, m_faster, m_slower, m_free]
+        )
+        assert res["heavy"] == "opencode-go/m_pareto"
+        assert res["balanced"] == "opencode-go/m_lower_burn"
+        assert res["light"] == "opencode-go/m_faster"
+
+    # Test release date tie breaker
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+        return_value=([m_pareto], [m_lower_burn], [m_newer, m_older]),
+    ):
+        res2 = allocate_tiers_pareto([m_pareto, m_lower_burn, m_newer, m_older, m_free])
+        assert res2["light"] == "opencode-go/m_newer"
+
+
 def test_rank_catalog_both_modes():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
 
+    # Test pareto mode without skips (all 4 tiers populated)
+    ranked_pareto_all = rank_catalog(models, mode="pareto")
+    pareto_tiers = {m.tier for m in ranked_pareto_all if m.tier is not None}
+    assert pareto_tiers == {"heavy", "balanced", "light", "free"}
+    assert any(m.tier is None for m in ranked_pareto_all)
+
+    # Test pareto mode with skip_models
     ranked_pareto = rank_catalog(models, mode="pareto", skip_models={"deepseek-v4.1-flash"})
     assert all(m.id != "deepseek-v4.1-flash" for m in ranked_pareto)
     assert all(m.rank is not None for m in ranked_pareto)
     assert [m.rank for m in ranked_pareto] == list(range(1, len(ranked_pareto) + 1))
 
+    # Test allowance mode with skips
     ranked_allowance = rank_catalog(models, mode="allowance", skip_models={"qwen3.8-max"})
     assert all(m.id != "qwen3.8-max" for m in ranked_allowance)
+    assert all(m.rank is not None for m in ranked_allowance)
     assert [m.rank for m in ranked_allowance] == list(range(1, len(ranked_allowance) + 1))
+    allowance_tiers = {m.tier for m in ranked_allowance if m.tier is not None}
+    assert "free" in allowance_tiers
+    assert any(m.tier is None for m in ranked_allowance)
+    # Remaining active models (e.g. preview) must be included and sorted by id
+    assert any(m.id == "step-5-preview" for m in ranked_allowance)
 
 
 def test_allocate_tiers_unified():

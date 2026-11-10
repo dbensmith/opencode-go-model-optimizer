@@ -47,12 +47,23 @@ def ssd(arr: Sequence[float]) -> float:
     return sum((x - mean) ** 2 for x in arr)
 
 
+def effective_quality(m: NormalizedModel) -> float:
+    """Compute effective quality score combining intelligence and coding indices."""
+    if m.aa_iq is not None and m.aa_coding is not None:
+        return 0.7 * m.aa_iq + 0.3 * m.aa_coding
+    if m.aa_iq is not None:
+        return float(m.aa_iq)
+    if m.aa_coding is not None:
+        return float(m.aa_coding)
+    return 0.0
+
+
 def fisher_jenks_3_clusters(
     models: list[NormalizedModel],
     key: Callable[[NormalizedModel], float] | None = None,
 ) -> tuple[list[NormalizedModel], list[NormalizedModel], list[NormalizedModel]]:
     """1D Fisher-Jenks Natural Breaks into 3 clusters (WCSS minimization)."""
-    val_fn = key or (lambda x: x.aa_iq or 0.0)
+    val_fn = key or effective_quality
     sorted_m = sorted(models, key=val_fn, reverse=True)
     qs = [val_fn(x) for x in sorted_m]
     n = len(qs)
@@ -103,7 +114,7 @@ def evaluate_pareto(
         m
         for m in models
         if m.status == "active"
-        and m.aa_iq is not None
+        and (m.aa_iq is not None or m.aa_coding is not None)
         and not m.is_zero_cost
         and not m.is_contributor
         and not m.is_preview
@@ -113,11 +124,11 @@ def evaluate_pareto(
 
     # 2. Compute BPE over benchmarked pool
     for m in benchmarked:
-        q = m.aa_iq or 0.0
+        q = effective_quality(m)
         burn = m.composite_burn_pct or 0.0
 
-        # Factor 1: Burn Efficiency against peers with IQ >= q
-        peers_ge_q = [p for p in benchmarked if (p.aa_iq or 0.0) >= q]
+        # Factor 1: Burn Efficiency against peers with Quality >= q
+        peers_ge_q = [p for p in benchmarked if effective_quality(p) >= q]
         min_burn_at_q = min(p.composite_burn_pct or 0.0 for p in peers_ge_q) if peers_ge_q else burn
         if math.isinf(burn) or math.isnan(burn) or burn <= 0.0:
             burn_eff = 1.0 if burn == 0.0 else 0.0
@@ -126,7 +137,7 @@ def evaluate_pareto(
 
         # Factor 2: Quality Efficiency against peers with burn <= burn
         peers_le_burn = [p for p in benchmarked if (p.composite_burn_pct or 0.0) <= burn + 1e-9]
-        max_q_at_burn = max((p.aa_iq or 0.0) for p in peers_le_burn) if peers_le_burn else q
+        max_q_at_burn = max(effective_quality(p) for p in peers_le_burn) if peers_le_burn else q
         qual_eff = min(1.0, (q / max_q_at_burn) ** 2) if max_q_at_burn > 0 else 1.0
 
         if math.isnan(burn_eff):
