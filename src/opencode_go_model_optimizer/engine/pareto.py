@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -33,7 +34,7 @@ def compute_quota_burn_pct(m: NormalizedModel) -> float:
 
     turns_per_mo = allowance / turn_cost
     if turns_per_mo <= 0.0:
-        return float("inf")
+        return 100000.0
 
     return (1000.0 / turns_per_mo) * 100.0
 
@@ -76,6 +77,15 @@ def fisher_jenks_3_clusters(
                 best_wcss = wcss
                 best_splits = (i, j)
 
+    # Fall back to unconstrained search if identical values prevented valid splits
+    if best_wcss == float("inf"):
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                wcss = ssd(qs[:i]) + ssd(qs[i:j]) + ssd(qs[j:])
+                if wcss < best_wcss:
+                    best_wcss = wcss
+                    best_splits = (i, j)
+
     i, j = best_splits
     return sorted_m[:i], sorted_m[i:j], sorted_m[j:]
 
@@ -109,12 +119,20 @@ def evaluate_pareto(
         # Factor 1: Burn Efficiency against peers with IQ >= q
         peers_ge_q = [p for p in benchmarked if (p.aa_iq or 0.0) >= q]
         min_burn_at_q = min(p.composite_burn_pct or 0.0 for p in peers_ge_q) if peers_ge_q else burn
-        burn_eff = 1.0 if burn == 0.0 else min(1.0, min_burn_at_q / burn)
+        if math.isinf(burn) or math.isnan(burn) or burn <= 0.0:
+            burn_eff = 1.0 if burn == 0.0 else 0.0
+        else:
+            burn_eff = min(1.0, min_burn_at_q / burn)
 
         # Factor 2: Quality Efficiency against peers with burn <= burn
         peers_le_burn = [p for p in benchmarked if (p.composite_burn_pct or 0.0) <= burn + 1e-9]
         max_q_at_burn = max((p.aa_iq or 0.0) for p in peers_le_burn) if peers_le_burn else q
         qual_eff = min(1.0, (q / max_q_at_burn) ** 2) if max_q_at_burn > 0 else 1.0
+
+        if math.isnan(burn_eff):
+            burn_eff = 0.0
+        if math.isnan(qual_eff):
+            qual_eff = 0.0
 
         bpe = burn_eff * qual_eff
         is_pareto = (burn <= min_burn_at_q + 1e-9) and (q >= max_q_at_burn - 1e-9)

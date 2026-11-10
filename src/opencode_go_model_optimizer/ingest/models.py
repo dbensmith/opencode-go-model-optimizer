@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 
 class TokenCost(BaseModel):
@@ -54,6 +55,29 @@ class NormalizedModel(BaseModel):
     bpe: float | None = None
     is_pareto: bool | None = None
     composite_burn_pct: float | None = None
+
+    @field_validator("monthly_allowance", mode="before")
+    @classmethod
+    def validate_allowance(cls, value: Any) -> float | None:
+        """Validate allowance, handling string 'unlimited' or float inf."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            val_lower = value.strip().lower()
+            if val_lower in ("unlimited", "inf", "+inf", "infinity"):
+                return float("inf")
+        try:
+            val = float(value)
+            return val
+        except (ValueError, TypeError):
+            return None
+
+    @field_serializer("monthly_allowance", when_used="json")
+    def serialize_allowance(self, value: float | None) -> float | str | None:
+        """Serialize float inf as string 'unlimited' for RFC 8259 JSON compliance."""
+        if value is not None and math.isinf(value):
+            return "unlimited"
+        return value
 
     def model_post_init(self, context: Any, /) -> None:
         """Derive helper flags and identifiers if not already set."""

@@ -132,23 +132,30 @@ def format_rank_table(
 
 def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
     """Format full catalog ranking as JSON array."""
-    data = [m.model_dump(exclude_none=True) for m in ranked_models]
+    data = [m.model_dump(mode="json", exclude_none=True) for m in ranked_models]
     return json.dumps(data, indent=2)
 
 
 def _render_table(headers: list[str], rows: list[list[str]]) -> str:
     """Render plain ASCII table with borders."""
-    col_widths = [len(h) for h in headers]
+    num_cols = len(headers)
+    norm_rows: list[list[str]] = []
     for row in rows:
+        if len(row) < num_cols:
+            norm_rows.append(list(row) + ["-"] * (num_cols - len(row)))
+        else:
+            norm_rows.append(list(row[:num_cols]))
+
+    col_widths = [len(h) for h in headers]
+    for row in norm_rows:
         for idx, cell in enumerate(row):
-            if idx < len(col_widths):
-                col_widths[idx] = max(col_widths[idx], len(str(cell)))
+            col_widths[idx] = max(col_widths[idx], len(str(cell)))
 
     sep = "+-" + "-+-".join("-" * w for w in col_widths) + "-+"
     header_line = "| " + " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)) + " |"
 
     out_lines = [sep, header_line, sep]
-    for row in rows:
+    for row in norm_rows:
         line = (
             "| " + " | ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row)) + " |"
         )

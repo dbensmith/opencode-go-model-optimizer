@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -12,6 +13,7 @@ import httpx
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
 
 DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
+HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
 
 
 def _extract_token_cost(cost_raw: Any) -> TokenCost:
@@ -23,39 +25,33 @@ def _extract_token_cost(cost_raw: Any) -> TokenCost:
     if "text" in cost_raw and isinstance(cost_raw["text"], dict):
         text_obj = cost_raw["text"]
         inp_obj = text_obj.get("input", {})
-        inp_price = (
-            inp_obj.get("price", 0.0) if isinstance(inp_obj, dict) else float(inp_obj or 0.0)
-        )
+        inp_price = inp_obj.get("price", 0.0) if isinstance(inp_obj, dict) else inp_obj
         cache_obj = inp_obj.get("cache", {}) if isinstance(inp_obj, dict) else {}
         cache_read = cache_obj.get("read", 0.0) if isinstance(cache_obj, dict) else 0.0
         cache_write = cache_obj.get("write", 0.0) if isinstance(cache_obj, dict) else 0.0
 
         out_obj = text_obj.get("output", {})
-        out_price = (
-            out_obj.get("price", 0.0) if isinstance(out_obj, dict) else float(out_obj or 0.0)
-        )
+        out_price = out_obj.get("price", 0.0) if isinstance(out_obj, dict) else out_obj
 
         return TokenCost(
-            input=float(inp_price),
-            output=float(out_price),
-            cache_read=float(cache_read),
-            cache_write=float(cache_write),
+            input=float(inp_price or 0.0),
+            output=float(out_price or 0.0),
+            cache_read=float(cache_read or 0.0),
+            cache_write=float(cache_write or 0.0),
         )
 
     # Case 2: Flat CLI format
-    inp_price = float(cost_raw.get("input", 0.0) or 0.0)
-    out_price = float(cost_raw.get("output", 0.0) or 0.0)
+    inp_price = cost_raw.get("input", 0.0)
+    out_price = cost_raw.get("output", 0.0)
     cache_dict = cost_raw.get("cache", {})
-    cache_read = float(cache_dict.get("read", 0.0) or 0.0) if isinstance(cache_dict, dict) else 0.0
-    cache_write = (
-        float(cache_dict.get("write", 0.0) or 0.0) if isinstance(cache_dict, dict) else 0.0
-    )
+    cache_read = cache_dict.get("read", 0.0) if isinstance(cache_dict, dict) else 0.0
+    cache_write = cache_dict.get("write", 0.0) if isinstance(cache_dict, dict) else 0.0
 
     return TokenCost(
-        input=inp_price,
-        output=out_price,
-        cache_read=cache_read,
-        cache_write=cache_write,
+        input=float(inp_price or 0.0),
+        output=float(out_price or 0.0),
+        cache_read=float(cache_read or 0.0),
+        cache_write=float(cache_write or 0.0),
     )
 
 
@@ -121,12 +117,7 @@ def parse_catalogue_cli(text: str) -> list[NormalizedModel]:
     for line in lines:
         stripped = line.strip()
         # Header line pattern: provider/id without JSON delimiters
-        if (
-            "/" in stripped
-            and not stripped.startswith("{")
-            and not stripped.startswith('"')
-            and not stripped.startswith("[")
-        ):
+        if HEADER_PATTERN.match(stripped):
             flush()
             cur_header = stripped
         elif cur_header is not None:

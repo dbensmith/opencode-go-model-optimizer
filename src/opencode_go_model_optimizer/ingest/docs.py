@@ -52,7 +52,8 @@ def parse_table_rows(section: str) -> list[list[str]]:
         line = line.strip()
         if not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.split("|")[1:-1]]
+        content = line.strip("|")
+        cells = [c.strip() for c in content.split("|")]
         if len(cells) < 2:
             continue
         first_col = cells[0].lower()
@@ -122,9 +123,10 @@ def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, 
         input_cost = parse_price_value(cells[1]) if len(cells) > 1 else 0.0
         output_cost = parse_price_value(cells[2]) if len(cells) > 2 else 0.0
         cached_read = parse_price_value(cells[3]) if len(cells) > 3 else 0.0
+        cached_write = parse_price_value(cells[4]) if len(cells) > 4 else 0.0
 
         existing = pricing_by_norm_name.get(key)
-        # Proven dotfiles rule: highest allowance wins; if tied, cheapest output wins
+        # Selection rule: highest allowance wins; if tied, cheapest output wins
         if (
             existing is None
             or allowance > existing["allowance"]
@@ -135,6 +137,7 @@ def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, 
                 "output_cost": output_cost,
                 "input_cost": input_cost,
                 "cached_read_cost": cached_read,
+                "cached_write_cost": cached_write,
                 "raw_name": raw_name,
             }
 

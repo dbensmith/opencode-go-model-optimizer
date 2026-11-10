@@ -1,18 +1,22 @@
 """Tests for ranking engines and capability tier allocator."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from opencode_go_model_optimizer.engine.allowance import (
     rank_free_models,
     rank_paid_models,
+    tie_break_key,
 )
 from opencode_go_model_optimizer.engine.pareto import (
     compute_quota_burn_pct,
     compute_turn_cost,
     evaluate_pareto,
     fisher_jenks_3_clusters,
+    ssd,
 )
 from opencode_go_model_optimizer.engine.tiers import (
+    allocate_tiers,
     allocate_tiers_allowance,
     allocate_tiers_pareto,
     rank_catalog,
@@ -188,3 +192,327 @@ def test_rank_catalog():
     assert len(ranked) > 0
     assert ranked[0].rank == 1
     assert ranked[1].rank == 2
+
+
+def test_tie_break_key():
+    m1 = NormalizedModel(id="mod1", release_date="2026-05-01", limit=ModelLimit(context=128000))
+    assert tie_break_key(m1) == ("2026-05-01", 128000, "mod1")
+    m2 = NormalizedModel(id="mod2", release_date="", limit=ModelLimit(context=64000))
+    assert tie_break_key(m2) == ("", 64000, "mod2")
+
+
+def test_compute_turn_cost_zero_cost():
+    m = NormalizedModel(id="zero-m", is_zero_cost=True, cost=TokenCost(input=1.0, output=2.0))
+    assert compute_turn_cost(m) == 0.0
+
+
+def test_compute_quota_burn_pct_guards():
+    # zero-cost model
+    m_zero = NormalizedModel(id="zero", is_zero_cost=True)
+    assert compute_quota_burn_pct(m_zero) == 0.0
+
+    # infinite allowance
+    m_inf = NormalizedModel(id="inf", monthly_allowance=float("inf"), cost=TokenCost(output=1.0))
+    assert compute_quota_burn_pct(m_inf) == 0.0
+
+    # turn_cost <= 0.0 (all token costs 0.0 and not marked zero_cost)
+    m_free_tokens = NormalizedModel(
+        id="free-tokens",
+        monthly_allowance=50.0,
+        cost=TokenCost(input=0.0, output=0.0, cache_read=0.0),
+    )
+    assert compute_quota_burn_pct(m_free_tokens) == 0.0
+
+    # turns_per_mo <= 0.0 (negative allowance)
+    m_neg = NormalizedModel(
+        id="neg", monthly_allowance=-10.0, cost=TokenCost(input=1.0, output=1.0)
+    )
+    assert compute_quota_burn_pct(m_neg) == 100000.0
+
+    # default allowance (None -> 15.0)
+    m_none_allowance = NormalizedModel(
+        id="none-allowance", monthly_allowance=None, cost=TokenCost(input=1.0, output=1.0)
+    )
+    burn_default = compute_quota_burn_pct(m_none_allowance)
+    assert burn_default > 0.0
+
+
+def test_ssd_empty_and_single():
+    assert ssd([]) == 0.0
+    assert ssd([10.0]) == 0.0
+    assert abs(ssd([1.0, 3.0]) - 2.0) < 1e-9
+
+
+def test_fisher_jenks_edge_cases_and_unconstrained_fallback():
+    # 0 items
+    assert fisher_jenks_3_clusters([]) == ([], [], [])
+
+    # 1 item
+    m1 = NormalizedModel(id="m1", aa_iq=50.0)
+    assert fisher_jenks_3_clusters([m1]) == ([m1], [], [])
+
+    # 2 items
+    m2 = NormalizedModel(id="m2", aa_iq=40.0)
+    assert fisher_jenks_3_clusters([m1, m2]) == ([m1], [m2], [])
+
+    # 3 items
+    m3 = NormalizedModel(id="m3", aa_iq=30.0)
+    assert fisher_jenks_3_clusters([m1, m2, m3]) == ([m1], [m2], [m3])
+
+    # 4 items with identical values triggers unconstrained fallback
+    m_same = [NormalizedModel(id=f"m_same_{i}", aa_iq=50.0) for i in range(4)]
+    c1, c2, c3 = fisher_jenks_3_clusters(m_same)
+    assert len(c1) + len(c2) + len(c3) == 4
+    assert len(c1) > 0 and len(c2) > 0 and len(c3) > 0
+
+
+def test_evaluate_pareto_edge_cases():
+    # No benchmarked models: all preview, deprecated, zero-cost, or without aa_iq
+    unbenchmarked = [
+        NormalizedModel(id="m-preview", is_preview=True, aa_iq=80.0),
+        NormalizedModel(id="m-contributor", is_contributor=True, aa_iq=80.0),
+        NormalizedModel(id="m-zero", is_zero_cost=True, aa_iq=80.0),
+        NormalizedModel(id="m-deprecated", status="deprecated", aa_iq=80.0),
+        NormalizedModel(id="m-no-iq", aa_iq=None),
+    ]
+    res = evaluate_pareto(unbenchmarked)
+    assert res == unbenchmarked
+    assert all(m.bpe is None for m in res)
+
+    # Models with zero burn, extreme burn, and NaN guards
+    # mA has is_zero_cost manually set to False, so it is evaluated in benchmarked, but turn_cost is 0.0 -> burn is 0.0
+    mA = NormalizedModel(
+        id="mA",
+        aa_iq=60.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(input=0.0, output=0.0, cache_read=0.0),
+    )
+    mA.is_zero_cost = False
+    mB = NormalizedModel(
+        id="mB", aa_iq=50.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    mC = NormalizedModel(
+        id="mC", aa_iq=0.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    models = [mA, mB, mC]
+    evaluate_pareto(models)
+    assert mA.composite_burn_pct == 0.0
+    assert mA.bpe is not None
+    assert mC.bpe is not None
+
+    # Test extreme burn (inf/nan) and nan guards for burn_eff and qual_eff
+    mD = NormalizedModel(
+        id="mD", aa_iq=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    mE = NormalizedModel(
+        id="mE", aa_iq=80.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    with patch(
+        "opencode_go_model_optimizer.engine.pareto.compute_quota_burn_pct",
+        side_effect=[float("inf"), float("nan")],
+    ):
+        evaluate_pareto([mD, mE])
+        assert mD.bpe == 0.0
+        assert mE.bpe == 0.0
+
+    # Test math.isnan(burn_eff) and math.isnan(qual_eff) fallback to 0.0
+    mF = NormalizedModel(
+        id="mF", aa_iq=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
+    )
+    mF.composite_burn_pct = 1.0
+    # If peers have nan burn or nan iq
+    with patch("math.isnan", side_effect=lambda val: True):
+        # All isnan calls return True
+        evaluate_pareto([mF])
+        assert mF.bpe == 0.0
+
+
+def test_allocate_tiers_pareto_comprehensive():
+    # 1. Preferred tiers pinning
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+    tiers_pref = allocate_tiers_pareto(
+        models, preferred_tiers={"heavy": "opencode-go/deepseek-v4.1-flash"}
+    )
+    assert tiers_pref["heavy"] == "opencode-go/deepseek-v4.1-flash"
+
+    # 2. At least 3 frontier models triggering cutoff calculation:
+    m1 = NormalizedModel(
+        id="f-heavy", aa_iq=90.0, monthly_allowance=100.0, cost=TokenCost(output=10.0)
+    )
+    m2 = NormalizedModel(
+        id="f-bal", aa_iq=60.0, monthly_allowance=100.0, cost=TokenCost(output=5.0)
+    )
+    m3 = NormalizedModel(
+        id="f-light", aa_iq=30.0, monthly_allowance=100.0, cost=TokenCost(output=2.0)
+    )
+    m4 = NormalizedModel(
+        id="sub-heavy", aa_iq=85.0, monthly_allowance=100.0, cost=TokenCost(output=20.0)
+    )
+    m5 = NormalizedModel(
+        id="sub-bal", aa_iq=55.0, monthly_allowance=100.0, cost=TokenCost(output=15.0)
+    )
+    m6 = NormalizedModel(
+        id="sub-light", aa_iq=25.0, monthly_allowance=100.0, cost=TokenCost(output=5.0)
+    )
+    m_free = NormalizedModel(id="free-1", is_zero_cost=True)
+    catalog = [m1, m2, m3, m4, m5, m6, m_free]
+
+    tiers_cutoffs = allocate_tiers_pareto(catalog)
+    assert tiers_cutoffs["heavy"] == "opencode-go/f-heavy"
+    assert tiers_cutoffs["balanced"] == "opencode-go/f-bal"
+    assert tiers_cutoffs["light"] == "opencode-go/f-light"
+    assert tiers_cutoffs["free"] == "opencode-go/free-1"
+
+    # 3. Empty cluster fallback in cutoff calculation:
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+        side_effect=[
+            ([m1, m2], [m3], []),  # f_light is empty -> triggers else branch
+            ([m1, m4], [m2, m5], [m3, m6]),  # fallback clustering
+        ],
+    ):
+        tiers_fb = allocate_tiers_pareto(catalog)
+        assert set(tiers_fb.keys()) == {"heavy", "balanced", "light", "free"}
+
+    # 4. len(frontier) < 3 branch:
+    t_small = allocate_tiers_pareto([m1, m2, m_free])
+    assert set(t_small.keys()) == {"heavy", "balanced", "light", "free"}
+
+    # 5. Fallback to allowance allocation when tiers missing:
+    t_single = allocate_tiers_pareto([m1])
+    assert t_single["heavy"] == "opencode-go/f-heavy"
+
+    # 6. Free tier fallback when free_pick is None but free_ranked is not empty
+    t_free_pinned = allocate_tiers_pareto(
+        [m1, m2, m3, m_free],
+        preferred_tiers={"balanced": "opencode-go/free-1"},
+    )
+    assert t_free_pinned["balanced"] == "opencode-go/free-1"
+    assert t_free_pinned["free"] == "opencode-go/free-1"
+
+    # 7. Cluster returning None when empty in pick_best (line 218)
+    class _ToggleCluster(list):
+        def __init__(self, items):
+            super().__init__(items)
+            self.count = 0
+
+        def __bool__(self):
+            self.count += 1
+            return self.count == 1
+
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+        side_effect=[
+            ([m1, m2], [m3], []),  # frontier clustering fails truthy check
+            (_ToggleCluster([m1]), [m2], [m3]),  # benchmarked clustering with toggle
+            ([m1], [m2], [m3]),  # fallback allocate_tiers_allowance
+        ],
+    ):
+        t_toggle = allocate_tiers_pareto(catalog)
+        assert set(t_toggle.keys()) == {"heavy", "balanced", "light", "free"}
+
+
+def test_allocate_tiers_allowance_edge_cases():
+    # Only 1 paid model, 0 free models
+    m_paid = NormalizedModel(
+        id="paid-only",
+        name="Paid Only",
+        monthly_allowance=50.0,
+        cost=TokenCost(output=1.0),
+    )
+    tiers = allocate_tiers_allowance([m_paid])
+    assert tiers["heavy"] == "opencode-go/paid-only"
+    assert tiers["balanced"] == ""
+    assert tiers["light"] == ""
+    assert tiers["free"] == ""
+
+    # Free model already used in preferred_tiers
+    m_free = NormalizedModel(id="free-only", is_zero_cost=True)
+    tiers_free_used = allocate_tiers_allowance(
+        [m_free, m_paid],
+        preferred_tiers={"heavy": "opencode-go/free-only"},
+    )
+    assert tiers_free_used["heavy"] == "opencode-go/free-only"
+    assert tiers_free_used["free"] == "opencode-go/free-only"
+
+    # Test fallback branch when no eligible paid models exist
+    tiers_no_paid = allocate_tiers_allowance([m_free])
+    assert tiers_no_paid["free"] == "opencode-go/free-only"
+    assert tiers_no_paid["heavy"] == ""
+    assert tiers_no_paid["balanced"] == ""
+    assert tiers_no_paid["light"] == ""
+
+    # Test pick_best returning cluster_ranked[0] when all models already in used_model_ids (line 73)
+    m_p1 = NormalizedModel(id="p1", monthly_allowance=50.0, cost=TokenCost(output=10.0))
+    m_p2 = NormalizedModel(id="p2", monthly_allowance=40.0, cost=TokenCost(output=5.0))
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+        return_value=([m_p1], [m_p1], [m_p2]),
+    ):
+        t_dup = allocate_tiers_allowance([m_p1, m_p2])
+        assert t_dup["heavy"] == "opencode-go/p1"
+        assert t_dup["balanced"] == "opencode-go/p1"
+
+
+def test_rank_catalog_both_modes():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+
+    ranked_pareto = rank_catalog(models, mode="pareto", skip_models={"deepseek-v4.1-flash"})
+    assert all(m.id != "deepseek-v4.1-flash" for m in ranked_pareto)
+    assert all(m.rank is not None for m in ranked_pareto)
+    assert [m.rank for m in ranked_pareto] == list(range(1, len(ranked_pareto) + 1))
+
+    ranked_allowance = rank_catalog(models, mode="allowance", skip_models={"qwen3.8-max"})
+    assert all(m.id != "qwen3.8-max" for m in ranked_allowance)
+    assert [m.rank for m in ranked_allowance] == list(range(1, len(ranked_allowance) + 1))
+
+
+def test_allocate_tiers_unified():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+    res_p = allocate_tiers(models, mode="pareto")
+    assert set(res_p.keys()) == {"heavy", "balanced", "light", "free"}
+    res_a = allocate_tiers(models, mode="allowance")
+    assert set(res_a.keys()) == {"heavy", "balanced", "light", "free"}
+
+
+def test_model_roundtripping_and_allowance_normalization():
+    # "unlimited", "inf", "+inf", "infinity"
+    for s in ["unlimited", "inf", "+inf", "infinity", "UNLIMITED"]:
+        m = NormalizedModel(id="m", monthly_allowance=s)
+        assert m.monthly_allowance == float("inf")
+        dumped = m.model_dump(mode="json")
+        assert dumped["monthly_allowance"] == "unlimited"
+
+    # float("inf")
+    m_inf = NormalizedModel(id="m", monthly_allowance=float("inf"))
+    assert m_inf.monthly_allowance == float("inf")
+    assert m_inf.model_dump(mode="json")["monthly_allowance"] == "unlimited"
+
+    # string number
+    m_str = NormalizedModel(id="m", monthly_allowance="42.5")
+    assert m_str.monthly_allowance == 42.5
+    assert m_str.model_dump(mode="json")["monthly_allowance"] == 42.5
+
+    # None
+    m_none = NormalizedModel(id="m", monthly_allowance=None)
+    assert m_none.monthly_allowance is None
+
+    # invalid string / non-numeric object returns None
+    m_invalid = NormalizedModel(id="m", monthly_allowance="not-a-number")
+    assert m_invalid.monthly_allowance is None
+    m_invalid_obj = NormalizedModel(id="m", monthly_allowance={"key": "val"})
+    assert m_invalid_obj.monthly_allowance is None
+
+    # full_id resolution when "/" is already in id
+    m_slash = NormalizedModel(id="custom-provider/my-model")
+    assert m_slash.full_id == "custom-provider/my-model"
+
+    # full_id resolution when "/" is not in id
+    m_noslash = NormalizedModel(id="my-model", provider_id="prov")
+    assert m_noslash.full_id == "prov/my-model"
