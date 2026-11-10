@@ -16,6 +16,29 @@ DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
 HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
 
 
+def _safe_float(val: Any) -> float:
+    """Safely convert value to float, handling nested dicts, strings, and nulls."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, dict):
+        for k in ("price", "default", "standard"):
+            if k in val and isinstance(val[k], (int, float, str)):
+                return _safe_float(val[k])
+        for v in val.values():
+            if isinstance(v, (int, float, str)):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    continue
+        return 0.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def _extract_token_cost(cost_raw: Any) -> TokenCost:
     """Extract TokenCost from either flat CLI format or nested HTTP format."""
     if not isinstance(cost_raw, dict):
@@ -34,10 +57,10 @@ def _extract_token_cost(cost_raw: Any) -> TokenCost:
         out_price = out_obj.get("price", 0.0) if isinstance(out_obj, dict) else out_obj
 
         return TokenCost(
-            input=float(inp_price or 0.0),
-            output=float(out_price or 0.0),
-            cache_read=float(cache_read or 0.0),
-            cache_write=float(cache_write or 0.0),
+            input=_safe_float(inp_price),
+            output=_safe_float(out_price),
+            cache_read=_safe_float(cache_read),
+            cache_write=_safe_float(cache_write),
         )
 
     # Case 2: Flat CLI format
@@ -48,10 +71,10 @@ def _extract_token_cost(cost_raw: Any) -> TokenCost:
     cache_write = cache_dict.get("write", 0.0) if isinstance(cache_dict, dict) else 0.0
 
     return TokenCost(
-        input=float(inp_price or 0.0),
-        output=float(out_price or 0.0),
-        cache_read=float(cache_read or 0.0),
-        cache_write=float(cache_write or 0.0),
+        input=_safe_float(inp_price),
+        output=_safe_float(out_price),
+        cache_read=_safe_float(cache_read),
+        cache_write=_safe_float(cache_write),
     )
 
 

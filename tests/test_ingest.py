@@ -12,6 +12,7 @@ import pytest
 from opencode_go_model_optimizer.ingest.catalogue import (
     _extract_model_limit,
     _extract_token_cost,
+    _safe_float,
     fetch_catalogue,
     parse_catalogue_cli,
     parse_catalogue_http,
@@ -196,6 +197,28 @@ def test_extract_token_cost_and_model_limit_edge_cases():
     cost_prim = _extract_token_cost(prim_nested)
     assert cost_prim.input == 1.5
     assert cost_prim.output == 3.0
+
+    # Nested HTTP format with dict cache_write (e.g. {'30m': 0.25, '12h': 0.5})
+    nested_dict_cache = {
+        "text": {
+            "input": {"price": 0.15, "cache": {"read": 0.02, "write": {"30m": 0.25, "12h": 0.5}}},
+            "output": {"price": 0.60},
+        }
+    }
+    cost_dict = _extract_token_cost(nested_dict_cache)
+    assert cost_dict.input == 0.15
+    assert cost_dict.cache_write == 0.25
+
+    # Direct _safe_float edge cases
+    assert _safe_float(None) == 0.0
+    assert _safe_float(42) == 42.0
+    assert _safe_float("3.14") == 3.14
+    assert _safe_float({"default": 1.25}) == 1.25
+    assert _safe_float({"standard": 2.50}) == 2.50
+    assert _safe_float({"price": 5.0}) == 5.0
+    assert _safe_float({"key": "invalid", "another": 7.5}) == 7.5
+    assert _safe_float({"all": "invalid"}) == 0.0
+    assert _safe_float("not-a-number") == 0.0
 
     # Flat CLI format with cache dictionary
     flat = {
