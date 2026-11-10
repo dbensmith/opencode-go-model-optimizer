@@ -198,9 +198,14 @@ def allocate_tiers_pareto(
             selected["free"] = free_ranked[0].full_id
 
     if benchmarked:
-        tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
-            benchmarked, key=effective_quality
-        )
+        min_pareto_q = min((effective_quality(m) for m in benchmarked if m.is_pareto), default=0.0)
+        competitive = [
+            m
+            for m in benchmarked
+            if (m.bpe or 0.0) >= 0.05 and effective_quality(m) >= min_pareto_q * 0.8
+        ]
+        pool = competitive if len(competitive) >= 3 else benchmarked
+        tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(pool, key=effective_quality)
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
             ranked = sorted(

@@ -25,7 +25,10 @@ from opencode_go_model_optimizer.engine.tiers import (
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
 from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
-from opencode_go_model_optimizer.ingest.snapshot import merge_docs_pricing
+from opencode_go_model_optimizer.ingest.snapshot import (
+    load_reference_snapshot,
+    merge_docs_pricing,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -574,6 +577,28 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     ):
         res2 = allocate_tiers_pareto([m_pareto, m_lower_burn, m_newer, m_older, m_free])
         assert res2["light"] == "opencode-go/m_newer"
+
+
+def test_allocate_tiers_pareto_competitive_fallback():
+    # If competitive pool has < 3 models, fallback to benchmarked pool
+    m1 = NormalizedModel(id="m1", aa_iq=90.0, monthly_allowance=100.0, cost=TokenCost(output=10.0))
+    m2 = NormalizedModel(id="m2", aa_iq=80.0, monthly_allowance=100.0, cost=TokenCost(output=5.0))
+    m_low = NormalizedModel(
+        id="m_low", aa_iq=20.0, monthly_allowance=100.0, cost=TokenCost(output=20.0)
+    )
+    catalog = [m1, m2, m_low]
+    tiers = allocate_tiers_pareto(catalog)
+    assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
+
+
+def test_allocate_tiers_pareto_reference_snapshot():
+    snap = load_reference_snapshot()
+    assert snap is not None
+    tiers = allocate_tiers_pareto(snap.models)
+    assert tiers["heavy"] in ("opencode-go/gemini-4-argon", "opencode-go/kimi-k3.1-pro")
+    assert tiers["balanced"] in ("opencode-go/deepseek-v4.1-flash", "opencode-go/mimo-v2.6-pro")
+    assert tiers["light"] == "opencode-go/mimo-v2.6-flash"
+    assert tiers["free"] == "opencode-go/longcat-2.5-free"
 
 
 def test_rank_catalog_both_modes():
