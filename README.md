@@ -93,6 +93,24 @@ uvx opencode-go-model-optimizer select --format json
   opencode-go-model-optimizer fetch --out snapshot.json
   ```
 
+### CLI Flags & Options
+
+The `select` and `rank` subcommands support filtering, optimization, and export flags:
+
+- **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights AA Coding Index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).
+- **`--skip <model_id>`**: Exclude specific model IDs from selection or ranking (can be specified multiple times).
+- **`--prefer <tier>=<model_id>`**: Pin a model to a tier (e.g. `--prefer heavy=kimi-k3.1-pro`).
+- **`--min-context <tokens>`**: Enforce a minimum context window threshold (default: 0).
+- **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
+- **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (or via `OPENCODE_GO_CACHE_TTL`).
+- **`--explain`**: Include detailed per-tier metrics (`turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) in table and JSON output.
+- **`--format {json,table,compact,env,github-output}`**: Output format:
+  - `json`: Structured JSON schema.
+  - `table`: Formatted ASCII table (with extra metric columns when `--explain` is enabled).
+  - `compact`: Clean space-delimited `<tier> <model_id>` lines.
+  - `env`: Shell environment variable assignments (`OPENCODE_MODEL_HEAVY="..."`, etc.).
+  - `github-output`: GitHub Actions `$GITHUB_OUTPUT` key=value lines (`heavy=...`, etc.).
+
 ---
 
 ## Development

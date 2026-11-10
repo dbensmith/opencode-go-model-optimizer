@@ -34,6 +34,7 @@ from opencode_go_model_optimizer.ingest.models import (
     TokenCost,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
+    apply_plan,
     create_snapshot,
     fetch_aa_benchmarks,
     fetch_and_build_snapshot,
@@ -742,3 +743,77 @@ def test_fetch_and_build_snapshot_custom_client():
         assert len(snap.models) == 1
         assert not custom_client.is_closed
     custom_client.close()
+
+
+def test_plan_allowances_and_apply_plan():
+    # Validation and serialization
+    m = NormalizedModel(
+        id="plan-mod",
+        plan_allowances={
+            "go": 15.0,
+            "go-plus": "60.0",
+            "go-teams": "unlimited",
+            "invalid_num": "not_a_number",
+        },
+    )
+    assert m.plan_allowances["go"] == 15.0
+    assert m.plan_allowances["go-plus"] == 60.0
+    assert m.plan_allowances["go-teams"] == float("inf")
+    assert "invalid_num" not in m.plan_allowances
+
+    dump = m.model_dump(mode="json")
+    assert dump["plan_allowances"]["go-teams"] == "unlimited"
+    assert dump["plan_allowances"]["go-plus"] == 60.0
+
+    # Non-dict validation falls back to empty dict
+    m_bad = NormalizedModel(id="bad-plan", plan_allowances="not_a_dict")
+    assert m_bad.plan_allowances == {}
+
+    # apply_plan
+    apply_plan([m], "go-plus")
+    assert m.monthly_allowance == 60.0
+
+    apply_plan([m], "go-teams")
+    assert m.monthly_allowance == float("inf")
+
+    # unknown plan leaves monthly_allowance unchanged
+    apply_plan([m], "unknown-plan")
+    assert m.monthly_allowance == float("inf")
+
+
+def test_merge_docs_pricing_multi_plan():
+    m = NormalizedModel(id="mod-multi", name="Model Multi", monthly_allowance=15.0)
+    pricing_go = {
+        "mod-multi": {
+            "allowance": 15.0,
+            "output_cost": 1.0,
+            "input_cost": 0.5,
+            "cached_read_cost": 0.05,
+            "cached_write_cost": 0.2,
+        }
+    }
+    all_plan_pricing = {
+        "go": {"mod-multi": {"allowance": 15.0}},
+        "go-plus": {"mod-multi": {"allowance": 60.0}},
+        "go-teams": {"mod-multi": {"allowance": float("inf")}},
+    }
+
+    # With all_plan_pricing
+    merge_docs_pricing([m], pricing_go, all_plan_pricing=all_plan_pricing)
+    assert m.plan_allowances == {"go": 15.0, "go-plus": 60.0, "go-teams": float("inf")}
+
+    # Without all_plan_pricing, consistent with "go"
+    m2 = NormalizedModel(id="mod-single", name="Model Single")
+    merge_docs_pricing(
+        [m2],
+        {
+            "mod-single": {
+                "allowance": 25.0,
+                "output_cost": 0.5,
+                "input_cost": 0.2,
+                "cached_read_cost": 0.0,
+                "cached_write_cost": 0.0,
+            }
+        },
+    )
+    assert m2.plan_allowances.get("go") == 25.0

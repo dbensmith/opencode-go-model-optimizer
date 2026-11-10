@@ -57,6 +57,9 @@ def test_parse_args_select():
             "--min-context",
             "128000",
             "--no-contributor",
+            "--profile",
+            "coding",
+            "--explain",
         ]
     )
     assert args.command == "select"
@@ -67,6 +70,8 @@ def test_parse_args_select():
     assert args.prefer == ["heavy=kimi-k3.1-pro"]
     assert args.min_context == 128000
     assert args.no_contributor is True
+    assert args.profile == "coding"
+    assert args.explain is True
 
 
 def test_parse_args_rank():
@@ -82,6 +87,8 @@ def test_parse_args_rank():
             "--min-context",
             "200000",
             "--no-contributor",
+            "--profile",
+            "fast",
         ]
     )
     assert args.command == "rank"
@@ -89,6 +96,7 @@ def test_parse_args_rank():
     assert args.skip == ["model-c"]
     assert args.min_context == 200000
     assert args.no_contributor is True
+    assert args.profile == "fast"
 
 
 def test_parse_preferred_tiers_helper():
@@ -250,6 +258,77 @@ def test_cli_select_compact(tmp_path, capsys):
     assert "heavy opencode-go/qwen3.8-max" in lines
     assert "balanced opencode-go/deepseek-v4.1-flash" in lines
     assert "light opencode-go/glm-5.3-flash" in lines
+
+
+def test_cli_select_profile_and_explain(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    # --explain with JSON format
+    rc = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--profile",
+            "reasoning",
+            "--explain",
+        ]
+    )
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["profile"] == "reasoning"
+    assert "explanations" in data
+    assert "heavy" in data["explanations"]
+    assert "turn_cost_usd" in data["explanations"]["heavy"]
+
+    # --explain with table format
+    rc = main(
+        [
+            "select",
+            "--format",
+            "table",
+            "--snapshot",
+            str(snap_path),
+            "--explain",
+        ]
+    )
+    assert rc == 0
+    tbl_out = capsys.readouterr().out
+    assert "IQ" in tbl_out
+    assert "Turn Cost" in tbl_out
+    assert "Burn %" in tbl_out
+    assert "BPE" in tbl_out
+
+
+def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    snap = Snapshot.model_validate_json(snap_path.read_text(encoding="utf-8"))
+
+    # Add plan_allowances to GLM
+    for m in snap.models:
+        if m.id == "glm-5.3-flash":
+            m.plan_allowances = {"go": 60.0, "go-plus": 250.0}
+    save_snapshot(snap, snap_path)
+
+    # Run select with --plan go-plus on offline snapshot
+    rc = main(
+        [
+            "select",
+            "--format",
+            "table",
+            "--snapshot",
+            str(snap_path),
+            "--plan",
+            "go-plus",
+            "--prefer",
+            "heavy=opencode-go/glm-5.3-flash",
+        ]
+    )
+    assert rc == 0
+    table_out = capsys.readouterr().out
+    assert "$250.00" in table_out
 
 
 def test_cli_select_output_file(tmp_path):

@@ -4,6 +4,7 @@ import json
 
 from opencode_go_model_optimizer.formatters.output import (
     _render_table,
+    explain_tiers,
     format_rank_json,
     format_rank_table,
     format_select_compact,
@@ -30,6 +31,18 @@ def test_format_select_json():
     res2 = format_select_json(tiers, mode="allowance")
     data2 = json.loads(res2)
     assert "evaluated_at" in data2
+
+    # With profile and explanations
+    expl = {"heavy": {"model_id": "opencode-go/qwen", "turn_cost_usd": 0.005}}
+    res3 = format_select_json(
+        tiers,
+        mode="pareto",
+        profile="coding",
+        explanations=expl,
+    )
+    data3 = json.loads(res3)
+    assert data3["profile"] == "coding"
+    assert data3["explanations"] == expl
 
 
 def test_format_select_compact():
@@ -223,3 +236,59 @@ def test_render_table_column_mismatch():
     assert "val2" in rendered
     assert "valC" in rendered
     assert "extraValD" not in rendered
+
+
+def test_explain_tiers_and_table():
+    m1 = NormalizedModel(
+        id="mod-1",
+        provider_id="opencode-go",
+        monthly_allowance=60.0,
+        cost=TokenCost(input=1.0, output=2.0, cache_read=0.1),
+        limit=ModelLimit(context=200000),
+        aa_iq=55.0,
+        aa_coding=60.0,
+        speed_tps=80.0,
+        bpe=0.85,
+        is_pareto=True,
+        composite_burn_pct=4.2,
+    )
+    m2 = NormalizedModel(
+        id="mod-2",
+        provider_id="opencode-go",
+        monthly_allowance=float("inf"),
+        is_zero_cost=True,
+    )
+    models = [m1, m2]
+    tiers = {
+        "heavy": "opencode-go/mod-1",
+        "free": "opencode-go/mod-2",
+        "light": "opencode-go/mod-missing",
+    }
+
+    # Test explain_tiers
+    expl = explain_tiers(tiers, models, profile="coding")
+    assert "heavy" in expl
+    assert expl["heavy"]["model_id"] == "opencode-go/mod-1"
+    assert expl["heavy"]["monthly_allowance"] == 60.0
+    assert expl["heavy"]["output_cost_per_1m"] == 2.0
+    assert expl["heavy"]["turn_cost_usd"] > 0.0
+    assert expl["heavy"]["quota_burn_pct"] == 4.2
+    assert expl["heavy"]["aa_iq"] == 55.0
+    assert expl["heavy"]["aa_coding"] == 60.0
+    assert expl["heavy"]["speed_tps"] == 80.0
+    assert expl["heavy"]["bpe"] == 0.85
+    assert expl["heavy"]["is_pareto"] is True
+    assert expl["heavy"]["context"] == 200000
+
+    assert expl["free"]["monthly_allowance"] == "unlimited"
+    assert expl["light"]["model_id"] == "opencode-go/mod-missing"
+
+    # Test format_select_table with explain=True
+    tbl_explain = format_select_table(tiers, models, plan="go", explain=True, profile="coding")
+    assert "IQ" in tbl_explain
+    assert "BPE" in tbl_explain
+    assert "Burn %" in tbl_explain
+    assert "Turn Cost" in tbl_explain
+    assert "55.0" in tbl_explain
+    assert "0.850" in tbl_explain
+    assert "4.2%" in tbl_explain

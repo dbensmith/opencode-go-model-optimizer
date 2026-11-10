@@ -1,6 +1,7 @@
 """Output formatters for CLI outputs."""
 
 from opencode_go_model_optimizer.formatters.output import (
+    explain_tiers,
     format_rank_json,
     format_rank_table,
     format_select_compact,
@@ -11,6 +12,7 @@ from opencode_go_model_optimizer.formatters.output import (
 )
 
 __all__ = [
+    "explain_tiers",
     "format_rank_json",
     "format_rank_table",
     "format_select_compact",

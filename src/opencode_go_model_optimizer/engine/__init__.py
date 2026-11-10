@@ -8,6 +8,7 @@ from opencode_go_model_optimizer.engine.allowance import (
     tie_break_key,
 )
 from opencode_go_model_optimizer.engine.pareto import (
+    WORKLOAD_PROFILES,
     compute_quota_burn_pct,
     compute_turn_cost,
     effective_quality,
@@ -24,6 +25,7 @@ from opencode_go_model_optimizer.engine.tiers import (
 
 __all__ = [
     "STANDARD_TIERS",
+    "WORKLOAD_PROFILES",
     "allocate_tiers",
     "allocate_tiers_allowance",
     "allocate_tiers_pareto",

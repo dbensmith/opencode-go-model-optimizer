@@ -13,23 +13,29 @@ STD_IN = 750
 STD_CACHE = 60000
 STD_OUT = 250
 
+WORKLOAD_PROFILES: dict[str, tuple[int, int, int]] = {
+    "general": (STD_IN, STD_CACHE, STD_OUT),
+    "coding": (1500, 100000, 800),
+    "reasoning": (1000, 40000, 2000),
+    "fast": (500, 20000, 150),
+}
 
-def compute_turn_cost(m: NormalizedModel) -> float:
-    """Compute the cost in USD of a standardized agentic turn."""
+
+def compute_turn_cost(m: NormalizedModel, profile: str = "general") -> float:
+    """Compute the cost in USD of a standardized agentic turn for a given profile."""
     if m.is_zero_cost:
         return 0.0
-    return (
-        STD_IN * m.cost.input + STD_CACHE * m.cost.cache_read + STD_OUT * m.cost.output
-    ) / 1_000_000.0
+    t_in, t_cache, t_out = WORKLOAD_PROFILES.get(profile, (STD_IN, STD_CACHE, STD_OUT))
+    return (t_in * m.cost.input + t_cache * m.cost.cache_read + t_out * m.cost.output) / 1_000_000.0
 
 
-def compute_quota_burn_pct(m: NormalizedModel) -> float:
-    """Compute monthly quota burn % per 1,000 standardized turns."""
+def compute_quota_burn_pct(m: NormalizedModel, profile: str = "general") -> float:
+    """Compute monthly quota burn % per 1,000 standardized turns for a given profile."""
     if m.is_zero_cost or m.monthly_allowance == float("inf"):
         return 0.0
 
     allowance = m.monthly_allowance or 15.0
-    turn_cost = compute_turn_cost(m)
+    turn_cost = compute_turn_cost(m, profile=profile)
     if turn_cost <= 0.0:
         return 0.0
 
@@ -48,15 +54,25 @@ def ssd(arr: Sequence[float]) -> float:
     return sum((x - mean) ** 2 for x in arr)
 
 
-def effective_quality(m: NormalizedModel) -> float:
+def effective_quality(m: NormalizedModel, profile: str = "general") -> float:
     """Compute effective quality score combining intelligence and coding indices."""
     if m.aa_iq is not None and m.aa_coding is not None:
-        return 0.7 * m.aa_iq + 0.3 * m.aa_coding
-    if m.aa_iq is not None:
-        return float(m.aa_iq)
-    if m.aa_coding is not None:
-        return float(m.aa_coding)
-    return 0.0
+        if profile == "coding":
+            base_q = 0.4 * m.aa_iq + 0.6 * m.aa_coding
+        elif profile == "reasoning":
+            base_q = 0.85 * m.aa_iq + 0.15 * m.aa_coding
+        else:
+            base_q = 0.7 * m.aa_iq + 0.3 * m.aa_coding
+    elif m.aa_iq is not None:
+        base_q = float(m.aa_iq)
+    elif m.aa_coding is not None:
+        base_q = float(m.aa_coding)
+    else:
+        base_q = 0.0
+
+    if profile == "fast" and base_q > 0 and m.speed_tps is not None and m.speed_tps > 0:
+        return base_q * (0.85 + 0.15 * min(2.0, m.speed_tps / 100.0))
+    return base_q
 
 
 def fisher_jenks_3_clusters(
@@ -118,11 +134,12 @@ def fisher_jenks_3_clusters(
 
 def evaluate_pareto(
     models: list[NormalizedModel],
+    profile: str = "general",
 ) -> list[NormalizedModel]:
     """Compute Quota Burn and Bidirectional Pareto Efficiency (BPE) for all models."""
     # 1. Compute burn for each model
     for m in models:
-        m.composite_burn_pct = compute_quota_burn_pct(m)
+        m.composite_burn_pct = compute_quota_burn_pct(m, profile=profile)
 
     # Models with benchmark intelligence (excluding contributor promos and previews)
     benchmarked = [
@@ -138,7 +155,9 @@ def evaluate_pareto(
         return models
 
     # 2. Compute BPE over benchmarked pool
-    qb_list = [(effective_quality(m), m.composite_burn_pct or 0.0) for m in benchmarked]
+    qb_list = [
+        (effective_quality(m, profile=profile), m.composite_burn_pct or 0.0) for m in benchmarked
+    ]
 
     # Precompute min_burn_at_q using unique qualities sorted descending
     unique_qs = sorted({q for q, _ in qb_list}, reverse=True)

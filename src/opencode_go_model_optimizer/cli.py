@@ -11,6 +11,7 @@ import httpx
 
 from opencode_go_model_optimizer.engine.tiers import allocate_tiers, rank_catalog
 from opencode_go_model_optimizer.formatters.output import (
+    explain_tiers,
     format_rank_json,
     format_rank_table,
     format_select_compact,
@@ -21,6 +22,7 @@ from opencode_go_model_optimizer.formatters.output import (
 )
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 from opencode_go_model_optimizer.ingest.snapshot import (
+    apply_plan,
     fetch_and_build_snapshot,
     load_cached_snapshot,
     load_reference_snapshot,
@@ -99,6 +101,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Exclude contributor-tier models from free tier selection",
     )
+    select_parser.add_argument(
+        "--profile",
+        choices=["general", "coding", "reasoning", "fast"],
+        default="general",
+        help="Workload profile for token mix and benchmark weighting (default: general)",
+    )
+    select_parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Include detailed per-tier metrics and selection rationale",
+    )
 
     # rank subcommand
     rank_parser = subparsers.add_parser("rank", help="Rank all active models in the catalog")
@@ -118,6 +131,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["auto", "pareto", "allowance"],
         default="auto",
         help="Ranking mode (default: auto)",
+    )
+    rank_parser.add_argument(
+        "--profile",
+        choices=["general", "coding", "reasoning", "fast"],
+        default="general",
+        help="Workload profile for token mix and benchmark weighting (default: general)",
     )
     rank_parser.add_argument(
         "--plan",
@@ -199,12 +218,12 @@ def _load_or_fetch_models(
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
     if snapshot_path:
         snap = load_snapshot(snapshot_path)
-        return snap.models, snap.plan
+        return apply_plan(snap.models, plan), snap.plan
 
     if cache_ttl > 0:
         cached = load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)
         if cached:
-            return cached.models, cached.plan
+            return apply_plan(cached.models, plan), cached.plan
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
@@ -214,7 +233,7 @@ def _load_or_fetch_models(
     except (httpx.HTTPError, OSError, ValueError):
         ref_snap = load_reference_snapshot()
         if ref_snap:
-            return ref_snap.models, ref_snap.plan
+            return apply_plan(ref_snap.models, plan), ref_snap.plan
         raise
 
 
@@ -255,6 +274,8 @@ def handle_select(args: argparse.Namespace) -> int:
     preferred_tiers = _parse_preferred_tiers(getattr(args, "prefer", []))
     min_context = getattr(args, "min_context", 0) or 0
     allow_contributor = not getattr(args, "no_contributor", False)
+    profile = getattr(args, "profile", "general") or "general"
+    explain = bool(getattr(args, "explain", False))
 
     tiers = allocate_tiers(
         models,
@@ -263,12 +284,20 @@ def handle_select(args: argparse.Namespace) -> int:
         skip_models=skip_models,
         allow_contributor=allow_contributor,
         min_context=min_context,
+        profile=profile,
     )
 
     if args.format == "json":
-        out = format_select_json(tiers, mode=mode, plan=plan)
+        explanations = explain_tiers(tiers, models, mode=mode, profile=profile) if explain else None
+        out = format_select_json(
+            tiers,
+            mode=mode,
+            plan=plan,
+            explanations=explanations,
+            profile=profile,
+        )
     elif args.format == "table":
-        out = format_select_table(tiers, models, plan=plan)
+        out = format_select_table(tiers, models, plan=plan, explain=explain, profile=profile)
     elif args.format == "env":
         out = format_select_env(tiers)
     elif args.format == "github-output":
@@ -290,6 +319,7 @@ def handle_rank(args: argparse.Namespace) -> int:
     skip_models = set(getattr(args, "skip", []) or [])
     min_context = getattr(args, "min_context", 0) or 0
     allow_contributor = not getattr(args, "no_contributor", False)
+    profile = getattr(args, "profile", "general") or "general"
 
     ranked = rank_catalog(
         models,
@@ -297,6 +327,7 @@ def handle_rank(args: argparse.Namespace) -> int:
         skip_models=skip_models,
         allow_contributor=allow_contributor,
         min_context=min_context,
+        profile=profile,
     )
 
     if args.format == "json" and not args.table:
