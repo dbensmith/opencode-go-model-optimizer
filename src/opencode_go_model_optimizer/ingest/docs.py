@@ -7,7 +7,11 @@ from typing import Any
 
 import httpx
 
-DEFAULT_DOCS_URL = "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/www/src/docs/content/console/go.mdx"
+DOCS_URLS = [
+    "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/site/src/docs/content/console/go.mdx",
+    "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/www/src/docs/content/console/go.mdx",
+]
+DEFAULT_DOCS_URL = DOCS_URLS[0]
 
 
 def norm_name(s: str) -> str:
@@ -149,10 +153,20 @@ def fetch_docs_mdx(
         )
         close_client = True
 
+    urls_to_try = DOCS_URLS if url == DEFAULT_DOCS_URL else [url]
+    last_err: Exception | None = None
     try:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.text
+        for target_url in urls_to_try:
+            try:
+                response = client.get(target_url)
+                response.raise_for_status()
+                return response.text
+            except (httpx.HTTPError, OSError) as e:
+                last_err = e
+                continue
+        if last_err:
+            raise last_err
+        raise httpx.RequestError("No URLs provided to fetch_docs_mdx")
     finally:
         if close_client:
             client.close()

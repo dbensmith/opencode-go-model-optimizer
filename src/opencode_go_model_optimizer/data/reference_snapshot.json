@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fetched_at": "2026-11-04T01:28:35+00:00",
+  "fetched_at": "2026-11-10T03:03:01+00:00",
   "plan": "go",
   "models": [
     {
@@ -364,6 +364,36 @@
       "composite_burn_pct": null
     },
     {
+      "id": "hy4",
+      "provider_id": "opencode-go",
+      "full_id": "opencode-go/hy4",
+      "name": "Hy4",
+      "status": "active",
+      "release_date": "2026-11-04",
+      "cost": {
+        "input": 0.834,
+        "output": 2.501,
+        "cache_read": 0.042,
+        "cache_write": 0.0
+      },
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      },
+      "monthly_allowance": 60.0,
+      "aa_iq": null,
+      "aa_coding": null,
+      "speed_tps": null,
+      "is_preview": false,
+      "is_contributor": false,
+      "is_zero_cost": false,
+      "tier": null,
+      "rank": null,
+      "bpe": null,
+      "is_pareto": null,
+      "composite_burn_pct": null
+    },
+    {
       "id": "hy4-preview",
       "provider_id": "opencode-go",
       "full_id": "opencode-go/hy4-preview",
@@ -537,6 +567,36 @@
       "is_preview": false,
       "is_contributor": false,
       "is_zero_cost": false,
+      "tier": null,
+      "rank": null,
+      "bpe": null,
+      "is_pareto": null,
+      "composite_burn_pct": null
+    },
+    {
+      "id": "longcat-2.5-free",
+      "provider_id": "opencode-go",
+      "full_id": "opencode-go/longcat-2.5-free",
+      "name": "LongCat 2.5 Free",
+      "status": "active",
+      "release_date": "2026-11-02",
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      },
+      "limit": {
+        "context": 1000000,
+        "output": 262144
+      },
+      "monthly_allowance": null,
+      "aa_iq": null,
+      "aa_coding": null,
+      "speed_tps": null,
+      "is_preview": false,
+      "is_contributor": false,
+      "is_zero_cost": true,
       "tier": null,
       "rank": null,
       "bpe": null,
@@ -907,7 +967,7 @@
   "metadata": {
     "source_catalogue": "live",
     "source_docs": "live",
-    "catalogue_count": 30,
-    "docs_pricing_count": 30
+    "catalogue_count": 32,
+    "docs_pricing_count": 32
   }
 }
