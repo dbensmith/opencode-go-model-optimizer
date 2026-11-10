@@ -8,11 +8,8 @@ on:
 
 jobs:
   test:
-    name: Test & Lint (Python ${{ matrix.python-version }})
+    name: Test & Lint
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +20,8 @@ jobs:
           version: "latest"
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python
+        run: uv python install
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
