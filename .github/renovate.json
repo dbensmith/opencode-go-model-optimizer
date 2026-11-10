@@ -1,0 +1,44 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "timezone": "UTC",
+  "schedule": ["before 6am every day"],
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "ignoreTests": false,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am every day"],
+    "automerge": true
+  },
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+  "packageRules": [
+    {
+      "description": "Daily automerge for non-major PyPI dependencies and GitHub Actions",
+      "matchDatasources": ["pypi", "github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "lockFileMaintenance"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge vulnerability fixes immediately once CI passes",
+      "matchCategories": ["security"],
+      "schedule": ["at any time"],
+      "automerge": true
+    },
+    {
+      "description": "Require manual review for major breaking upgrades",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    }
+  ]
+}
