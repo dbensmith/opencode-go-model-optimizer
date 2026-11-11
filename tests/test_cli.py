@@ -10,7 +10,9 @@ import httpx
 import pytest
 
 from opencode_go_model_optimizer.cli import (
+    LoadedSnapshot,
     _load_or_fetch_models,
+    _load_or_fetch_snapshot,
     _parse_preferred_tiers,
     _parse_token_mix,
     _parse_weights,
@@ -906,7 +908,7 @@ def test_cli_diff_defaults_and_missing_reference(tmp_path, capsys):
 
     with patch(
         "opencode_go_model_optimizer.cli._load_or_fetch_snapshot",
-        return_value=new_snap,
+        return_value=LoadedSnapshot(new_snap, "live"),
     ):
         rc = main(
             [
@@ -1048,3 +1050,76 @@ def test_write_output_is_atomic(tmp_path, monkeypatch):
     assert seen == [("old\n", "new\n")]
     assert target.read_text() == "new\n"
     assert [p.name for p in target.parent.iterdir()] == ["out.txt"]
+
+
+def test_version_flag(capsys):
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.startswith("opencode-go-model-optimizer ")
+
+
+def test_help_epilog_lists_exit_codes(capsys):
+    with pytest.raises(SystemExit):
+        parse_args(["--help"])
+    out = capsys.readouterr().out
+    assert "exit codes:" in out
+    assert "130  interrupted" in out
+
+
+def test_snapshot_source_tracking(tmp_path):
+    snap_path = _create_temp_snapshot(tmp_path)
+    assert _load_or_fetch_snapshot(str(snap_path)).source == "file"
+
+    dummy = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[NormalizedModel(id="m1")],
+        metadata=SnapshotMetadata(),
+    )
+    with patch("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", return_value=dummy):
+        assert _load_or_fetch_snapshot().source == "live"
+    with patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=dummy):
+        assert _load_or_fetch_snapshot(cache_ttl=60).source == "cache"
+    with (
+        patch(
+            "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
+            side_effect=httpx.ConnectError("down"),
+        ),
+        patch("opencode_go_model_optimizer.cli.load_reference_snapshot", return_value=dummy),
+    ):
+        assert _load_or_fetch_snapshot().source == "reference"
+
+
+def test_select_json_snapshot_provenance(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    assert main(["select", "--snapshot", str(snap_path), "--format", "json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert list(data)[:5] == ["plan", "tiers", "evaluated_at", "mode", "snapshot"]
+    assert data["snapshot"]["source"] == "file"
+    assert data["snapshot"]["fetched_at"] == load_snapshot(snap_path).fetched_at
+
+    assert main(["rank", "--snapshot", str(snap_path), "--format", "json"]) == 0
+    assert isinstance(json.loads(capsys.readouterr().out), list)
+
+
+def test_select_strict_empty_tier(tmp_path, capsys):
+    snap = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[NormalizedModel(id="only", monthly_allowance=10.0)],
+        metadata=SnapshotMetadata(),
+    )
+    path = tmp_path / "one.json"
+    save_snapshot(snap, path)
+    args = ["select", "--snapshot", str(path), "--skip", "only", "--format", "compact"]
+    assert main(args) == 0
+    capsys.readouterr()
+    assert main([*args, "--strict"]) == 3
+    captured = capsys.readouterr()
+    assert (
+        "opencode-go-model-optimizer: error: no model available for tier(s): "
+        "heavy, balanced, light, free"
+    ) in captured.err

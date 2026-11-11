@@ -79,16 +79,19 @@ uvx opencode-go-model-optimizer select --format json
       "free": "opencode-go/iceman-contributor-free"
     },
     "evaluated_at": "2026-11-03T23:50:00Z",
-    "mode": "allowance"
+    "mode": "allowance",
+    "snapshot": {"source": "live", "fetched_at": "2026-11-03T23:49:58Z"}
   }
   ```
+  The `snapshot` block (JSON only) records provenance: `source` is `file` (`--snapshot`),
+  `cache`, `live`, or `reference` (bundled fallback after a live fetch failure).
 
 - **`rank`**: Produces a full comparison table across all models in the catalog:
   ```bash
   opencode-go-model-optimizer rank --table
   ```
 
-- **`diff`**: Compares catalog, pricing, status, and tier assignments between two snapshots:
+- **`diff`**: Compares catalog, pricing, status, capability/benchmark (context, max output, AA IQ/coding, speed), and tier assignments between two snapshots:
   ```bash
   opencode-go-model-optimizer diff --old previous.json --new snapshot.json
   ```
@@ -103,6 +106,8 @@ uvx opencode-go-model-optimizer select --format json
 
 ### CLI Flags & Options
 
+`--version` (top-level) prints `opencode-go-model-optimizer <version>`.
+
 The `select` and `rank` subcommands support filtering, optimization, and export flags:
 
 - **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights AA Coding Index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).
@@ -115,6 +120,7 @@ The `select` and `rank` subcommands support filtering, optimization, and export 
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and Coding weights (e.g. `--weights 0.5,0.5`).
 - **`--top-n <count>`**: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.
+- **`--strict`** (`select` only): Still writes output, but exits `3` with an stderr error when any tier is empty.
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (or via `OPENCODE_GO_CACHE_TTL`).
 - **`--explain`**: Include detailed per-tier metrics (`turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) in table and JSON output.
@@ -124,6 +130,16 @@ The `select` and `rank` subcommands support filtering, optimization, and export 
   - `compact`: Clean space-delimited `<tier> <model_id>` lines.
   - `env`: Shell environment variable assignments (`OPENCODE_MODEL_HEAVY="..."`, etc.).
   - `github-output`: GitHub Actions `$GITHUB_OUTPUT` key=value lines (`heavy=...`, etc.).
+
+### Exit Codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | Success |
+| 1 | Runtime error |
+| 2 | Usage error, or `diff --fail-on-change` detected changes |
+| 3 | `select --strict` found an empty tier |
+| 130 | Interrupted |
 
 ---
 
