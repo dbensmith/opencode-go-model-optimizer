@@ -1,6 +1,7 @@
 """Filter and ranking knobs shared by every selection entrypoint."""
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -22,3 +23,6 @@ class SelectionCriteria:
     profile: str = "general"
     token_mix: tuple[int, int, int] | None = None
     weights: tuple[float, float] | None = None
+    # Price multiplier basis: now | blended (7-day average) | worst (7-day max) | list (ignore).
+    price_basis: str = "blended"
+    at: datetime | None = None  # reference UTC time; None = current time

@@ -15,6 +15,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     evaluate_pareto,
     fisher_jenks_3_clusters,
 )
+from opencode_go_model_optimizer.engine.pricing import apply_price_basis
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
@@ -229,7 +230,7 @@ def _allocate_pareto(
 
 def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSelection:
     """Pick one model per tier plus up to ``c.top_n`` ordered candidates, evaluating once."""
-    filtered = _apply_filters(models, c)
+    filtered = _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
     skips = c.skip_models
     clusters: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     if c.mode == "pareto":
@@ -273,7 +274,7 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
     skips = c.skip_models
     active_models = [
         m
-        for m in _apply_filters(models, c)
+        for m in _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
         if m.status == "active" and m.id not in skips and m.full_id not in skips
     ]
 

@@ -9,7 +9,12 @@ from typing import Any
 import httpx
 
 from opencode_go_model_optimizer.ingest.http import client_scope
-from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
+from opencode_go_model_optimizer.ingest.models import (
+    ModelLimit,
+    NormalizedModel,
+    PriceMultiplier,
+    TokenCost,
+)
 
 DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
 HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
@@ -87,6 +92,22 @@ def _extract_model_limit(limit_raw: Any) -> ModelLimit:
     )
 
 
+def _extract_multipliers(cost_raw: Any) -> list[PriceMultiplier]:
+    """Extract `cost.multipliers` ([{when, factor}]); malformed entries are skipped."""
+    raw = cost_raw.get("multipliers") if isinstance(cost_raw, dict) else None
+    if not isinstance(raw, list):
+        return []
+    result: list[PriceMultiplier] = []
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("when"), dict):
+            continue
+        factor = item.get("factor")
+        if isinstance(factor, bool) or not isinstance(factor, (int, float)):
+            continue
+        result.append(PriceMultiplier(factor=float(factor), when=item["when"]))
+    return result
+
+
 def model_from_dict(d: dict[str, Any]) -> NormalizedModel:
     """Convert raw catalog dictionary to a NormalizedModel."""
     model_id = str(d.get("id", ""))
@@ -107,6 +128,7 @@ def model_from_dict(d: dict[str, Any]) -> NormalizedModel:
         release_date=release_date,
         cost=cost,
         limit=limit,
+        multipliers=_extract_multipliers(d.get("cost")),
     )
 
 

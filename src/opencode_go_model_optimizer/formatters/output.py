@@ -8,6 +8,7 @@ from typing import Any
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import SnapshotDiff
 from opencode_go_model_optimizer.engine.pareto import compute_quota_burn_pct, compute_turn_cost
+from opencode_go_model_optimizer.engine.pricing import next_price_change
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
@@ -15,6 +16,18 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel
 def _burn_basis(criteria: SelectionCriteria | None) -> tuple[str, tuple[int, int, int] | None]:
     c = criteria or SelectionCriteria()
     return c.profile, c.token_mix
+
+
+def _next_change(m: NormalizedModel, criteria: SelectionCriteria | None) -> dict[str, Any] | None:
+    """Next price change for a model with multipliers, relative to the criteria's time."""
+    if m.price_multiplier is None:
+        return None
+    at = (criteria.at if criteria else None) or datetime.now(UTC)
+    change = next_price_change(m, at)
+    if change is None:
+        return None
+    when, factor = change
+    return {"at": when.isoformat(timespec="minutes"), "multiplier": round(factor, 4)}
 
 
 def format_select_json(
@@ -85,6 +98,11 @@ def explain_tiers(
                 "is_pareto": m.is_pareto,
                 "context": m.limit.context,
             }
+            if m.price_multiplier is not None:
+                explanations[tier]["price_multiplier"] = round(m.price_multiplier, 4)
+                change = _next_change(m, criteria)
+                if change:
+                    explanations[tier]["next_price_change"] = change
         else:
             explanations[tier] = {
                 "model_id": full_id or "None",
@@ -127,6 +145,15 @@ def format_select_github_output(
     return "\n".join(lines)
 
 
+def _multiplier_cell(m: NormalizedModel, change: dict[str, Any] | None) -> str:
+    if m.price_multiplier is None:
+        return "-"
+    cell = f"x{m.price_multiplier:.3g}"
+    if change:
+        cell += f" (-> x{change['multiplier']:.3g} @ {change['at']})"
+    return cell
+
+
 def format_select_table(
     tiers: dict[str, str],
     models: list[NormalizedModel],
@@ -153,6 +180,12 @@ def format_select_table(
         ]
     else:
         headers = ["Tier", "Model ID", f"Allowance ({plan})", "Output Cost", "Context"]
+    show_mult = explain and any(
+        (m := model_map.get(fid)) is not None and m.price_multiplier is not None
+        for fid in tiers.values()
+    )
+    if show_mult:
+        headers.append("Price x")
     rows: list[list[str]] = []
 
     for tier, full_id in tiers.items():
@@ -178,24 +211,28 @@ def format_select_table(
                 burn_str = f"{burn_val:.1f}%" if burn_val is not None else "-"
                 turn_cost = compute_turn_cost(m, profile=profile, token_mix=token_mix)
                 turn_cost_str = f"${turn_cost:.4f}"
-                rows.append(
-                    [
-                        tier,
-                        full_id,
-                        allow_str,
-                        cost_str,
-                        ctx_str,
-                        iq_str,
-                        bpe_str,
-                        burn_str,
-                        turn_cost_str,
-                    ]
-                )
+                row = [
+                    tier,
+                    full_id,
+                    allow_str,
+                    cost_str,
+                    ctx_str,
+                    iq_str,
+                    bpe_str,
+                    burn_str,
+                    turn_cost_str,
+                ]
+                if show_mult:
+                    row.append(_multiplier_cell(m, _next_change(m, criteria)))
+                rows.append(row)
             else:
                 rows.append([tier, full_id, allow_str, cost_str, ctx_str])
         else:
             if explain:
-                rows.append([tier, full_id or "None", "-", "-", "-", "-", "-", "-", "-"])
+                rows.append(
+                    [tier, full_id or "None", "-", "-", "-", "-", "-", "-", "-"]
+                    + (["-"] if show_mult else [])
+                )
             else:
                 rows.append([tier, full_id or "None", "-", "-", "-"])
 
@@ -280,12 +317,24 @@ def format_rank_table(
                 ]
             )
 
+    if any(m.price_multiplier is not None for m in ranked_models):
+        headers.append("Price x")
+        for row, m in zip(rows, ranked_models, strict=True):
+            row.append(_multiplier_cell(m, None))
+
     return _render_table(headers, rows)
 
 
 def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
     """Format full catalog ranking as JSON array."""
-    data = [m.model_dump(mode="json", exclude_none=True) for m in ranked_models]
+    data = []
+    for m in ranked_models:
+        item = m.model_dump(mode="json", exclude_none=True)
+        if not item.get("multipliers"):
+            item.pop("multipliers", None)
+        if m.price_multiplier is not None:
+            item["price_multiplier"] = round(m.price_multiplier, 4)
+        data.append(item)
     return json.dumps(data, indent=2)
 
 
@@ -302,6 +351,10 @@ def _format_diff_value(value: Any) -> str:
         if math.isinf(value):
             return "unlimited"
         return f"{value:.4f}".rstrip("0").rstrip(".")
+    if isinstance(value, list) and all(isinstance(v, dict) and "factor" in v for v in value):
+        if not value:
+            return "none"
+        return "; ".join(f"x{v['factor']:g} when {json.dumps(v.get('when'))}" for v in value)
     return str(value)
 
 

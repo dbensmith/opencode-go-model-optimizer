@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -113,6 +114,15 @@ def _prefer_arg(value: str) -> str:
     return value
 
 
+def _parse_at(value: str) -> datetime:
+    """Parse an ISO 8601 timestamp (UTC when no timezone is given)."""
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"--at must be an ISO 8601 time, got {value!r}") from exc
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
 def _parent(*specs: tuple[tuple[str, ...], dict[str, Any]]) -> argparse.ArgumentParser:
     """Build a help-less parent parser from (flags, kwargs) argument specs."""
     parent = argparse.ArgumentParser(add_help=False)
@@ -159,6 +169,29 @@ _RANKING_PARENT = _parent(
         },
     ),
     (("-o", "--output"), {"help": "Output file path (default: stdout)"}),
+)
+
+# Shared by select and rank.
+_PRICE_PARENT = _parent(
+    (
+        ("--price-basis",),
+        {
+            "choices": ["now", "blended", "worst", "list"],
+            "default": "blended",
+            "help": (
+                "Price multiplier basis: now (at --at), blended (7-day time-weighted average), "
+                "worst (7-day maximum), list (ignore multipliers) (default: blended)"
+            ),
+        },
+    ),
+    (
+        ("--at",),
+        {
+            "type": _parse_at,
+            "default": None,
+            "help": "Reference ISO 8601 time for multipliers (UTC if no timezone; default: now)",
+        },
+    ),
 )
 
 # Shared by select and rank.
@@ -236,7 +269,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     select_parser = subparsers.add_parser(
         "select",
         help="Select optimal models across capability tiers",
-        parents=[_PLAN_PARENT, _RANKING_PARENT, _FILTER_PARENT],
+        parents=[_PLAN_PARENT, _RANKING_PARENT, _PRICE_PARENT, _FILTER_PARENT],
     )
     select_parser.add_argument(
         "--format",
@@ -271,7 +304,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rank_parser = subparsers.add_parser(
         "rank",
         help="Rank all active models in the catalog",
-        parents=[_PLAN_PARENT, _RANKING_PARENT, _FILTER_PARENT],
+        parents=[_PLAN_PARENT, _RANKING_PARENT, _PRICE_PARENT, _FILTER_PARENT],
     )
     rank_parser.add_argument(
         "--table",
@@ -434,6 +467,8 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         profile=args.profile,
         token_mix=args.tokens,
         weights=args.weights,
+        price_basis=args.price_basis,
+        at=args.at or datetime.now(UTC),
     )
 
 
