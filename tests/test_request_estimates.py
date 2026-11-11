@@ -1,7 +1,6 @@
 """Offline tests for docs request estimates and the burn basis."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -32,10 +31,8 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     merge_request_estimates,
     save_snapshot,
 )
-
-FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
+from tests.conftest import CATALOGUE_HTTP_DATA as OC
+from tests.conftest import MDX_TEXT as MDX
 
 
 def _m(mid="m", per_month=None, out=10.0, allowance=15.0, plan="go", **kw):

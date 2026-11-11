@@ -51,8 +51,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_cached_snapshot,
     save_snapshot,
 )
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+from tests.conftest import FIXTURES_DIR
 
 
 def test_norm_name():
@@ -1110,3 +1109,186 @@ def test_default_file_mode_and_atomic_write(tmp_path):
     atomic_write_text(target, "hello world")
     assert target.read_text(encoding="utf-8") == "hello world"
     assert (target.stat().st_mode & 0o777) == mode
+
+
+def test_extract_multipliers_malformed():
+    from opencode_go_model_optimizer.ingest.catalogue import _extract_multipliers
+
+    # Non-dict item (line 103)
+    assert _extract_multipliers({"multipliers": ["not-a-dict"]}) == []
+
+    # Missing or non-dict "when" (line 103)
+    assert _extract_multipliers({"multipliers": [{"factor": 2.0}]}) == []
+    assert _extract_multipliers({"multipliers": [{"factor": 2.0, "when": "not-a-dict"}]}) == []
+
+    # factor is bool or non-numeric (line 106)
+    assert _extract_multipliers({"multipliers": [{"factor": True, "when": {}}]}) == []
+    assert _extract_multipliers({"multipliers": [{"factor": "2.0", "when": {}}]}) == []
+
+    # Valid multiplier parses
+    res = _extract_multipliers(
+        {"multipliers": [{"factor": 2.5, "when": {"date": {"gte": "2026-12-01"}}}]}
+    )
+    assert len(res) == 1
+    assert res[0].factor == 2.5
+
+
+def test_fetch_catalogue_http_empty_models(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"object": "list", "data": []}
+    mock_resp.raise_for_status = MagicMock()
+    mock_client.get.return_value = mock_resp
+
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.ingest.catalogue._fetch_catalogue_cli",
+        lambda: [],
+    )
+    with pytest.raises(ValueError, match="catalogue HTTP response contained no models"):
+        fetch_catalogue(client=mock_client)
+
+
+def test_parse_request_estimates_malformed_rows():
+    from opencode_go_model_optimizer.ingest.docs import parse_request_estimates
+
+    # Row with < 4 cells (line 185)
+    # Row with empty name after stripping tags (line 189)
+    # Row with invalid count (line 189)
+    mdx = """
+<PlanTabs id="go-requests">
+<div slot="go">
+
+| Model | Per 5h | Per week |
+| --- | --- | --- |
+| Short Row | 100 | 200 |
+
+| Model | Per 5h | Per week | Per month |
+| --- | --- | --- | --- |
+| <br> | 100 | 200 | 300 |
+| Bad Count | 100 | not-a-number | 300 |
+| Valid Model | 100 | 500 | 2000 |
+
+</div>
+</PlanTabs>
+"""
+    est = parse_request_estimates(mdx)
+    assert "go" in est
+    assert "Valid Model" in est["go"]
+    assert "Short Row" not in est["go"]
+    assert "Bad Count" not in est["go"]
+
+
+def test_parse_endpoints_table_short_row(monkeypatch):
+    from opencode_go_model_optimizer.ingest.docs import parse_endpoints_table
+
+    # Row with < 2 cells (line 219)
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.ingest.docs.parse_table_rows",
+        lambda _: [["only_one"], ["MyModel", "`my-model-id`", "/v1", "pkg"]],
+    )
+    mdx = """
+## Endpoints
+
+| Table |
+"""
+    mapping = parse_endpoints_table(mdx)
+    assert mapping == {"MyModel": "my-model-id"}
+
+
+def test_parse_valid_through_invalid_date():
+    from opencode_go_model_optimizer.ingest.docs import _parse_valid_through
+
+    # Regex matches words + digits + comma + digits, but strptime fails (lines 239-240)
+    assert _parse_valid_through("valid through InvalidMonth 99, 2026") is None
+
+
+def test_parse_privacy_short_or_empty_name_row():
+    from opencode_go_model_optimizer.ingest.docs import parse_privacy
+
+    # Row with < 3 cells (line 254)
+    # Row with empty name (line 257)
+    mdx = """
+## Privacy
+
+| Model | Training |
+| --- | --- |
+| Short | No |
+
+| Model | Model training | Data retention |
+| --- | --- | --- |
+| <br> | Not used | 0 days |
+| Real Model | No | 30 days |
+"""
+    priv = parse_privacy(mdx)
+    assert "Real Model" in priv
+    assert "Short" not in priv
+    assert "" not in priv
+
+
+def test_package_version_not_found(monkeypatch):
+    from importlib.metadata import PackageNotFoundError
+
+    from opencode_go_model_optimizer.ingest.http import package_version
+
+    def mock_version(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr("opencode_go_model_optimizer.ingest.http.version", mock_version)
+    assert package_version() == "0+unknown"
+
+
+def test_default_file_mode_proc_status_fallback(monkeypatch):
+    from opencode_go_model_optimizer.ingest.http import _default_file_mode
+
+    orig_read_text = Path.read_text
+
+    def mock_read_text(self, *args, **kwargs):
+        if str(self) == "/proc/self/status":
+            raise OSError("simulated missing proc")
+        return orig_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", mock_read_text)
+    mode = _default_file_mode()
+    assert isinstance(mode, int)
+
+
+def test_merge_privacy_warnings_none():
+    from opencode_go_model_optimizer.ingest.snapshot import merge_privacy
+
+    m = NormalizedModel(id="test-model", name="Test Model")
+    privacy_dict = {"Test Model": {"trains_on_data": False, "zdr": True}}
+    merge_privacy([m], privacy_dict, warnings=None)
+    assert m.privacy is not None
+    assert m.privacy.zdr is True
+
+
+def test_create_snapshot_unsupported_multiplier_warning():
+    from opencode_go_model_optimizer.ingest.models import PriceMultiplier
+
+    bad_mult = PriceMultiplier(factor=1.5, when={"date": {"gte": "not-a-date"}})
+    m = NormalizedModel(id="test/model", multipliers=[bad_mult])
+    pricing_info = {
+        "allowance": 15.0,
+        "output_cost": 2.0,
+        "input_cost": 1.0,
+        "cached_read_cost": 0.5,
+    }
+    snap = create_snapshot([m], pricing={"test/model": pricing_info})
+    assert any("ignoring unsupported price multiplier" in w for w in snap.warnings)
+
+
+def test_source_recorder_untracked_url():
+    import httpx
+
+    from opencode_go_model_optimizer.ingest.snapshot import _SourceRecorder
+
+    recorder = _SourceRecorder()
+    req = httpx.Request("GET", "https://untracked.example.com/not-a-source")
+    resp = httpx.Response(200, request=req, content=b"ignored")
+    recorder(resp)
+    assert recorder.sources == {}

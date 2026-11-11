@@ -47,6 +47,7 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "live: contract tests against the real OpenCode/models.dev sources (run with OCGO_LIVE=1)",
 ]

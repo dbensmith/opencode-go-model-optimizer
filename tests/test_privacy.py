@@ -26,10 +26,8 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     merge_privacy,
     save_snapshot,
 )
-
-FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
+from tests.conftest import CATALOGUE_HTTP_DATA as OC
+from tests.conftest import MDX_TEXT as MDX
 
 
 def test_parse_privacy_fixture():

@@ -1,6 +1,5 @@
 """Tests for ranking engines and capability tier allocator."""
 
-from pathlib import Path
 from unittest.mock import patch
 
 from opencode_go_model_optimizer.engine.allowance import (
@@ -30,8 +29,7 @@ from opencode_go_model_optimizer.ingest.models import (
     TokenCost,
 )
 from opencode_go_model_optimizer.ingest.snapshot import merge_docs_pricing
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+from tests.conftest import FIXTURES_DIR
 
 
 def _criteria(kw):

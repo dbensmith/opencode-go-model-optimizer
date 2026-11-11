@@ -3,7 +3,6 @@
 import json
 import math
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -28,10 +27,9 @@ from opencode_go_model_optimizer.report import (
     summarize_junit,
     write_report,
 )
+from tests.conftest import CATALOGUE_HTTP_DATA as OC
+from tests.conftest import MDX_TEXT as MDX
 
-FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 SOURCES = {
     "docs": {
@@ -261,3 +259,12 @@ def test_stale_cache_loader_accepts_any_age(snapshot, tmp_path):
     os.utime(path, (0, 0))  # 1970
     assert load_cached_snapshot("go", ttl_seconds=3600) is None
     assert load_cached_snapshot("go", ttl_seconds=math.inf) is not None
+
+
+def test_num_none():
+    from opencode_go_model_optimizer.report import _candidate_row, _num
+
+    assert _num(None) is None
+    m = NormalizedModel(id="test", monthly_allowance=None)
+    row = _candidate_row(m)
+    assert row["monthly_allowance"] is None
