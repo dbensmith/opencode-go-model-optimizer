@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from opencode_go_model_optimizer.ingest.http import client_scope
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
 
 DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
@@ -183,17 +184,7 @@ def fetch_catalogue(
             pass
 
     # 2. Fallback to direct HTTP
-    close_client = False
-    if client is None:
-        client = httpx.Client(
-            timeout=10.0, headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"}
-        )
-        close_client = True
-
-    try:
-        response = client.get(http_url)
+    with client_scope(client) as http:
+        response = http.get(http_url)
         response.raise_for_status()
         return parse_catalogue_http(response.json())
-    finally:
-        if close_client:
-            client.close()

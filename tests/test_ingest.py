@@ -1155,3 +1155,31 @@ def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
     for m in snap.models:
         assert "go-teams" not in m.plan_allowances
     assert any(m.monthly_allowance is not None for m in snap.models)
+
+
+def test_save_snapshot_atomic_replace_keeps_old_on_failure(tmp_path, monkeypatch):
+    import os
+
+    snap = Snapshot(schema_version=1, fetched_at="t", plan="go", models=[])
+    path = tmp_path / "snap.json"
+    save_snapshot(snap, path)
+    before = path.read_text()
+    assert (path.stat().st_mode & 0o777) == (0o666 & ~_umask())
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", boom)
+    snap.plan = "go-plus"
+    with pytest.raises(OSError):
+        save_snapshot(snap, path)
+    assert path.read_text() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["snap.json"]
+
+
+def _umask() -> int:
+    import os
+
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
