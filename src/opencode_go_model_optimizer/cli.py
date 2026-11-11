@@ -12,7 +12,12 @@ import httpx
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
-from opencode_go_model_optimizer.engine.tiers import rank_catalog, resolve_mode, select_tiers
+from opencode_go_model_optimizer.engine.tiers import (
+    STANDARD_TIERS,
+    rank_catalog,
+    resolve_mode,
+    select_tiers,
+)
 from opencode_go_model_optimizer.formatters.output import (
     explain_tiers,
     format_diff_json,
@@ -26,7 +31,12 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_table,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
+from opencode_go_model_optimizer.ingest.models import (
+    PLANS,
+    NormalizedModel,
+    Snapshot,
+    normalize_plan,
+)
 from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
     fetch_and_build_snapshot,
@@ -38,7 +48,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 from opencode_go_model_optimizer.report import build_report, write_report
 
 _PROG = "opencode-go-model-optimizer"
-_TIERS = ("heavy", "balanced", "light", "free")
+_TIERS = tuple(STANDARD_TIERS)
 _EXIT_CODES = """\
 exit codes:
   0    success
@@ -136,7 +146,7 @@ _PLAN_PARENT = _parent(
     (
         ("--plan",),
         {
-            "choices": ["go", "go-plus", "go-teams"],
+            "choices": list(PLANS),
             "default": "go",
             "help": "OpenCode plan tier (default: go)",
         },
@@ -425,7 +435,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _effective_plan(snap_plan: str, requested_plan: str, models: list[NormalizedModel]) -> str:
     """Return requested plan if available in allowances, else retain snapshot plan."""
-    norm_plan = requested_plan if requested_plan.startswith("go") else f"go-{requested_plan}"
+    norm_plan = normalize_plan(requested_plan)
     if any(norm_plan in m.plan_allowances or requested_plan in m.plan_allowances for m in models):
         return norm_plan
     return snap_plan

@@ -1,13 +1,16 @@
 """Snapshot drift diffing for catalog and tier assignment changes."""
 
-import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, resolve_mode, select_tiers
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
+from opencode_go_model_optimizer.ingest.models import (
+    NormalizedModel,
+    Snapshot,
+    serialize_inf_float,
+)
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 
 ChangeType = Literal["added", "removed", "deprecated", "modified"]
@@ -73,9 +76,20 @@ class SnapshotDiff(BaseModel):
 
 def _normalize_value(value: Any) -> Any:
     """Convert non-JSON-safe values (infinite allowances) into stable representations."""
-    if isinstance(value, float) and math.isinf(value):
-        return "unlimited"
+    if isinstance(value, float):
+        return serialize_inf_float(value)
     return value
+
+
+def _diff_fields(
+    old_dict: dict[str, Any], new_dict: dict[str, Any], fields: tuple[str, ...]
+) -> dict[str, tuple[Any, Any]]:
+    """Return differing fields between two dictionaries."""
+    return {
+        field: (old_dict[field], new_dict[field])
+        for field in fields
+        if old_dict[field] != new_dict[field]
+    }
 
 
 def _pricing(m: NormalizedModel) -> dict[str, Any]:
@@ -159,35 +173,19 @@ def diff_snapshots(
         old_model = old_by_id[model_id]
         new_model = new_by_id[model_id]
 
-        old_pricing = _pricing(old_model)
-        new_pricing = _pricing(new_model)
-        field_changes = {
-            field: (old_pricing[field], new_pricing[field])
-            for field in PRICING_FIELDS
-            if old_pricing[field] != new_pricing[field]
-        }
+        field_changes = _diff_fields(_pricing(old_model), _pricing(new_model), PRICING_FIELDS)
         if field_changes:
             pricing_changes[model_id] = field_changes
             note(model_id, "modified", field_changes)
 
-        old_caps = _capabilities(old_model)
-        new_caps = _capabilities(new_model)
-        cap_changes = {
-            field: (old_caps[field], new_caps[field])
-            for field in CAPABILITY_FIELDS
-            if old_caps[field] != new_caps[field]
-        }
+        cap_changes = _diff_fields(
+            _capabilities(old_model), _capabilities(new_model), CAPABILITY_FIELDS
+        )
         if cap_changes:
             capability_changes[model_id] = cap_changes
             note(model_id, "modified", cap_changes)
 
-        old_priv = _privacy(old_model)
-        new_priv = _privacy(new_model)
-        priv_changes = {
-            field: (old_priv[field], new_priv[field])
-            for field in PRIVACY_FIELDS
-            if old_priv[field] != new_priv[field]
-        }
+        priv_changes = _diff_fields(_privacy(old_model), _privacy(new_model), PRIVACY_FIELDS)
         if priv_changes:
             privacy_changes[model_id] = priv_changes
             note(model_id, "modified", priv_changes)

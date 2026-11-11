@@ -54,10 +54,7 @@ def rank_free_models(
         and m.full_id not in skips
     ]
 
-    return sorted(
-        eligible,
-        key=lambda m: (_desc_str_key(m.release_date or ""), -m.limit.context, m.id),
-    )
+    return sorted(eligible, key=tie_break_key)
 
 
 def rank_paid_models(
@@ -72,11 +69,5 @@ def rank_paid_models(
 
     return sorted(
         eligible,
-        key=lambda m: (
-            -(m.monthly_allowance or 0.0),
-            m.cost.output,
-            _desc_str_key(m.release_date or ""),
-            -m.limit.context,
-            m.id,
-        ),
+        key=lambda m: (-(m.monthly_allowance or 0.0), m.cost.output, *tie_break_key(m)),
     )

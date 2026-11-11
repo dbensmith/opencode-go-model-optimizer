@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from opencode_go_model_optimizer.ingest.http import client_scope
+from opencode_go_model_optimizer.ingest.models import PLANS, normalize_plan
 
 DOCS_URLS = [
     "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/site/src/docs/content/console/go.mdx",
@@ -105,7 +106,7 @@ def parse_go_pricing(
       - raw_name: str
     """
     # Normalize plan alias (e.g., 'plus' -> 'go-plus', 'teams' -> 'go-teams')
-    slot = plan if plan.startswith("go") else f"go-{plan}"
+    slot = normalize_plan(plan)
     section = extract_plan_section(mdx_content, plan_id="go-pricing", slot=slot)
     if not section and fallback_to_go:
         # Fallback to base 'go' if custom slot not found
@@ -176,7 +177,7 @@ def parse_request_estimates(mdx: str) -> dict[str, dict[str, dict[str, float]]]:
     Plans with no parseable rows are omitted.
     """
     result: dict[str, dict[str, dict[str, float]]] = {}
-    for plan in ("go", "go-plus", "go-teams"):
+    for plan in PLANS:
         section = extract_plan_section(mdx, plan_id="go-requests", slot=plan)
         rows: dict[str, dict[str, float]] = {}
         for cells in parse_table_rows(section):
@@ -192,18 +193,26 @@ def parse_request_estimates(mdx: str) -> dict[str, dict[str, dict[str, float]]]:
     return result
 
 
+def _extract_heading_section(mdx: str, heading: str) -> str:
+    """Extract markdown text under a `## <heading>` section up to the next `## ` heading."""
+    marker = f"## {heading}"
+    idx = mdx.find(marker)
+    if idx == -1:
+        return ""
+    rest = mdx[idx + len(marker) :]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
 def parse_endpoints_table(mdx: str) -> dict[str, str]:
     """Parse the `## Endpoints` table into {display name: model id}.
 
     The table header is `| Model | Model ID | Endpoint | AI SDK Package |`. Returns {}
     when the section or table is missing.
     """
-    idx = mdx.find("## Endpoints")
-    if idx == -1:
+    section = _extract_heading_section(mdx, "Endpoints")
+    if not section:
         return {}
-    rest = mdx[idx + len("## Endpoints") :]
-    nxt = re.search(r"^## ", rest, re.MULTILINE)
-    section = rest[: nxt.start()] if nxt else rest
     mapping: dict[str, str] = {}
     for cells in parse_table_rows(section):
         if len(cells) < 2:
@@ -219,15 +228,6 @@ _NOTE_RE = re.compile(r"^\s*[-*]\s+\*\*(.+?):\*\*\s*(.*)$")
 _GLOBAL_RE = re.compile(r"requires\s+\W*global\W*\s+regions?", re.IGNORECASE)
 _VALID_THROUGH_RE = re.compile(r"valid\s+through\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})", re.IGNORECASE)
 _RETENTION_RE = re.compile(r"(\d+)\s*days?", re.IGNORECASE)
-
-
-def _privacy_section(mdx: str) -> str:
-    idx = mdx.find("## Privacy")
-    if idx == -1:
-        return ""
-    rest = mdx[idx + len("## Privacy") :]
-    nxt = re.search(r"^## ", rest, re.MULTILINE)
-    return rest[: nxt.start()] if nxt else rest
 
 
 def _parse_valid_through(text: str) -> str | None:
@@ -247,7 +247,7 @@ def parse_privacy(mdx: str) -> dict[str, dict[str, Any]]:
     `- **Name / Other:** text` attach to every row whose name equals or starts with a
     note key (so "Beta" covers all Beta rows). Returns {} when the section is missing.
     """
-    section = _privacy_section(mdx)
+    section = _extract_heading_section(mdx, "Privacy")
     result: dict[str, dict[str, Any]] = {}
     for cells in parse_table_rows(section):
         if len(cells) < 3:

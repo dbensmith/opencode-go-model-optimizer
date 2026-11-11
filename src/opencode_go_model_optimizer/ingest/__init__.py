@@ -16,11 +16,15 @@ from opencode_go_model_optimizer.ingest.docs import (
     parse_table_rows,
 )
 from opencode_go_model_optimizer.ingest.models import (
+    PLANS,
     ModelLimit,
     NormalizedModel,
+    Privacy,
+    RequestEstimate,
     Snapshot,
     SnapshotMetadata,
     TokenCost,
+    normalize_plan,
 )
 from opencode_go_model_optimizer.ingest.models_dev import (
     fetch_models_dev,
@@ -39,8 +43,11 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 
 __all__ = [
+    "PLANS",
     "ModelLimit",
     "NormalizedModel",
+    "Privacy",
+    "RequestEstimate",
     "Snapshot",
     "SnapshotMetadata",
     "TokenCost",
@@ -57,6 +64,7 @@ __all__ = [
     "merge_docs_pricing",
     "model_from_dict",
     "norm_name",
+    "normalize_plan",
     "parse_catalogue_cli",
     "parse_catalogue_http",
     "parse_endpoints_table",

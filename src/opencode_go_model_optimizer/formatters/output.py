@@ -76,6 +76,26 @@ def format_select_json(
     return json.dumps(payload, indent=2)
 
 
+def _model_map(models: list[NormalizedModel]) -> dict[str, NormalizedModel]:
+    mapping = {m.full_id: m for m in models}
+    mapping.update({m.id: m for m in models})
+    return mapping
+
+
+def _fmt_allowance(m: NormalizedModel) -> str:
+    if m.monthly_allowance is None:
+        return "-"
+    return "Unlimited" if math.isinf(m.monthly_allowance) else f"${m.monthly_allowance:.2f}"
+
+
+def _fmt_output_cost(m: NormalizedModel) -> str:
+    return "Free" if m.is_zero_cost else f"${m.cost.output:.2f}/1M"
+
+
+def _fmt_context(m: NormalizedModel) -> str:
+    return f"{m.limit.context:,}" if m.limit.context else "-"
+
+
 def explain_tiers(
     tiers: dict[str, str],
     models: list[NormalizedModel],
@@ -83,8 +103,7 @@ def explain_tiers(
 ) -> dict[str, dict[str, Any]]:
     """Build detailed per-tier metrics and selection rationale."""
     profile, token_mix, basis = _burn_basis(criteria)
-    model_map = {m.full_id: m for m in models}
-    model_map.update({m.id: m for m in models})
+    model_map = _model_map(models)
 
     explanations: dict[str, dict[str, Any]] = {}
     for tier, full_id in tiers.items():
@@ -189,8 +208,7 @@ def format_select_table(
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
     profile, token_mix, basis = _burn_basis(criteria)
-    model_map = {m.full_id: m for m in models}
-    model_map.update({m.id: m for m in models})
+    model_map = _model_map(models)
 
     if explain:
         headers = [
@@ -217,15 +235,9 @@ def format_select_table(
     for tier, full_id in tiers.items():
         m = model_map.get(full_id)
         if m:
-            allow_str = (
-                "Unlimited"
-                if m.monthly_allowance == float("inf")
-                else f"${m.monthly_allowance:.2f}"
-                if m.monthly_allowance is not None
-                else "-"
-            )
-            cost_str = "Free" if m.is_zero_cost else f"${m.cost.output:.2f}/1M"
-            ctx_str = f"{m.limit.context:,}" if m.limit.context else "-"
+            allow_str = _fmt_allowance(m)
+            cost_str = _fmt_output_cost(m)
+            ctx_str = _fmt_context(m)
             if explain:
                 iq_str = f"{m.aa_iq:.1f}" if m.aa_iq is not None else "-"
                 bpe_str = f"{m.bpe:.3f}" if m.bpe is not None else "-"
@@ -287,14 +299,8 @@ def format_rank_table(
             bpe_str = f"{m.bpe:.3f}" if m.bpe is not None else "-"
             iq_str = f"{m.aa_iq:.1f}" if m.aa_iq is not None else "-"
             burn_str = f"{m.composite_burn_pct:.1f}%" if m.composite_burn_pct is not None else "-"
-            allow_str = (
-                "Unlimited"
-                if m.monthly_allowance == float("inf")
-                else f"${m.monthly_allowance:.2f}"
-                if m.monthly_allowance is not None
-                else "-"
-            )
-            cost_str = "Free" if m.is_zero_cost else f"${m.cost.output:.2f}/1M"
+            allow_str = _fmt_allowance(m)
+            cost_str = _fmt_output_cost(m)
             rows.append(
                 [
                     str(m.rank or "-"),
@@ -321,15 +327,9 @@ def format_rank_table(
         ]
         rows = []
         for m in ranked_models:
-            allow_str = (
-                "Unlimited"
-                if m.monthly_allowance == float("inf")
-                else f"${m.monthly_allowance:.2f}"
-                if m.monthly_allowance is not None
-                else "-"
-            )
-            cost_str = "Free" if m.is_zero_cost else f"${m.cost.output:.2f}/1M"
-            ctx_str = f"{m.limit.context:,}" if m.limit.context else "-"
+            allow_str = _fmt_allowance(m)
+            cost_str = _fmt_output_cost(m)
+            ctx_str = _fmt_context(m)
             rows.append(
                 [
                     str(m.rank or "-"),
@@ -440,42 +440,23 @@ def format_diff_table(diff: SnapshotDiff) -> str:
                 ],
             )
         )
-    if diff.pricing_changes:
-        sections.append("Pricing / allowance changes:")
-        sections.append(
-            _render_table(
-                ["Model ID", "Field", "Old", "New"],
-                [
-                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
-                    for model_id, fields in diff.pricing_changes.items()
-                    for field, (old, new) in fields.items()
-                ],
+    for title, changes in (
+        ("Pricing / allowance changes:", diff.pricing_changes),
+        ("Capability / benchmark changes:", diff.capability_changes),
+        ("Privacy / region changes:", diff.privacy_changes),
+    ):
+        if changes:
+            sections.append(title)
+            sections.append(
+                _render_table(
+                    ["Model ID", "Field", "Old", "New"],
+                    [
+                        [model_id, field, _format_diff_value(old), _format_diff_value(new)]
+                        for model_id, fields in changes.items()
+                        for field, (old, new) in fields.items()
+                    ],
+                )
             )
-        )
-    if diff.capability_changes:
-        sections.append("Capability / benchmark changes:")
-        sections.append(
-            _render_table(
-                ["Model ID", "Field", "Old", "New"],
-                [
-                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
-                    for model_id, fields in diff.capability_changes.items()
-                    for field, (old, new) in fields.items()
-                ],
-            )
-        )
-    if diff.privacy_changes:
-        sections.append("Privacy / region changes:")
-        sections.append(
-            _render_table(
-                ["Model ID", "Field", "Old", "New"],
-                [
-                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
-                    for model_id, fields in diff.privacy_changes.items()
-                    for field, (old, new) in fields.items()
-                ],
-            )
-        )
     if diff.tier_changes:
         sections.append("Tier changes:")
         sections.append(
