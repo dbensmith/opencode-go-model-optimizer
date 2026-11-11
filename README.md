@@ -52,6 +52,8 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ## Installation & Usage
 
+Requires Python 3.14+.
+
 ### Via `pipx`
 ```bash
 pipx install opencode-go-model-optimizer
@@ -195,6 +197,8 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 ---
 
 ## Development
+
+Requires Python 3.14+ (see `.python-version`; `uv` will fetch it automatically).
 
 ```bash
 # Clone repository
