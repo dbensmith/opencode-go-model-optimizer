@@ -103,21 +103,28 @@ def fetch_aa_benchmarks(
         return {}
 
 
+def _build_endpoint_index(
+    endpoints: dict[str, str] | None,
+) -> dict[str, tuple[str, ...]]:
+    """Map each endpoint model ID to its normalized display name(s) in O(1)."""
+    by_id: dict[str, list[str]] = {}
+    for raw_name, model_id in (endpoints or {}).items():
+        key = norm_name(raw_name)
+        if key:
+            by_id.setdefault(model_id, []).append(key)
+    return {mid: tuple(keys) for mid, keys in by_id.items()}
+
+
 def _lookup_pricing(
     m: NormalizedModel,
     pricing_map: dict[str, dict[str, Any]],
-    id_by_norm_name: dict[str, str],
-    endpoint_ids: set[str],
+    norm_names_by_id: dict[str, tuple[str, ...]],
 ) -> tuple[str, dict[str, Any]] | None:
-    """Find a pricing row for a model: by endpoint model ID first, then fuzzy names.
-
-    Fuzzy matching is only used when the Endpoints table does not list the model's ID.
-    Returns (pricing key, row) or None.
-    """
-    if m.id in endpoint_ids:
-        for key, row in pricing_map.items():
-            if id_by_norm_name.get(key) == m.id:
-                return key, row
+    """Find a pricing row for a model: by endpoint model ID first (O(1)), then fuzzy names."""
+    if m.id in norm_names_by_id:
+        for key in norm_names_by_id[m.id]:
+            if key in pricing_map:
+                return key, pricing_map[key]
         return None
     for key in (norm_name(m.name), norm_name(m.id), m.id, m.name):
         if pricing_map.get(key):
@@ -133,6 +140,7 @@ def merge_docs_pricing(
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
     endpoints: dict[str, str] | None = None,
     warnings: list[str] | None = None,
+    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
 ) -> list[NormalizedModel]:
     """Merge published monthly allowances and prices into catalog models.
 
@@ -142,15 +150,16 @@ def merge_docs_pricing(
     """
     benchmarks = aa_benchmarks or {}
     external_metadata = models_dev_metadata or {}
-    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
-    endpoint_ids = set(id_by_norm_name.values())
+    norm_names_by_id = (
+        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
+    )
     used_keys: set[str] = set()
     unpriced: list[str] = []
     for m in models:
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
 
-        found = _lookup_pricing(m, pricing, id_by_norm_name, endpoint_ids)
+        found = _lookup_pricing(m, pricing, norm_names_by_id)
         info = found[1] if found else None
         if found:
             used_keys.add(found[0])
@@ -170,7 +179,7 @@ def merge_docs_pricing(
 
         if all_plan_pricing:
             for plan_name, plan_map in all_plan_pricing.items():
-                plan_found = _lookup_pricing(m, plan_map, id_by_norm_name, endpoint_ids)
+                plan_found = _lookup_pricing(m, plan_map, norm_names_by_id)
                 if plan_found:
                     m.plan_allowances[plan_name] = plan_found[1]["allowance"]
         elif m.monthly_allowance is not None and "go" not in m.plan_allowances:
@@ -224,20 +233,22 @@ def merge_privacy(
     endpoints: dict[str, str] | None = None,
     warnings: list[str] | None = None,
     now: datetime | None = None,
+    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
     """Attach docs privacy rows to models, resolving names the same way pricing does.
 
     `warnings`, if given, receives messages about active models without a privacy row and
     expired ZDR agreement dates (relative to `now`).
     """
-    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
-    endpoint_ids = set(id_by_norm_name.values())
+    norm_names_by_id = (
+        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
+    )
     by_norm = {norm_name(n): row for n, row in privacy.items() if norm_name(n)}
     missing: list[str] = []
     expired: set[str] = set()
     today = (now or datetime.now(UTC)).date().isoformat()
     for m in models:
-        found = _lookup_pricing(m, by_norm, id_by_norm_name, endpoint_ids)
+        found = _lookup_pricing(m, by_norm, norm_names_by_id)
         if not found:
             if m.status == "active":
                 missing.append(m.id)
@@ -261,13 +272,15 @@ def merge_request_estimates(
     estimates: dict[str, dict[str, dict[str, float]]],
     endpoints: dict[str, str] | None = None,
     warnings: list[str] | None = None,
+    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
     """Attach docs request estimates per plan, resolving names the same way pricing does.
 
     `warnings`, if given, receives a message listing active paid models with no estimate.
     """
-    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
-    endpoint_ids = set(id_by_norm_name.values())
+    norm_names_by_id = (
+        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
+    )
     by_plan = {
         plan: {norm_name(n): row for n, row in rows.items() if norm_name(n)}
         for plan, rows in estimates.items()
@@ -275,7 +288,7 @@ def merge_request_estimates(
     missing: list[str] = []
     for m in models:
         for plan, by_norm in by_plan.items():
-            found = _lookup_pricing(m, by_norm, id_by_norm_name, endpoint_ids)
+            found = _lookup_pricing(m, by_norm, norm_names_by_id)
             if found:
                 m.request_estimates[plan] = RequestEstimate(**found[1])
         if m.status == "active" and not m.is_zero_cost and not m.request_estimates:
@@ -320,6 +333,7 @@ def create_snapshot(
                     f"ignoring unsupported price multiplier on {m.id} ({reason}); "
                     "prices for it may be understated"
                 )
+    endpoint_index = _build_endpoint_index(endpoints)
     merged_models = merge_docs_pricing(
         models,
         pricing,
@@ -328,6 +342,7 @@ def create_snapshot(
         models_dev_metadata=models_dev_metadata,
         endpoints=endpoints,
         warnings=all_warnings if pricing else None,
+        _endpoint_index=endpoint_index,
     )
     now = datetime.now(UTC)
     now_utc = now.isoformat(timespec="seconds")
@@ -337,7 +352,14 @@ def create_snapshot(
                 "no rows parsed from the docs Privacy table; privacy/region filters have no data"
             )
         else:
-            merge_privacy(merged_models, privacy, endpoints, all_warnings, now)
+            merge_privacy(
+                merged_models,
+                privacy,
+                endpoints,
+                all_warnings,
+                now,
+                _endpoint_index=endpoint_index,
+            )
 
     if request_estimates is not None:
         if not request_estimates:
@@ -346,7 +368,13 @@ def create_snapshot(
                 "quota burn uses synthetic token costs"
             )
         else:
-            merge_request_estimates(merged_models, request_estimates, endpoints, all_warnings)
+            merge_request_estimates(
+                merged_models,
+                request_estimates,
+                endpoints,
+                all_warnings,
+                _endpoint_index=endpoint_index,
+            )
 
     apply_plan(merged_models, plan)
 
@@ -518,7 +546,8 @@ def _fetch_and_build(
         parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
         if parsed:
             all_plan_pricing[p] = parsed
-    pricing = all_plan_pricing.get(plan) or parse_go_pricing(docs_text, plan=plan)
+    norm_plan = normalize_plan(plan)
+    pricing = all_plan_pricing.get(norm_plan) or parse_go_pricing(docs_text, plan=plan)
 
     warnings: list[str] = []
     if aa_key and not aa_benchmarks:

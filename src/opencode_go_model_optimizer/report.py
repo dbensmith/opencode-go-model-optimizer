@@ -12,12 +12,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.allowance import is_eligible_free, rank_paid_models
+from opencode_go_model_optimizer.engine.allowance import is_eligible_free
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.tiers import (
     PAID_TIERS,
     STANDARD_TIERS,
-    _allowance_clusters,
     select_tiers,
 )
 from opencode_go_model_optimizer.formatters.output import explain_tiers
@@ -147,7 +146,7 @@ def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, A
         if not selection.primary[t]
     ]
 
-    clusters = _allowance_clusters(rank_paid_models(pool, skip_models=criteria.skip_models))
+    clusters = selection.clusters
     tiers: dict[str, Any] = {}
     for tier in STANDARD_TIERS:
         pick = selection.primary[tier]
