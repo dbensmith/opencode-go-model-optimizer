@@ -21,6 +21,10 @@ from opencode_go_model_optimizer.ingest.models import (
     SnapshotMetadata,
     TokenCost,
 )
+from opencode_go_model_optimizer.ingest.models_dev import (
+    fetch_models_dev,
+    parse_models_dev,
+)
 from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
     create_snapshot,
@@ -45,6 +49,7 @@ __all__ = [
     "fetch_and_build_snapshot",
     "fetch_catalogue",
     "fetch_docs_mdx",
+    "fetch_models_dev",
     "get_cache_snapshot_path",
     "load_cached_snapshot",
     "load_snapshot",
@@ -54,6 +59,7 @@ __all__ = [
     "parse_catalogue_cli",
     "parse_catalogue_http",
     "parse_go_pricing",
+    "parse_models_dev",
     "parse_price_value",
     "parse_table_rows",
     "save_cached_snapshot",

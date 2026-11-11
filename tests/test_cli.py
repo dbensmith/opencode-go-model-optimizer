@@ -1,5 +1,6 @@
 """Tests for opencode-go-model-optimizer CLI."""
 
+import argparse
 import json
 import runpy
 from pathlib import Path
@@ -11,6 +12,8 @@ import pytest
 from opencode_go_model_optimizer.cli import (
     _load_or_fetch_models,
     _parse_preferred_tiers,
+    _parse_token_mix,
+    _parse_weights,
     _resolve_mode,
     main,
     parse_args,
@@ -22,7 +25,11 @@ from opencode_go_model_optimizer.ingest.models import (
     Snapshot,
     SnapshotMetadata,
 )
-from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, save_snapshot
+from opencode_go_model_optimizer.ingest.snapshot import (
+    create_snapshot,
+    load_snapshot,
+    save_snapshot,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -716,3 +723,211 @@ def test_cli_top_n_and_output_guardrails(tmp_path, capsys):
         ]
     )
     assert rc_rank_caps == 0
+
+
+def test_parse_select_rank_new_options():
+    select_args = parse_args(
+        [
+            "select",
+            "--max-burn",
+            "2.5",
+            "--tokens",
+            "1000,20000,500",
+            "--weights",
+            "0.5,0.5",
+        ]
+    )
+    assert select_args.max_burn == 2.5
+    assert select_args.tokens == (1000, 20000, 500)
+    assert select_args.weights == (0.5, 0.5)
+
+    rank_args = parse_args(
+        [
+            "rank",
+            "--max-burn",
+            "1",
+            "--tokens",
+            "1,2,3",
+            "--weights",
+            "1,0",
+        ]
+    )
+    assert rank_args.max_burn == 1.0
+    assert rank_args.tokens == (1, 2, 3)
+    assert rank_args.weights == (1.0, 0.0)
+
+
+def test_parse_helpers_reject_invalid_values():
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_token_mix("a,2,3")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_token_mix("1,2")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_token_mix("-1,2,3")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_weights("a,2")
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_weights("1")
+
+    with pytest.raises(SystemExit):
+        parse_args(["select", "--tokens", "1,2"])
+
+
+def test_cli_custom_tokens_weights_and_max_burn(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    rc_json = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--explain",
+            "--tokens",
+            "2000,120000,1000",
+            "--weights",
+            "0.5,0.5",
+        ]
+    )
+    assert rc_json == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "explanations" in data
+
+    rc_table = main(
+        [
+            "select",
+            "--format",
+            "table",
+            "--snapshot",
+            str(snap_path),
+            "--explain",
+            "--tokens",
+            "2000,120000,1000",
+            "--weights",
+            "0.5,0.5",
+        ]
+    )
+    assert rc_table == 0
+    assert "Burn %" in capsys.readouterr().out
+
+    rc_rank = main(
+        [
+            "rank",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--max-burn",
+            "50",
+            "--tokens",
+            "2000,120000,1000",
+            "--weights",
+            "0.5,0.5",
+        ]
+    )
+    assert rc_rank == 0
+    assert capsys.readouterr().out
+
+    rc_rank_empty = main(
+        [
+            "rank",
+            "--snapshot",
+            str(snap_path),
+            "--max-burn",
+            "0",
+        ]
+    )
+    assert rc_rank_empty == 0
+
+
+def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
+    old_path = _create_temp_snapshot(tmp_path)
+    old_snap = load_snapshot(old_path)
+    new_snap = old_snap.model_copy(deep=True)
+    new_snap.fetched_at = "2026-02-01T00:00:00Z"
+    new_snap.models[0].status = "deprecated"
+    new_snap.models[0].monthly_allowance = 999.0
+    new_path = tmp_path / "new_snapshot.json"
+    save_snapshot(new_snap, new_path)
+
+    rc_table = main(["diff", "--old", str(old_path), "--new", str(new_path)])
+    assert rc_table == 0
+    table_out = capsys.readouterr().out
+    assert "Snapshot diff (plan: go)" in table_out
+    assert "Status changes:" in table_out
+
+    rc_json = main(["diff", "--old", str(old_path), "--new", str(new_path), "--format", "json"])
+    assert rc_json == 0
+    diff_data = json.loads(capsys.readouterr().out)
+    assert diff_data["status_changes"]["qwen3.8-max"] == {
+        "old": "active",
+        "new": "deprecated",
+    }
+
+    rc_fail = main(["diff", "--old", str(old_path), "--new", str(new_path), "--fail-on-change"])
+    assert rc_fail == 2
+    capsys.readouterr()
+
+    rc_same = main(
+        [
+            "diff",
+            "--old",
+            str(old_path),
+            "--new",
+            str(old_path),
+            "--exit-code",
+        ]
+    )
+    assert rc_same == 0
+    assert "No catalog or tier changes detected." in capsys.readouterr().out
+
+    out_path = tmp_path / "diff.txt"
+    rc_out = main(
+        [
+            "diff",
+            "--old",
+            str(old_path),
+            "--new",
+            str(new_path),
+            "-o",
+            str(out_path),
+        ]
+    )
+    assert rc_out == 0
+    assert "Snapshot diff" in out_path.read_text(encoding="utf-8")
+
+
+def test_cli_diff_defaults_and_missing_reference(tmp_path, capsys):
+    old_path = _create_temp_snapshot(tmp_path)
+    new_snap = load_snapshot(old_path)
+    new_snap.fetched_at = "2026-03-01T00:00:00Z"
+
+    with patch(
+        "opencode_go_model_optimizer.cli._load_or_fetch_snapshot",
+        return_value=new_snap,
+    ):
+        rc = main(
+            [
+                "diff",
+                "--old",
+                str(old_path),
+                "--plan",
+                "go-plus",
+                "--mode",
+                "allowance",
+                "--profile",
+                "coding",
+            ]
+        )
+    assert rc == 0
+    assert "plan: go-plus" in capsys.readouterr().out
+
+    with patch(
+        "opencode_go_model_optimizer.cli.load_reference_snapshot",
+        return_value=None,
+    ):
+        rc_missing = main(["diff", "--new", str(old_path)])
+    assert rc_missing == 1
+    assert "no reference snapshot available" in capsys.readouterr().err

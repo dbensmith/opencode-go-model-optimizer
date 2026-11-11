@@ -17,6 +17,7 @@ import httpx
 from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
 from opencode_go_model_optimizer.ingest.docs import fetch_docs_mdx, norm_name, parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
+from opencode_go_model_optimizer.ingest.models_dev import fetch_models_dev
 
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
@@ -83,9 +84,11 @@ def merge_docs_pricing(
     pricing: dict[str, dict[str, Any]],
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
     all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
+    models_dev_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> list[NormalizedModel]:
     """Merge published monthly allowances and prices into catalog models."""
     benchmarks = aa_benchmarks or {}
+    external_metadata = models_dev_metadata or {}
     for m in models:
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
@@ -118,6 +121,19 @@ def merge_docs_pricing(
         elif m.monthly_allowance is not None and "go" not in m.plan_allowances:
             m.plan_allowances["go"] = m.monthly_allowance
 
+        metadata = (
+            external_metadata.get(m.id)
+            or external_metadata.get(key_id)
+            or external_metadata.get(key_name)
+        )
+        if metadata:
+            if not m.release_date and metadata.get("release_date"):
+                m.release_date = str(metadata["release_date"])
+            if m.limit.context == 0 and metadata.get("context"):
+                m.limit.context = int(metadata["context"])
+            if m.limit.output == 0 and metadata.get("output"):
+                m.limit.output = int(metadata["output"])
+
         bench = benchmarks.get(m.id) or benchmarks.get(key_id) or benchmarks.get(key_name)
         if bench:
             if m.aa_iq is None:
@@ -138,6 +154,7 @@ def create_snapshot(
     source_catalogue: str = "live",
     source_docs: str = "live",
     all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
+    models_dev_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
     merged_models = merge_docs_pricing(
@@ -145,6 +162,7 @@ def create_snapshot(
         pricing,
         aa_benchmarks=aa_benchmarks,
         all_plan_pricing=all_plan_pricing,
+        models_dev_metadata=models_dev_metadata,
     )
     now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -276,6 +294,7 @@ def fetch_and_build_snapshot(
         with concurrent.futures.ThreadPoolExecutor() as executor:
             fut_cat = executor.submit(fetch_catalogue, client=active_client)
             fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
+            fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
             fut_aa = (
                 executor.submit(fetch_aa_benchmarks, aa_key, client=active_client)
                 if aa_key
@@ -284,6 +303,7 @@ def fetch_and_build_snapshot(
 
             models = fut_cat.result()
             docs_text = fut_docs.result()
+            models_dev_metadata = fut_models_dev.result()
             aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
         all_plan_pricing = {
@@ -318,6 +338,7 @@ def fetch_and_build_snapshot(
             plan=plan,
             aa_benchmarks=aa_benchmarks,
             all_plan_pricing=all_plan_pricing,
+            models_dev_metadata=models_dev_metadata,
         )
     finally:
         if close_client and active_client:

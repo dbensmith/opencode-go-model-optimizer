@@ -7,6 +7,11 @@ from opencode_go_model_optimizer.engine.allowance import (
     rank_paid_models,
     tie_break_key,
 )
+from opencode_go_model_optimizer.engine.diff import (
+    ModelChange,
+    SnapshotDiff,
+    diff_snapshots,
+)
 from opencode_go_model_optimizer.engine.pareto import (
     WORKLOAD_PROFILES,
     compute_quota_burn_pct,
@@ -27,12 +32,15 @@ from opencode_go_model_optimizer.engine.tiers import (
 __all__ = [
     "STANDARD_TIERS",
     "WORKLOAD_PROFILES",
+    "ModelChange",
+    "SnapshotDiff",
     "allocate_tier_fallbacks",
     "allocate_tiers",
     "allocate_tiers_allowance",
     "allocate_tiers_pareto",
     "compute_quota_burn_pct",
     "compute_turn_cost",
+    "diff_snapshots",
     "effective_quality",
     "evaluate_pareto",
     "fisher_jenks_3_clusters",

@@ -10,6 +10,7 @@ from opencode_go_model_optimizer.engine.allowance import (
     tie_break_key,
 )
 from opencode_go_model_optimizer.engine.pareto import (
+    compute_quota_burn_pct,
     effective_quality,
     evaluate_pareto,
     fisher_jenks_3_clusters,
@@ -28,6 +29,9 @@ def allocate_tiers_allowance(
     min_output: int = 0,
     max_output_cost: float | None = None,
     profile: str = "general",
+    max_burn: float | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> dict[str, str]:
     """Allocate models to tiers using allowance heuristic and natural cost clustering."""
     preferred = preferred_tiers or {}
@@ -38,6 +42,12 @@ def allocate_tiers_allowance(
         models = [m for m in models if m.limit.output >= min_output]
     if max_output_cost is not None:
         models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
+    if max_burn is not None:
+        models = [
+            m
+            for m in models
+            if compute_quota_burn_pct(m, profile=profile, token_mix=token_mix) <= max_burn
+        ]
 
     # 1. Rank free and paid models
     free_ranked = rank_free_models(models, skip_models=skips, allow_contributor=allow_contributor)
@@ -162,6 +172,9 @@ def allocate_tiers_pareto(
     max_output_cost: float | None = None,
     profile: str = "general",
     already_evaluated: bool = False,
+    max_burn: float | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> dict[str, str]:
     """Allocate models to tiers using Pareto efficiency and Fisher-Jenks natural breaks."""
     preferred = preferred_tiers or {}
@@ -172,10 +185,20 @@ def allocate_tiers_pareto(
         models = [m for m in models if m.limit.output >= min_output]
     if max_output_cost is not None:
         models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
+    if max_burn is not None:
+        models = [
+            m
+            for m in models
+            if compute_quota_burn_pct(m, profile=profile, token_mix=token_mix) <= max_burn
+        ]
 
     # 1. Evaluate BPE on models
     evaluated = (
-        models if already_evaluated else evaluate_pareto(models, profile=profile, skip_models=skips)
+        models
+        if already_evaluated
+        else evaluate_pareto(
+            models, profile=profile, skip_models=skips, token_mix=token_mix, weights=weights
+        )
     )
 
     # Free tier
@@ -230,18 +253,22 @@ def allocate_tiers_pareto(
 
     if benchmarked:
         min_pareto_q = min(
-            (effective_quality(m, profile=profile) for m in benchmarked if m.is_pareto),
+            (
+                effective_quality(m, profile=profile, weights=weights)
+                for m in benchmarked
+                if m.is_pareto
+            ),
             default=0.0,
         )
         competitive = [
             m
             for m in benchmarked
             if (m.bpe or 0.0) >= 0.05
-            and effective_quality(m, profile=profile) >= min_pareto_q * 0.8
+            and effective_quality(m, profile=profile, weights=weights) >= min_pareto_q * 0.8
         ]
         pool = competitive if len(competitive) >= 3 else benchmarked
         tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
-            pool, key=lambda m: effective_quality(m, profile=profile)
+            pool, key=lambda m: effective_quality(m, profile=profile, weights=weights)
         )
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
@@ -292,6 +319,9 @@ def allocate_tiers_pareto(
             min_output=min_output if not already_evaluated else 0,
             max_output_cost=max_output_cost if not already_evaluated else None,
             profile=profile,
+            max_burn=max_burn,
+            token_mix=token_mix,
+            weights=weights,
         )
         for t in STANDARD_TIERS:
             if t not in selected:
@@ -311,6 +341,9 @@ def allocate_tiers(
     max_output_cost: float | None = None,
     profile: str = "general",
     already_evaluated: bool = False,
+    max_burn: float | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> dict[str, str]:
     """Unified entrypoint to allocate models into capability tiers."""
     if mode == "pareto":
@@ -324,6 +357,9 @@ def allocate_tiers(
             max_output_cost=max_output_cost,
             profile=profile,
             already_evaluated=already_evaluated,
+            max_burn=max_burn,
+            token_mix=token_mix,
+            weights=weights,
         )
     else:
         res = allocate_tiers_allowance(
@@ -335,6 +371,9 @@ def allocate_tiers(
             min_output=min_output,
             max_output_cost=max_output_cost,
             profile=profile,
+            max_burn=max_burn,
+            token_mix=token_mix,
+            weights=weights,
         )
     return {k: res.get(k, "") for k in STANDARD_TIERS}
 
@@ -348,6 +387,9 @@ def rank_catalog(
     min_output: int = 0,
     max_output_cost: float | None = None,
     profile: str = "general",
+    max_burn: float | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models."""
     skips = set(skip_models or set())
@@ -357,19 +399,27 @@ def rank_catalog(
         models = [m for m in models if m.limit.output >= min_output]
     if max_output_cost is not None:
         models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
+    if max_burn is not None:
+        models = [
+            m
+            for m in models
+            if compute_quota_burn_pct(m, profile=profile, token_mix=token_mix) <= max_burn
+        ]
 
     active_models = [
         m for m in models if m.status == "active" and m.id not in skips and m.full_id not in skips
     ]
 
     if mode == "pareto":
-        evaluated = evaluate_pareto(active_models, profile=profile, skip_models=skips)
+        evaluated = evaluate_pareto(
+            active_models, profile=profile, skip_models=skips, token_mix=token_mix, weights=weights
+        )
         # Sort by BPE desc, effective_quality desc, composite_burn asc, tie_break_key
         ranked = sorted(
             evaluated,
             key=lambda m: (
                 -(m.bpe or 0.0),
-                -effective_quality(m, profile=profile),
+                -effective_quality(m, profile=profile, weights=weights),
                 m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
                 tie_break_key(m),
             ),
@@ -396,6 +446,9 @@ def rank_catalog(
         max_output_cost=None,
         profile=profile,
         already_evaluated=(mode == "pareto"),
+        max_burn=max_burn,
+        token_mix=token_mix,
+        weights=weights,
     )
     tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
 
@@ -418,6 +471,9 @@ def allocate_tier_fallbacks(
     min_output: int = 0,
     max_output_cost: float | None = None,
     profile: str = "general",
+    max_burn: float | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> dict[str, list[str]]:
     """Allocate ordered per-tier candidate lists (primary + fallbacks) up to top_n models."""
     primary = allocate_tiers(
@@ -430,6 +486,9 @@ def allocate_tier_fallbacks(
         min_output=min_output,
         max_output_cost=max_output_cost,
         profile=profile,
+        max_burn=max_burn,
+        token_mix=token_mix,
+        weights=weights,
     )
     if top_n <= 1:
         return {tier: ([primary[tier]] if primary.get(tier) else []) for tier in STANDARD_TIERS}
@@ -443,6 +502,12 @@ def allocate_tier_fallbacks(
     if max_output_cost is not None:
         filtered_models = [
             m for m in filtered_models if m.is_zero_cost or m.cost.output <= max_output_cost
+        ]
+    if max_burn is not None:
+        filtered_models = [
+            m
+            for m in filtered_models
+            if compute_quota_burn_pct(m, profile=profile, token_mix=token_mix) <= max_burn
         ]
 
     fallbacks: dict[str, list[str]] = {}
@@ -463,7 +528,13 @@ def allocate_tier_fallbacks(
     general_paid = rank_paid_models(filtered_models, skip_models=skips)
 
     if mode == "pareto":
-        evaluated = evaluate_pareto(filtered_models, profile=profile, skip_models=skips)
+        evaluated = evaluate_pareto(
+            filtered_models,
+            profile=profile,
+            skip_models=skips,
+            token_mix=token_mix,
+            weights=weights,
+        )
         benchmarked = [
             m
             for m in evaluated
@@ -477,18 +548,22 @@ def allocate_tier_fallbacks(
         ]
         if benchmarked:
             min_pareto_q = min(
-                (effective_quality(m, profile=profile) for m in benchmarked if m.is_pareto),
+                (
+                    effective_quality(m, profile=profile, weights=weights)
+                    for m in benchmarked
+                    if m.is_pareto
+                ),
                 default=0.0,
             )
             competitive = [
                 m
                 for m in benchmarked
                 if (m.bpe or 0.0) >= 0.05
-                and effective_quality(m, profile=profile) >= min_pareto_q * 0.8
+                and effective_quality(m, profile=profile, weights=weights) >= min_pareto_q * 0.8
             ]
             pool = competitive if len(competitive) >= 3 else benchmarked
             tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
-                pool, key=lambda m: effective_quality(m, profile=profile)
+                pool, key=lambda m: effective_quality(m, profile=profile, weights=weights)
             )
 
             def sort_cluster_pareto(cluster: list[NormalizedModel]) -> list[NormalizedModel]:
