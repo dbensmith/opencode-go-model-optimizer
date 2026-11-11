@@ -14,10 +14,10 @@ from opencode_go_model_optimizer.cli import (
     _parse_preferred_tiers,
     _parse_token_mix,
     _parse_weights,
-    _resolve_mode,
     main,
     parse_args,
 )
+from opencode_go_model_optimizer.engine.tiers import resolve_mode
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
 from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import (
@@ -427,23 +427,23 @@ def test_cli_fetch_update_reference(tmp_path):
         assert len(data["models"]) == 7
 
 
-def test_resolve_mode():
+def testresolve_mode():
     m_with_iq = NormalizedModel(id="m1", aa_iq=60.0)
     m_with_coding = NormalizedModel(id="m2", aa_coding=75.0)
     m_no_bench = NormalizedModel(id="m3")
     m_inactive = NormalizedModel(id="m4", aa_iq=80.0, status="deprecated")
 
     # Explicit modes return as-is
-    assert _resolve_mode("allowance", [m_with_iq]) == "allowance"
-    assert _resolve_mode("pareto", [m_with_iq]) == "pareto"
+    assert resolve_mode("allowance", [m_with_iq]) == "allowance"
+    assert resolve_mode("pareto", [m_with_iq]) == "pareto"
 
     # Auto mode resolves to pareto whenever any active model has benchmark data
-    assert _resolve_mode("auto", [m_with_iq]) == "pareto"
-    assert _resolve_mode("auto", [m_with_coding]) == "pareto"
+    assert resolve_mode("auto", [m_with_iq]) == "pareto"
+    assert resolve_mode("auto", [m_with_coding]) == "pareto"
 
     # Auto mode returns allowance if no active models have benchmarks
-    assert _resolve_mode("auto", [m_no_bench]) == "allowance"
-    assert _resolve_mode("auto", [m_inactive]) == "allowance"
+    assert resolve_mode("auto", [m_no_bench]) == "allowance"
+    assert resolve_mode("auto", [m_inactive]) == "allowance"
 
 
 def test_load_or_fetch_models(tmp_path):
@@ -1007,3 +1007,44 @@ def test_main_error_handling(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setattr("opencode_go_model_optimizer.cli.handle_fetch", interrupt)
     assert main(["fetch"]) == 130
+
+
+def test_invalid_cache_ttl_env_warns_once(monkeypatch, capsys):
+    monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "abc")
+    ref = "src/opencode_go_model_optimizer/data/reference_snapshot.json"
+    assert main(["select", "--snapshot", ref, "--format", "compact"]) == 0
+    assert capsys.readouterr().err.count("invalid OPENCODE_GO_CACHE_TTL") == 1
+
+
+def test_select_evaluates_pareto_once(monkeypatch, capsys):
+    from opencode_go_model_optimizer.engine import tiers
+
+    calls = []
+    real = tiers.evaluate_pareto
+    monkeypatch.setattr(tiers, "evaluate_pareto", lambda *a, **k: calls.append(1) or real(*a, **k))
+    ref = "src/opencode_go_model_optimizer/data/reference_snapshot.json"
+    assert main(["select", "--snapshot", ref, "--mode", "pareto", "--top-n", "3"]) == 0
+    capsys.readouterr()
+    assert len(calls) == 1
+
+
+def test_write_output_is_atomic(tmp_path, monkeypatch):
+    import os
+
+    from opencode_go_model_optimizer.cli import _write_output
+
+    target = tmp_path / "sub" / "out.txt"
+    target.parent.mkdir()
+    target.write_text("old\n")
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append((Path(dst).read_text(), Path(src).read_text()))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    _write_output("new", str(target))
+    assert seen == [("old\n", "new\n")]
+    assert target.read_text() == "new\n"
+    assert [p.name for p in target.parent.iterdir()] == ["out.txt"]

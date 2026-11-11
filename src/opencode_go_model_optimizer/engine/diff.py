@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, allocate_tiers
+from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, allocate_tiers, resolve_mode
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 
@@ -78,17 +78,6 @@ def _prepare_models(snapshot: Snapshot, plan: str) -> list[NormalizedModel]:
     return apply_plan(models, plan)
 
 
-def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
-    """Resolve auto mode based on available benchmark data."""
-    if mode != "auto":
-        return mode
-    if any(
-        (m.aa_iq is not None or m.aa_coding is not None) for m in models if m.status == "active"
-    ):
-        return "pareto"
-    return "allowance"
-
-
 def diff_snapshots(
     old_snap: Snapshot,
     new_snap: Snapshot,
@@ -146,7 +135,7 @@ def diff_snapshots(
             )
             note(model_id, change_type, {"status": (old_model.status, new_model.status)})
 
-    resolved_mode = _resolve_mode(mode, old_models + new_models)
+    resolved_mode = resolve_mode(mode, old_models + new_models)
     old_tiers = allocate_tiers(old_models, mode=resolved_mode, profile=profile)
     new_tiers = allocate_tiers(new_models, mode=resolved_mode, profile=profile)
     tier_changes = {

@@ -6,14 +6,15 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.engine.tiers import (
-    allocate_tier_fallbacks,
-    allocate_tiers,
+    allocate_tiers_with_fallbacks,
     rank_catalog,
+    resolve_mode,
 )
 from opencode_go_model_optimizer.formatters.output import (
     explain_tiers,
@@ -27,6 +28,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_json,
     format_select_table,
 )
+from opencode_go_model_optimizer.ingest.http import atomic_write_text
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
@@ -87,6 +89,11 @@ def _env_cache_ttl() -> int:
     return value
 
 
+def _cache_ttl(args: argparse.Namespace) -> int:
+    """Return --cache-ttl, falling back to OPENCODE_GO_CACHE_TTL when the flag was omitted."""
+    return _env_cache_ttl() if args.cache_ttl is None else args.cache_ttl
+
+
 def _prefer_arg(value: str) -> str:
     """Validate a TIER=MODEL_ID --prefer argument."""
     tier, sep, model_id = value.partition("=")
@@ -103,6 +110,115 @@ def _prefer_arg(value: str) -> str:
     return value
 
 
+def _parent(*specs: tuple[tuple[str, ...], dict[str, Any]]) -> argparse.ArgumentParser:
+    """Build a help-less parent parser from (flags, kwargs) argument specs."""
+    parent = argparse.ArgumentParser(add_help=False)
+    for flags, kwargs in specs:
+        parent.add_argument(*flags, **kwargs)
+    return parent
+
+
+_PLAN_PARENT = _parent(
+    (
+        ("--plan",),
+        {
+            "choices": ["go", "go-plus", "go-teams"],
+            "default": "go",
+            "help": "OpenCode plan tier (default: go)",
+        },
+    ),
+)
+
+# Shared by select, rank, and diff.
+_RANKING_PARENT = _parent(
+    (
+        ("--mode",),
+        {
+            "choices": ["auto", "pareto", "allowance"],
+            "default": "auto",
+            "help": "Ranking mode (default: auto)",
+        },
+    ),
+    (
+        ("--profile",),
+        {
+            "choices": ["general", "coding", "reasoning", "fast"],
+            "default": "general",
+            "help": "Workload profile for token mix and benchmark weighting (default: general)",
+        },
+    ),
+    (
+        ("--cache-ttl",),
+        {
+            "type": int,
+            "default": None,
+            "help": "Cache TTL in seconds for live snapshot fetches (default: 0)",
+        },
+    ),
+    (("-o", "--output"), {"help": "Output file path (default: stdout)"}),
+)
+
+# Shared by select and rank.
+_FILTER_PARENT = _parent(
+    (("--snapshot",), {"help": "Path to offline snapshot JSON file"}),
+    (
+        ("--skip",),
+        {
+            "action": "append",
+            "default": [],
+            "help": "Model ID to exclude (can be specified multiple times)",
+        },
+    ),
+    (
+        ("--min-context",),
+        {"type": int, "default": 0, "help": "Minimum context window in tokens (default: 0)"},
+    ),
+    (
+        ("--min-output",),
+        {"type": int, "default": 0, "help": "Minimum output token limit (default: 0)"},
+    ),
+    (
+        ("--max-output-cost",),
+        {
+            "type": float,
+            "default": None,
+            "help": "Maximum output token cost in USD per 1M tokens",
+        },
+    ),
+    (
+        ("--max-burn",),
+        {
+            "type": float,
+            "default": None,
+            "help": "Maximum monthly quota burn percentage per 1,000 turns",
+        },
+    ),
+    (
+        ("--tokens",),
+        {
+            "type": _parse_token_mix,
+            "default": None,
+            "help": "Custom turn token mix as IN,CACHE,OUT (e.g. --tokens 2000,120000,1000)",
+        },
+    ),
+    (
+        ("--weights",),
+        {
+            "type": _parse_weights,
+            "default": None,
+            "help": "Custom benchmark weights as IQ,CODING (e.g. --weights 0.5,0.5)",
+        },
+    ),
+    (
+        ("--no-contributor",),
+        {
+            "action": "store_true",
+            "help": "Exclude contributor-tier models from free tier selection",
+        },
+    ),
+)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -111,48 +227,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # select subcommand
     select_parser = subparsers.add_parser(
-        "select", help="Select optimal models across capability tiers"
+        "select",
+        help="Select optimal models across capability tiers",
+        parents=[_PLAN_PARENT, _RANKING_PARENT, _FILTER_PARENT],
     )
     select_parser.add_argument(
         "--format",
         choices=["json", "table", "compact", "env", "github-output"],
         default="json",
         help="Output format (default: json)",
-    )
-    select_parser.add_argument(
-        "--mode",
-        choices=["auto", "pareto", "allowance"],
-        default="auto",
-        help="Ranking mode (default: auto)",
-    )
-    select_parser.add_argument(
-        "--plan",
-        choices=["go", "go-plus", "go-teams"],
-        default="go",
-        help="OpenCode plan tier (default: go)",
-    )
-    select_parser.add_argument(
-        "-o",
-        "--output",
-        help="Output file path (default: stdout)",
-    )
-    select_parser.add_argument(
-        "--snapshot",
-        help="Path to offline snapshot JSON file",
-    )
-    select_parser.add_argument(
-        "--cache-ttl",
-        type=int,
-        default=_env_cache_ttl(),
-        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
-    )
-    select_parser.add_argument(
-        "--skip",
-        action="append",
-        default=[],
-        help="Model ID to exclude (can be specified multiple times)",
     )
     select_parser.add_argument(
         "--prefer",
@@ -162,57 +246,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Pin a model to a tier, e.g. --prefer heavy=kimi-k3.1-pro (can be specified multiple times)",
     )
     select_parser.add_argument(
-        "--min-context",
-        type=int,
-        default=0,
-        help="Minimum context window in tokens (default: 0)",
-    )
-    select_parser.add_argument(
-        "--min-output",
-        type=int,
-        default=0,
-        help="Minimum output token limit (default: 0)",
-    )
-    select_parser.add_argument(
-        "--max-output-cost",
-        type=float,
-        default=None,
-        help="Maximum output token cost in USD per 1M tokens",
-    )
-    select_parser.add_argument(
-        "--max-burn",
-        type=float,
-        default=None,
-        help="Maximum monthly quota burn percentage per 1,000 turns",
-    )
-    select_parser.add_argument(
-        "--tokens",
-        type=_parse_token_mix,
-        default=None,
-        help="Custom turn token mix as IN,CACHE,OUT (e.g. --tokens 2000,120000,1000)",
-    )
-    select_parser.add_argument(
-        "--weights",
-        type=_parse_weights,
-        default=None,
-        help="Custom benchmark weights as IQ,CODING (e.g. --weights 0.5,0.5)",
-    )
-    select_parser.add_argument(
         "--top-n",
         type=int,
         default=1,
         help="Number of ordered candidate models per tier for fallback chains (default: 1)",
-    )
-    select_parser.add_argument(
-        "--no-contributor",
-        action="store_true",
-        help="Exclude contributor-tier models from free tier selection",
-    )
-    select_parser.add_argument(
-        "--profile",
-        choices=["general", "coding", "reasoning", "fast"],
-        default="general",
-        help="Workload profile for token mix and benchmark weighting (default: general)",
     )
     select_parser.add_argument(
         "--explain",
@@ -220,8 +257,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Include detailed per-tier metrics and selection rationale",
     )
 
-    # rank subcommand
-    rank_parser = subparsers.add_parser("rank", help="Rank all active models in the catalog")
+    rank_parser = subparsers.add_parser(
+        "rank",
+        help="Rank all active models in the catalog",
+        parents=[_PLAN_PARENT, _RANKING_PARENT, _FILTER_PARENT],
+    )
     rank_parser.add_argument(
         "--table",
         action="store_true",
@@ -233,90 +273,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="table",
         help="Output format (default: table)",
     )
-    rank_parser.add_argument(
-        "--mode",
-        choices=["auto", "pareto", "allowance"],
-        default="auto",
-        help="Ranking mode (default: auto)",
-    )
-    rank_parser.add_argument(
-        "--profile",
-        choices=["general", "coding", "reasoning", "fast"],
-        default="general",
-        help="Workload profile for token mix and benchmark weighting (default: general)",
-    )
-    rank_parser.add_argument(
-        "--plan",
-        choices=["go", "go-plus", "go-teams"],
-        default="go",
-        help="OpenCode plan tier (default: go)",
-    )
-    rank_parser.add_argument(
-        "--snapshot",
-        help="Path to offline snapshot JSON file",
-    )
-    rank_parser.add_argument(
-        "--cache-ttl",
-        type=int,
-        default=_env_cache_ttl(),
-        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
-    )
-    rank_parser.add_argument(
-        "--skip",
-        action="append",
-        default=[],
-        help="Model ID to exclude (can be specified multiple times)",
-    )
-    rank_parser.add_argument(
-        "--min-context",
-        type=int,
-        default=0,
-        help="Minimum context window in tokens (default: 0)",
-    )
-    rank_parser.add_argument(
-        "--min-output",
-        type=int,
-        default=0,
-        help="Minimum output token limit (default: 0)",
-    )
-    rank_parser.add_argument(
-        "--max-output-cost",
-        type=float,
-        default=None,
-        help="Maximum output token cost in USD per 1M tokens",
-    )
-    rank_parser.add_argument(
-        "--max-burn",
-        type=float,
-        default=None,
-        help="Maximum monthly quota burn percentage per 1,000 turns",
-    )
-    rank_parser.add_argument(
-        "--tokens",
-        type=_parse_token_mix,
-        default=None,
-        help="Custom turn token mix as IN,CACHE,OUT (e.g. --tokens 2000,120000,1000)",
-    )
-    rank_parser.add_argument(
-        "--weights",
-        type=_parse_weights,
-        default=None,
-        help="Custom benchmark weights as IQ,CODING (e.g. --weights 0.5,0.5)",
-    )
-    rank_parser.add_argument(
-        "--no-contributor",
-        action="store_true",
-        help="Exclude contributor-tier models from free tier selection",
-    )
-    rank_parser.add_argument(
-        "-o",
-        "--output",
-        help="Output file path (default: stdout)",
-    )
 
-    # diff subcommand
     diff_parser = subparsers.add_parser(
-        "diff", help="Diff catalog, pricing, and tier assignments between snapshots"
+        "diff",
+        help="Diff catalog, pricing, and tier assignments between snapshots",
+        parents=[_PLAN_PARENT, _RANKING_PARENT],
     )
     diff_parser.add_argument(
         "--old",
@@ -329,34 +290,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Path to the new snapshot (default: live fetch or cached snapshot)",
     )
     diff_parser.add_argument(
-        "--plan",
-        choices=["go", "go-plus", "go-teams"],
-        default="go",
-        help="OpenCode plan tier (default: go)",
-    )
-    diff_parser.add_argument(
-        "--mode",
-        choices=["auto", "pareto", "allowance"],
-        default="auto",
-        help="Tier allocation mode (default: auto)",
-    )
-    diff_parser.add_argument(
-        "--profile",
-        choices=["general", "coding", "reasoning", "fast"],
-        default="general",
-        help="Workload profile for token mix and benchmark weighting (default: general)",
-    )
-    diff_parser.add_argument(
         "--format",
         choices=["table", "json"],
         default="table",
         help="Output format (default: table)",
-    )
-    diff_parser.add_argument(
-        "--cache-ttl",
-        type=int,
-        default=_env_cache_ttl(),
-        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
     )
     diff_parser.add_argument(
         "--fail-on-change",
@@ -365,19 +302,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="fail_on_change",
         help="Exit with code 2 when catalog, pricing, or tier assignments changed",
     )
-    diff_parser.add_argument(
-        "-o",
-        "--output",
-        help="Output file path (default: stdout)",
-    )
 
-    # fetch subcommand
-    fetch_parser = subparsers.add_parser("fetch", help="Fetch and save snapshot data")
-    fetch_parser.add_argument(
-        "--plan",
-        choices=["go", "go-plus", "go-teams"],
-        default="go",
-        help="OpenCode plan tier (default: go)",
+    fetch_parser = subparsers.add_parser(
+        "fetch", help="Fetch and save snapshot data", parents=[_PLAN_PARENT]
     )
     fetch_parser.add_argument(
         "--out",
@@ -391,17 +318,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     return parser.parse_args(argv)
-
-
-def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
-    """Resolve auto mode to either pareto or allowance based on benchmark data."""
-    if mode != "auto":
-        return mode
-    if any(
-        (m.aa_iq is not None or m.aa_coding is not None) for m in models if m.status == "active"
-    ):
-        return "pareto"
-    return "allowance"
 
 
 def _effective_plan(snap_plan: str, requested_plan: str, models: list[NormalizedModel]) -> str:
@@ -458,8 +374,7 @@ def _write_output(content: str, out_path: str | None = None) -> None:
     if out_path:
         p = Path(out_path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(content + "\n")
+        atomic_write_text(p, content + "\n")
     else:
         print(content)
 
@@ -481,21 +396,17 @@ def _parse_preferred_tiers(prefer_list: list[str] | None) -> dict[str, str]:
 
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
-    target_plan = getattr(args, "plan", "go") or "go"
-    cache_ttl = getattr(args, "cache_ttl", 0) or 0
-    models, plan = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
-    mode = _resolve_mode(args.mode, models)
+    models, plan = _load_or_fetch_models(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    mode = resolve_mode(args.mode, models)
 
-    skip_models = set(getattr(args, "skip", []) or [])
-    preferred_tiers = _parse_preferred_tiers(getattr(args, "prefer", []))
-    min_context = getattr(args, "min_context", 0) or 0
-    min_output = getattr(args, "min_output", 0) or 0
+    skip_models = set(args.skip)
+    preferred_tiers = _parse_preferred_tiers(args.prefer)
     candidate_ids = {
         m.id
         for m in models
         if m.id not in skip_models
-        and m.limit.context >= min_context
-        and m.limit.output >= min_output
+        and m.limit.context >= args.min_context
+        and m.limit.output >= args.min_output
     }
     for tier, model_id in preferred_tiers.items():
         if model_id not in candidate_ids:
@@ -504,49 +415,28 @@ def handle_select(args: argparse.Namespace) -> int:
                 "not found; ignoring",
                 file=sys.stderr,
             )
-    max_output_cost = getattr(args, "max_output_cost", None)
-    max_burn = getattr(args, "max_burn", None)
-    token_mix = getattr(args, "tokens", None)
-    weights = getattr(args, "weights", None)
-    top_n = getattr(args, "top_n", 1) or 1
-    allow_contributor = not getattr(args, "no_contributor", False)
-    profile = getattr(args, "profile", "general") or "general"
-    explain = bool(getattr(args, "explain", False))
+    token_mix = args.tokens
+    weights = args.weights
+    top_n = args.top_n or 1
+    profile = args.profile
+    explain = args.explain
 
-    tiers = allocate_tiers(
+    tiers, candidates = allocate_tiers_with_fallbacks(
         models,
+        top_n=top_n,
         mode=mode,
         preferred_tiers=preferred_tiers,
         skip_models=skip_models,
-        allow_contributor=allow_contributor,
-        min_context=min_context,
-        min_output=min_output,
-        max_output_cost=max_output_cost,
+        allow_contributor=not args.no_contributor,
+        min_context=args.min_context,
+        min_output=args.min_output,
+        max_output_cost=args.max_output_cost,
         profile=profile,
-        max_burn=max_burn,
+        max_burn=args.max_burn,
         token_mix=token_mix,
         weights=weights,
     )
-
-    fallbacks = (
-        allocate_tier_fallbacks(
-            models,
-            top_n=top_n,
-            mode=mode,
-            preferred_tiers=preferred_tiers,
-            skip_models=skip_models,
-            allow_contributor=allow_contributor,
-            min_context=min_context,
-            min_output=min_output,
-            max_output_cost=max_output_cost,
-            profile=profile,
-            max_burn=max_burn,
-            token_mix=token_mix,
-            weights=weights,
-        )
-        if top_n > 1
-        else None
-    )
+    fallbacks = candidates if top_n > 1 else None
 
     if args.format == "json":
         explanations = (
@@ -592,33 +482,21 @@ def handle_select(args: argparse.Namespace) -> int:
 
 def handle_rank(args: argparse.Namespace) -> int:
     """Handle the 'rank' command."""
-    target_plan = getattr(args, "plan", "go") or "go"
-    cache_ttl = getattr(args, "cache_ttl", 0) or 0
-    models, _ = _load_or_fetch_models(args.snapshot, plan=target_plan, cache_ttl=cache_ttl)
-    mode = _resolve_mode(args.mode, models)
-
-    skip_models = set(getattr(args, "skip", []) or [])
-    min_context = getattr(args, "min_context", 0) or 0
-    min_output = getattr(args, "min_output", 0) or 0
-    max_output_cost = getattr(args, "max_output_cost", None)
-    max_burn = getattr(args, "max_burn", None)
-    token_mix = getattr(args, "tokens", None)
-    weights = getattr(args, "weights", None)
-    allow_contributor = not getattr(args, "no_contributor", False)
-    profile = getattr(args, "profile", "general") or "general"
+    models, _ = _load_or_fetch_models(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    mode = resolve_mode(args.mode, models)
 
     ranked = rank_catalog(
         models,
         mode=mode,
-        skip_models=skip_models,
-        allow_contributor=allow_contributor,
-        min_context=min_context,
-        min_output=min_output,
-        max_output_cost=max_output_cost,
-        profile=profile,
-        max_burn=max_burn,
-        token_mix=token_mix,
-        weights=weights,
+        skip_models=set(args.skip),
+        allow_contributor=not args.no_contributor,
+        min_context=args.min_context,
+        min_output=args.min_output,
+        max_output_cost=args.max_output_cost,
+        profile=args.profile,
+        max_burn=args.max_burn,
+        token_mix=args.tokens,
+        weights=args.weights,
     )
 
     if args.format == "json" and not args.table:
@@ -632,8 +510,7 @@ def handle_rank(args: argparse.Namespace) -> int:
 
 def handle_diff(args: argparse.Namespace) -> int:
     """Handle the 'diff' command."""
-    target_plan = getattr(args, "plan", "go") or "go"
-    cache_ttl = getattr(args, "cache_ttl", 0) or 0
+    target_plan = args.plan
 
     if args.old:
         old_snap = load_snapshot(args.old)
@@ -646,7 +523,7 @@ def handle_diff(args: argparse.Namespace) -> int:
             )
             return 1
 
-    new_snap = _load_or_fetch_snapshot(args.new, plan=target_plan, cache_ttl=cache_ttl)
+    new_snap = _load_or_fetch_snapshot(args.new, plan=target_plan, cache_ttl=_cache_ttl(args))
     diff = diff_snapshots(
         old_snap,
         new_snap,
@@ -657,15 +534,15 @@ def handle_diff(args: argparse.Namespace) -> int:
 
     out = format_diff_json(diff) if args.format == "json" else format_diff_table(diff)
     _write_output(out, args.output)
-    if getattr(args, "fail_on_change", False) and diff.has_changes():
+    if args.fail_on_change and diff.has_changes():
         return 2
     return 0
 
 
 def handle_fetch(args: argparse.Namespace) -> int:
     """Handle the 'fetch' command."""
-    target_plan = getattr(args, "plan", "go") or "go"
-    if getattr(args, "update_reference", False):
+    target_plan = args.plan
+    if args.update_reference:
         path = update_reference_snapshot(plan=target_plan)
         print(
             f"opencode-go-model-optimizer: updated reference snapshot at {path}",
