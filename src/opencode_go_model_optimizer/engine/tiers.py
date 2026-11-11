@@ -25,6 +25,8 @@ def allocate_tiers_allowance(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    min_output: int = 0,
+    max_output_cost: float | None = None,
     profile: str = "general",
 ) -> dict[str, str]:
     """Allocate models to tiers using allowance heuristic and natural cost clustering."""
@@ -32,6 +34,10 @@ def allocate_tiers_allowance(
     skips = set(skip_models or set())
     if min_context > 0:
         models = [m for m in models if m.limit.context >= min_context]
+    if min_output > 0:
+        models = [m for m in models if m.limit.output >= min_output]
+    if max_output_cost is not None:
+        models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
 
     # 1. Rank free and paid models
     free_ranked = rank_free_models(models, skip_models=skips, allow_contributor=allow_contributor)
@@ -152,6 +158,8 @@ def allocate_tiers_pareto(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    min_output: int = 0,
+    max_output_cost: float | None = None,
     profile: str = "general",
     already_evaluated: bool = False,
 ) -> dict[str, str]:
@@ -160,6 +168,10 @@ def allocate_tiers_pareto(
     skips = set(skip_models or set())
     if min_context > 0:
         models = [m for m in models if m.limit.context >= min_context]
+    if min_output > 0:
+        models = [m for m in models if m.limit.output >= min_output]
+    if max_output_cost is not None:
+        models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
 
     # 1. Evaluate BPE on models
     evaluated = (
@@ -277,6 +289,8 @@ def allocate_tiers_pareto(
             skip_models=skips,
             allow_contributor=allow_contributor,
             min_context=min_context if not already_evaluated else 0,
+            min_output=min_output if not already_evaluated else 0,
+            max_output_cost=max_output_cost if not already_evaluated else None,
             profile=profile,
         )
         for t in STANDARD_TIERS:
@@ -293,6 +307,8 @@ def allocate_tiers(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    min_output: int = 0,
+    max_output_cost: float | None = None,
     profile: str = "general",
     already_evaluated: bool = False,
 ) -> dict[str, str]:
@@ -304,6 +320,8 @@ def allocate_tiers(
             skip_models=skip_models,
             allow_contributor=allow_contributor,
             min_context=min_context,
+            min_output=min_output,
+            max_output_cost=max_output_cost,
             profile=profile,
             already_evaluated=already_evaluated,
         )
@@ -314,6 +332,8 @@ def allocate_tiers(
             skip_models=skip_models,
             allow_contributor=allow_contributor,
             min_context=min_context,
+            min_output=min_output,
+            max_output_cost=max_output_cost,
             profile=profile,
         )
     return {k: res.get(k, "") for k in STANDARD_TIERS}
@@ -325,12 +345,19 @@ def rank_catalog(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    min_output: int = 0,
+    max_output_cost: float | None = None,
     profile: str = "general",
 ) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models."""
     skips = set(skip_models or set())
     if min_context > 0:
         models = [m for m in models if m.limit.context >= min_context]
+    if min_output > 0:
+        models = [m for m in models if m.limit.output >= min_output]
+    if max_output_cost is not None:
+        models = [m for m in models if m.is_zero_cost or m.cost.output <= max_output_cost]
+
     active_models = [
         m for m in models if m.status == "active" and m.id not in skips and m.full_id not in skips
     ]
@@ -365,6 +392,8 @@ def rank_catalog(
         skip_models=skips,
         allow_contributor=allow_contributor,
         min_context=0,
+        min_output=0,
+        max_output_cost=None,
         profile=profile,
         already_evaluated=(mode == "pareto"),
     )
@@ -376,3 +405,137 @@ def rank_catalog(
         m.tier = tier_by_full_id.get(m.full_id)
 
     return ranked
+
+
+def allocate_tier_fallbacks(
+    models: list[NormalizedModel],
+    top_n: int = 1,
+    mode: str = "allowance",
+    preferred_tiers: dict[str, str] | None = None,
+    skip_models: set[str] | None = None,
+    allow_contributor: bool = True,
+    min_context: int = 0,
+    min_output: int = 0,
+    max_output_cost: float | None = None,
+    profile: str = "general",
+) -> dict[str, list[str]]:
+    """Allocate ordered per-tier candidate lists (primary + fallbacks) up to top_n models."""
+    primary = allocate_tiers(
+        models,
+        mode=mode,
+        preferred_tiers=preferred_tiers,
+        skip_models=skip_models,
+        allow_contributor=allow_contributor,
+        min_context=min_context,
+        min_output=min_output,
+        max_output_cost=max_output_cost,
+        profile=profile,
+    )
+    if top_n <= 1:
+        return {tier: ([primary[tier]] if primary.get(tier) else []) for tier in STANDARD_TIERS}
+
+    skips = set(skip_models or set())
+    filtered_models = models
+    if min_context > 0:
+        filtered_models = [m for m in filtered_models if m.limit.context >= min_context]
+    if min_output > 0:
+        filtered_models = [m for m in filtered_models if m.limit.output >= min_output]
+    if max_output_cost is not None:
+        filtered_models = [
+            m for m in filtered_models if m.is_zero_cost or m.cost.output <= max_output_cost
+        ]
+
+    fallbacks: dict[str, list[str]] = {}
+
+    # Free tier candidates
+    free_ranked = rank_free_models(
+        filtered_models, skip_models=skips, allow_contributor=allow_contributor
+    )
+    free_candidates = [primary["free"]] if primary.get("free") else []
+    for m in free_ranked:
+        if len(free_candidates) >= top_n:
+            break
+        if m.full_id not in free_candidates:
+            free_candidates.append(m.full_id)
+    fallbacks["free"] = free_candidates
+
+    # Paid tiers candidates
+    general_paid = rank_paid_models(filtered_models, skip_models=skips)
+
+    if mode == "pareto":
+        evaluated = evaluate_pareto(filtered_models, profile=profile, skip_models=skips)
+        benchmarked = [
+            m
+            for m in evaluated
+            if m.status == "active"
+            and (m.aa_iq is not None or m.aa_coding is not None)
+            and not m.is_zero_cost
+            and not m.is_contributor
+            and not m.is_preview
+            and m.id not in skips
+            and m.full_id not in skips
+        ]
+        if benchmarked:
+            min_pareto_q = min(
+                (effective_quality(m, profile=profile) for m in benchmarked if m.is_pareto),
+                default=0.0,
+            )
+            competitive = [
+                m
+                for m in benchmarked
+                if (m.bpe or 0.0) >= 0.05
+                and effective_quality(m, profile=profile) >= min_pareto_q * 0.8
+            ]
+            pool = competitive if len(competitive) >= 3 else benchmarked
+            tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
+                pool, key=lambda m: effective_quality(m, profile=profile)
+            )
+
+            def sort_cluster_pareto(cluster: list[NormalizedModel]) -> list[NormalizedModel]:
+                return sorted(
+                    cluster,
+                    key=lambda m: (
+                        not bool(m.is_pareto),
+                        -(m.bpe or 0.0),
+                        m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
+                        -(m.speed_tps or 0.0),
+                        tie_break_key(m),
+                    ),
+                )
+
+            paid_clusters = {
+                "heavy": sort_cluster_pareto(tier_heavy),
+                "balanced": sort_cluster_pareto(tier_balanced),
+                "light": sort_cluster_pareto(tier_light),
+            }
+        else:
+            paid_clusters = {"heavy": [], "balanced": [], "light": []}
+    else:
+        if general_paid:
+            c_heavy, c_balanced, c_light = fisher_jenks_3_clusters(
+                general_paid, key=lambda m: math.log1p(m.cost.output)
+            )
+            paid_clusters = {
+                "heavy": rank_paid_models(c_heavy),
+                "balanced": rank_paid_models(c_balanced),
+                "light": rank_paid_models(c_light),
+            }
+        else:
+            paid_clusters = {"heavy": [], "balanced": [], "light": []}
+
+    for tier in ("heavy", "balanced", "light"):
+        candidates = [primary[tier]] if primary.get(tier) else []
+        for m in paid_clusters.get(tier, []):
+            if len(candidates) >= top_n:
+                break
+            if m.full_id not in candidates:
+                candidates.append(m.full_id)
+        if len(candidates) < top_n:
+            for m in general_paid:
+                if len(candidates) >= top_n:
+                    break
+                if m.full_id not in candidates:
+                    candidates.append(m.full_id)
+        fallbacks[tier] = candidates
+
+    return {tier: fallbacks.get(tier, []) for tier in STANDARD_TIERS}

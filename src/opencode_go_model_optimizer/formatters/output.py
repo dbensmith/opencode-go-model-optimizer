@@ -19,6 +19,7 @@ def format_select_json(
     evaluated_at: str | None = None,
     explanations: dict[str, dict[str, Any]] | None = None,
     profile: str | None = None,
+    fallbacks: dict[str, list[str]] | None = None,
 ) -> str:
     """Format tier selection as standard JSON."""
     ts = evaluated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -30,6 +31,8 @@ def format_select_json(
     }
     if profile is not None and profile != "general":
         payload["profile"] = profile
+    if fallbacks is not None:
+        payload["fallbacks"] = fallbacks
     if explanations is not None:
         payload["explanations"] = explanations
     return json.dumps(payload, indent=2)
@@ -85,15 +88,32 @@ def format_select_compact(tiers: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def format_select_env(tiers: dict[str, str]) -> str:
+def format_select_env(
+    tiers: dict[str, str],
+    fallbacks: dict[str, list[str]] | None = None,
+) -> str:
     """Format tier selection as shell environment variable assignments."""
     lines = [f'OPENCODE_MODEL_{tier.upper()}="{tiers.get(tier, "")}"' for tier in STANDARD_TIERS]
+    if fallbacks is not None:
+        lines.extend(
+            [
+                f'OPENCODE_MODEL_{tier.upper()}_FALLBACKS="{",".join(fallbacks.get(tier, []))}"'
+                for tier in STANDARD_TIERS
+            ]
+        )
     return "\n".join(lines)
 
 
-def format_select_github_output(tiers: dict[str, str]) -> str:
+def format_select_github_output(
+    tiers: dict[str, str],
+    fallbacks: dict[str, list[str]] | None = None,
+) -> str:
     """Format tier selection as GitHub Actions key=value output lines."""
     lines = [f"{tier}={tiers.get(tier, '')}" for tier in STANDARD_TIERS]
+    if fallbacks is not None:
+        lines.extend(
+            [f"{tier}_fallbacks={','.join(fallbacks.get(tier, []))}" for tier in STANDARD_TIERS]
+        )
     return "\n".join(lines)
 
 

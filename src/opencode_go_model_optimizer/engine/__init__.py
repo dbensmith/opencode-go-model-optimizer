@@ -17,6 +17,7 @@ from opencode_go_model_optimizer.engine.pareto import (
 )
 from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
+    allocate_tier_fallbacks,
     allocate_tiers,
     allocate_tiers_allowance,
     allocate_tiers_pareto,
@@ -26,6 +27,7 @@ from opencode_go_model_optimizer.engine.tiers import (
 __all__ = [
     "STANDARD_TIERS",
     "WORKLOAD_PROFILES",
+    "allocate_tier_fallbacks",
     "allocate_tiers",
     "allocate_tiers_allowance",
     "allocate_tiers_pareto",

@@ -635,3 +635,84 @@ def test_main_module_execution():
         with pytest.raises(SystemExit) as exc_info:
             runpy.run_module("opencode_go_model_optimizer.cli", run_name="__main__")
         assert exc_info.value.code == 0
+
+
+def test_cli_top_n_and_output_guardrails(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    # select with --top-n 3 --format json
+    rc = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--top-n",
+            "3",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "fallbacks" in out
+    assert set(out["fallbacks"].keys()) == {"heavy", "balanced", "light", "free"}
+
+    # select with --top-n 2 --format env
+    rc_env = main(
+        [
+            "select",
+            "--format",
+            "env",
+            "--snapshot",
+            str(snap_path),
+            "--top-n",
+            "2",
+        ]
+    )
+    assert rc_env == 0
+    env_out = capsys.readouterr().out
+    assert "OPENCODE_MODEL_HEAVY_FALLBACKS=" in env_out
+
+    # select with --top-n 2 --format github-output
+    rc_gh = main(
+        [
+            "select",
+            "--format",
+            "github-output",
+            "--snapshot",
+            str(snap_path),
+            "--top-n",
+            "2",
+        ]
+    )
+    assert rc_gh == 0
+    gh_out = capsys.readouterr().out
+    assert "heavy_fallbacks=" in gh_out
+
+    # select with --min-output and --max-output-cost
+    rc_caps = main(
+        [
+            "select",
+            "--snapshot",
+            str(snap_path),
+            "--min-output",
+            "4000",
+            "--max-output-cost",
+            "10.0",
+        ]
+    )
+    assert rc_caps == 0
+
+    # rank with --min-output and --max-output-cost
+    rc_rank_caps = main(
+        [
+            "rank",
+            "--snapshot",
+            str(snap_path),
+            "--min-output",
+            "4000",
+            "--max-output-cost",
+            "10.0",
+        ]
+    )
+    assert rc_rank_caps == 0
