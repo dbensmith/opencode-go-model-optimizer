@@ -22,21 +22,33 @@ WORKLOAD_PROFILES: dict[str, tuple[int, int, int]] = {
 }
 
 
-def compute_turn_cost(m: NormalizedModel, profile: str = "general") -> float:
+def compute_turn_cost(
+    m: NormalizedModel,
+    profile: str = "general",
+    token_mix: tuple[int, int, int] | None = None,
+) -> float:
     """Compute the cost in USD of a standardized agentic turn for a given profile."""
     if m.is_zero_cost:
         return 0.0
-    t_in, t_cache, t_out = WORKLOAD_PROFILES.get(profile, (STD_IN, STD_CACHE, STD_OUT))
+    t_in, t_cache, t_out = (
+        token_mix
+        if token_mix is not None
+        else WORKLOAD_PROFILES.get(profile, (STD_IN, STD_CACHE, STD_OUT))
+    )
     return (t_in * m.cost.input + t_cache * m.cost.cache_read + t_out * m.cost.output) / 1_000_000.0
 
 
-def compute_quota_burn_pct(m: NormalizedModel, profile: str = "general") -> float:
+def compute_quota_burn_pct(
+    m: NormalizedModel,
+    profile: str = "general",
+    token_mix: tuple[int, int, int] | None = None,
+) -> float:
     """Compute monthly quota burn % per 1,000 standardized turns for a given profile."""
     if m.is_zero_cost or m.monthly_allowance == float("inf"):
         return 0.0
 
     allowance = m.monthly_allowance or 15.0
-    turn_cost = compute_turn_cost(m, profile=profile)
+    turn_cost = compute_turn_cost(m, profile=profile, token_mix=token_mix)
     if turn_cost <= 0.0:
         return 0.0
 
@@ -55,10 +67,17 @@ def ssd(arr: Sequence[float]) -> float:
     return sum((x - mean) ** 2 for x in arr)
 
 
-def effective_quality(m: NormalizedModel, profile: str = "general") -> float:
+def effective_quality(
+    m: NormalizedModel,
+    profile: str = "general",
+    weights: tuple[float, float] | None = None,
+) -> float:
     """Compute effective quality score combining intelligence and coding indices."""
     if m.aa_iq is not None and m.aa_coding is not None:
-        if profile == "coding":
+        if weights is not None:
+            iq_weight, coding_weight = weights
+            base_q = iq_weight * m.aa_iq + coding_weight * m.aa_coding
+        elif profile == "coding":
             base_q = 0.4 * m.aa_iq + 0.6 * m.aa_coding
         elif profile == "reasoning":
             base_q = 0.85 * m.aa_iq + 0.15 * m.aa_coding
@@ -142,6 +161,8 @@ def evaluate_pareto(
     models: list[NormalizedModel],
     profile: str = "general",
     skip_models: set[str] | None = None,
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> list[NormalizedModel]:
     """Compute Quota Burn and Bidirectional Pareto Efficiency (BPE) for all models."""
     skips = set(skip_models or set())
@@ -150,7 +171,7 @@ def evaluate_pareto(
     for m in models:
         m.bpe = None
         m.is_pareto = None
-        m.composite_burn_pct = compute_quota_burn_pct(m, profile=profile)
+        m.composite_burn_pct = compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
 
     # Models with benchmark intelligence (excluding contributor promos, previews, and skipped models)
     benchmarked = [
@@ -169,7 +190,8 @@ def evaluate_pareto(
 
     # 2. Compute BPE over benchmarked pool
     qb_list = [
-        (effective_quality(m, profile=profile), m.composite_burn_pct or 0.0) for m in benchmarked
+        (effective_quality(m, profile=profile, weights=weights), m.composite_burn_pct or 0.0)
+        for m in benchmarked
     ]
 
     # Precompute min_burn_at_q using single-pass min_burn_by_q

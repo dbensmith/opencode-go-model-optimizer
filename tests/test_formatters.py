@@ -2,9 +2,13 @@
 
 import json
 
+from opencode_go_model_optimizer.engine.diff import ModelChange, SnapshotDiff
 from opencode_go_model_optimizer.formatters.output import (
+    _format_diff_value,
     _render_table,
     explain_tiers,
+    format_diff_json,
+    format_diff_table,
     format_rank_json,
     format_rank_table,
     format_select_compact,
@@ -324,3 +328,70 @@ def test_explain_tiers_and_table():
     assert "55.0" in tbl_explain
     assert "0.850" in tbl_explain
     assert "4.2%" in tbl_explain
+
+
+def _sample_diff() -> SnapshotDiff:
+    return SnapshotDiff(
+        old_fetched_at="2026-01-01T00:00:00Z",
+        new_fetched_at="2026-02-01T00:00:00Z",
+        plan="go",
+        added=["new-model"],
+        removed=["old-model"],
+        status_changes={"old-model": {"old": "active", "new": "deprecated"}},
+        pricing_changes={
+            "new-model": {
+                "monthly_allowance": (None, 15.0),
+                "output_cost": (1.0, 2.5),
+            }
+        },
+        tier_changes={"heavy": {"old": "old-model", "new": "new-model"}},
+        changes=[ModelChange(id="new-model", change_type="added")],
+    )
+
+
+def test_format_diff_json_and_table():
+    diff = _sample_diff()
+
+    parsed = json.loads(format_diff_json(diff))
+    assert parsed["added"] == ["new-model"]
+    assert parsed["removed"] == ["old-model"]
+    assert parsed["tier_changes"]["heavy"]["new"] == "new-model"
+
+    table = format_diff_table(diff)
+    assert "Snapshot diff (plan: go)" in table
+    assert "old: 2026-01-01T00:00:00Z" in table
+    assert "Added models:" in table
+    assert "Removed models:" in table
+    assert "Status changes:" in table
+    assert "Pricing / allowance changes:" in table
+    assert "Tier changes:" in table
+    assert "new-model" in table
+    assert "deprecated" in table
+    assert "unlimited" not in table
+
+
+def test_format_diff_table_no_changes():
+    diff = SnapshotDiff(
+        old_fetched_at="2026-01-01T00:00:00Z",
+        new_fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+    )
+    assert "No catalog or tier changes detected." in format_diff_table(diff)
+
+
+def test_format_diff_value():
+    assert _format_diff_value(None) == "-"
+    assert _format_diff_value(1.0) == "1"
+    assert _format_diff_value(2.5) == "2.5"
+    assert _format_diff_value("unlimited") == "unlimited"
+
+
+def test_format_diff_table_infinite_allowance():
+    diff = SnapshotDiff(
+        plan="go",
+        pricing_changes={"mod": {"monthly_allowance": (float("inf"), 15.0)}},
+        tier_changes={"free": {"old": "", "new": "opencode-go/mod"}},
+    )
+    table = format_diff_table(diff)
+    assert "None" in table
+    assert "unlimited" in table

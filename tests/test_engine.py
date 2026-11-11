@@ -1277,3 +1277,77 @@ def test_allocate_tier_fallbacks_top_n_truncation():
     fb_allowance = allocate_tier_fallbacks(free_models + paid_models, top_n=2, mode="allowance")
     assert len(fb_allowance["free"]) == 2
     assert len(fb_allowance["heavy"]) == 2
+
+
+def test_custom_token_mix_and_quality_weights():
+    m = NormalizedModel(
+        id="custom-mix",
+        monthly_allowance=100.0,
+        cost=TokenCost(input=1.0, output=2.0, cache_read=0.01),
+        aa_iq=60.0,
+        aa_coding=40.0,
+        speed_tps=100.0,
+    )
+
+    assert effective_quality(m, weights=(0.5, 0.5)) == 50.0
+    assert effective_quality(m) == 54.0
+    assert abs(effective_quality(m, weights=(1.0, 0.0)) - 60.0) < 1e-9
+
+    # 1000 input + 0 cached + 100 output = (1000 * 1.0 + 100 * 2.0) / 1e6
+    assert abs(compute_turn_cost(m, token_mix=(1000, 0, 100)) - 0.0012) < 1e-12
+    burn = compute_quota_burn_pct(m, token_mix=(1000, 0, 100))
+    assert abs(burn - 1.2) < 1e-9
+
+
+def _burn_models() -> list[NormalizedModel]:
+    return [
+        NormalizedModel(
+            id="low-burn",
+            monthly_allowance=100.0,
+            cost=TokenCost(input=0.1, output=0.1),
+            aa_iq=50.0,
+            aa_coding=50.0,
+        ),
+        NormalizedModel(
+            id="high-burn",
+            monthly_allowance=10.0,
+            cost=TokenCost(input=1.0, output=1.0),
+            aa_iq=60.0,
+            aa_coding=60.0,
+        ),
+    ]
+
+
+def test_max_burn_filtering_across_allocators():
+    low = _burn_models()[0]
+    high = _burn_models()[1]
+    assert compute_quota_burn_pct(low) < 1.0
+    assert compute_quota_burn_pct(high) > 1.0
+
+    allowance = allocate_tiers_allowance(_burn_models(), max_burn=1.0)
+    assert high.full_id not in allowance.values()
+
+    pareto = allocate_tiers_pareto(_burn_models(), max_burn=1.0)
+    assert high.full_id not in pareto.values()
+
+    ranked = rank_catalog(_burn_models(), max_burn=1.0)
+    assert [m.id for m in ranked] == ["low-burn"]
+
+    fallbacks = allocate_tier_fallbacks(_burn_models(), top_n=2, max_burn=1.0)
+    flat = [model_id for candidates in fallbacks.values() for model_id in candidates]
+    assert high.full_id not in flat
+    assert low.full_id in flat
+
+
+def test_token_mix_and_weights_flow_through_pareto():
+    low, high = _burn_models()
+    ranked = rank_catalog(
+        [low, high],
+        mode="pareto",
+        token_mix=(1000, 0, 100),
+        weights=(0.5, 0.5),
+        max_burn=5.0,
+    )
+    assert [m.id for m in ranked] == ["low-burn"]
+    assert low.bpe is not None
+    assert low.composite_burn_pct is not None

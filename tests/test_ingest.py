@@ -33,6 +33,11 @@ from opencode_go_model_optimizer.ingest.models import (
     SnapshotMetadata,
     TokenCost,
 )
+from opencode_go_model_optimizer.ingest.models_dev import (
+    _extract_metadata,
+    fetch_models_dev,
+    parse_models_dev,
+)
 from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
     create_snapshot,
@@ -608,10 +613,23 @@ def test_fetch_and_build_and_update_reference(tmp_path):
             "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
             return_value={"snap-m": {"iq": 65.0, "coding": 60.0, "tps": 30.0}},
         ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
+            return_value={
+                "snap-m": {
+                    "release_date": "2026-02-01",
+                    "context": 256000,
+                    "output": 32000,
+                }
+            },
+        ),
     ):
         snap = fetch_and_build_snapshot(plan="go")
         assert len(snap.models) == 1
         assert snap.models[0].aa_iq == 65.0
+        assert snap.models[0].release_date == "2026-02-01"
+        assert snap.models[0].limit.context == 256000
+        assert snap.models[0].limit.output == 32000
 
     # Test fetch_and_build_snapshot without AA_API_KEY and use_reference_benchmarks=True (lines 171-182)
     dummy_model2 = NormalizedModel(id="snap-m", name="Snap Model")
@@ -647,6 +665,10 @@ def test_fetch_and_build_and_update_reference(tmp_path):
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
             return_value=ref_with_bench,
+        ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
+            return_value={},
         ),
     ):
         snap_ref = fetch_and_build_snapshot(plan="go", use_reference_benchmarks=True)
@@ -736,6 +758,10 @@ def test_fetch_and_build_snapshot_custom_client():
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.parse_go_pricing",
+            return_value={},
+        ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
             return_value={},
         ),
     ):
@@ -882,6 +908,10 @@ def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
             "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
             return_value=ref_snap,
         ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
+            return_value={},
+        ),
         patch.dict("os.environ", {}, clear=True),
     ):
         snap = fetch_and_build_snapshot(plan="go", use_reference_benchmarks=True)
@@ -948,3 +978,101 @@ def test_cross_plan_cache_sharing(tmp_path):
         target_file = get_cache_snapshot_path("go")
         target_file.write_text("{ corrupt json", encoding="utf-8")
         assert load_cached_snapshot("go-plus", ttl_seconds=3600) is None
+
+
+def test_parse_models_dev_payload():
+    data = {
+        "provider-a": {
+            "models": {
+                "model-a": {
+                    "name": "Model A",
+                    "release_date": "2026-03-01",
+                    "limit": {"context": 200000, "output": 64000},
+                },
+                "model-b": {"name": "Model B", "releaseDate": "2026-04-01"},
+                "model-empty": {"name": "Empty Model"},
+                "model-non-dict": "not-a-dict",
+            }
+        },
+        "provider-no-models": {"name": "No models here"},
+        "provider-not-dict": "nope",
+        "provider-b": {
+            "models": {
+                "model-a": {"release_date": "1999-01-01"},
+                "model-c": {"limit": {"context": "large", "output": 0}},
+            }
+        },
+    }
+
+    parsed = parse_models_dev(data)
+    assert parsed["modela"] == {
+        "release_date": "2026-03-01",
+        "context": 200000,
+        "output": 64000,
+    }
+    assert parsed["modelb"] == {"release_date": "2026-04-01"}
+    assert "emptymodel" not in parsed
+    assert "modelc" not in parsed
+
+    assert parse_models_dev(["not", "a", "dict"]) == {}
+
+
+def test_extract_metadata_edge_cases():
+    assert _extract_metadata({"limit": "invalid"}) == {}
+    assert _extract_metadata({"releaseDate": "2026-05-01", "limit": {"context": 0}}) == {
+        "release_date": "2026-05-01"
+    }
+
+
+def test_fetch_models_dev_success_and_failure():
+    payload = {"p": {"models": {"m": {"release_date": "2026-01-01"}}}}
+
+    with patch("httpx.Client.get") as mock_get:
+        mock_get.return_value = httpx.Response(
+            200, json=payload, request=httpx.Request("GET", "http://test")
+        )
+        assert fetch_models_dev() == {"m": {"release_date": "2026-01-01"}}
+
+    with patch("httpx.Client.get", side_effect=httpx.HTTPError("offline")):
+        assert fetch_models_dev() == {}
+
+    custom_client = MagicMock()
+    custom_client.get.return_value = httpx.Response(
+        200, json=payload, request=httpx.Request("GET", "http://test")
+    )
+    assert fetch_models_dev(client=custom_client) == {"m": {"release_date": "2026-01-01"}}
+    custom_client.close.assert_not_called()
+
+
+def test_merge_docs_pricing_models_dev_backfill():
+    blank = NormalizedModel(id="blank-model", name="Blank Model")
+    merge_docs_pricing(
+        [blank],
+        {},
+        models_dev_metadata={
+            "blank-model": {
+                "release_date": "2026-06-01",
+                "context": 512000,
+                "output": 128000,
+            }
+        },
+    )
+    assert blank.release_date == "2026-06-01"
+    assert blank.limit.context == 512000
+    assert blank.limit.output == 128000
+
+    existing = NormalizedModel(
+        id="existing-model",
+        release_date="2025-01-01",
+        limit=ModelLimit(context=1000, output=2000),
+    )
+    merge_docs_pricing(
+        [existing],
+        {},
+        models_dev_metadata={
+            "existing-model": {"release_date": "2026-06-01", "context": 512000, "output": 128000}
+        },
+    )
+    assert existing.release_date == "2025-01-01"
+    assert existing.limit.context == 1000
+    assert existing.limit.output == 2000

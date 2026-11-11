@@ -7,6 +7,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+from opencode_go_model_optimizer.engine.diff import SnapshotDiff
 from opencode_go_model_optimizer.engine.pareto import compute_quota_burn_pct, compute_turn_cost
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -43,6 +44,8 @@ def explain_tiers(
     models: list[NormalizedModel],
     mode: str = "allowance",
     profile: str = "general",
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build detailed per-tier metrics and selection rationale."""
     model_map = {m.full_id: m for m in models}
@@ -60,13 +63,15 @@ def explain_tiers(
             quota_burn = (
                 m.composite_burn_pct
                 if m.composite_burn_pct is not None
-                else compute_quota_burn_pct(m, profile=profile)
+                else compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
             )
             explanations[tier] = {
                 "model_id": full_id,
                 "monthly_allowance": allow_val,
                 "output_cost_per_1m": m.cost.output,
-                "turn_cost_usd": round(compute_turn_cost(m, profile=profile), 6),
+                "turn_cost_usd": round(
+                    compute_turn_cost(m, profile=profile, token_mix=token_mix), 6
+                ),
                 "quota_burn_pct": round(quota_burn, 2) if quota_burn is not None else 0.0,
                 "aa_iq": m.aa_iq,
                 "aa_coding": m.aa_coding,
@@ -123,6 +128,8 @@ def format_select_table(
     plan: str = "go",
     explain: bool = False,
     profile: str = "general",
+    token_mix: tuple[int, int, int] | None = None,
+    weights: tuple[float, float] | None = None,
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
     model_map = {m.full_id: m for m in models}
@@ -162,10 +169,10 @@ def format_select_table(
                 burn_val = (
                     m.composite_burn_pct
                     if m.composite_burn_pct is not None
-                    else compute_quota_burn_pct(m, profile=profile)
+                    else compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
                 )
                 burn_str = f"{burn_val:.1f}%" if burn_val is not None else "-"
-                turn_cost = compute_turn_cost(m, profile=profile)
+                turn_cost = compute_turn_cost(m, profile=profile, token_mix=token_mix)
                 turn_cost_str = f"${turn_cost:.4f}"
                 rows.append(
                     [
@@ -276,6 +283,78 @@ def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
     """Format full catalog ranking as JSON array."""
     data = [m.model_dump(mode="json", exclude_none=True) for m in ranked_models]
     return json.dumps(data, indent=2)
+
+
+def format_diff_json(diff: SnapshotDiff) -> str:
+    """Format a snapshot diff as structured JSON."""
+    return diff.model_dump_json(indent=2)
+
+
+def _format_diff_value(value: Any) -> str:
+    """Render a diff value for human-readable table output."""
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        if math.isinf(value):
+            return "unlimited"
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def format_diff_table(diff: SnapshotDiff) -> str:
+    """Format a snapshot diff as human-readable ASCII table sections."""
+    header = (
+        f"Snapshot diff (plan: {diff.plan})\n"
+        f"  old: {diff.old_fetched_at or '-'}\n"
+        f"  new: {diff.new_fetched_at or '-'}"
+    )
+    if not diff.has_changes():
+        return f"{header}\n\nNo catalog or tier changes detected."
+
+    sections: list[str] = [header]
+
+    if diff.added:
+        sections.append("Added models:")
+        sections.append(_render_table(["Model ID"], [[model_id] for model_id in diff.added]))
+    if diff.removed:
+        sections.append("Removed models:")
+        sections.append(_render_table(["Model ID"], [[model_id] for model_id in diff.removed]))
+    if diff.status_changes:
+        sections.append("Status changes:")
+        sections.append(
+            _render_table(
+                ["Model ID", "Old", "New"],
+                [
+                    [model_id, change["old"], change["new"]]
+                    for model_id, change in diff.status_changes.items()
+                ],
+            )
+        )
+    if diff.pricing_changes:
+        sections.append("Pricing / allowance changes:")
+        sections.append(
+            _render_table(
+                ["Model ID", "Field", "Old", "New"],
+                [
+                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
+                    for model_id, fields in diff.pricing_changes.items()
+                    for field, (old, new) in fields.items()
+                ],
+            )
+        )
+    if diff.tier_changes:
+        sections.append("Tier changes:")
+        sections.append(
+            _render_table(
+                ["Tier", "Old", "New"],
+                [
+                    [tier, change["old"] or "None", change["new"] or "None"]
+                    for tier, change in diff.tier_changes.items()
+                ],
+            )
+        )
+
+    return "\n\n".join(sections)
 
 
 def _render_table(headers: list[str], rows: list[list[str]]) -> str:
