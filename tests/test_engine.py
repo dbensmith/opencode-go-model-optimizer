@@ -9,6 +9,7 @@ from opencode_go_model_optimizer.engine.allowance import (
     tie_break_key,
 )
 from opencode_go_model_optimizer.engine.pareto import (
+    WORKLOAD_PROFILES,
     compute_quota_burn_pct,
     compute_turn_cost,
     effective_quality,
@@ -719,3 +720,74 @@ def test_min_context_and_allow_contributor():
         models, mode="allowance", min_context=100000, allow_contributor=False
     )
     assert unified_a["free"] == "opencode-go/beam-free"
+
+
+def test_workload_profiles():
+    assert set(WORKLOAD_PROFILES.keys()) == {"general", "coding", "reasoning", "fast"}
+
+    m = NormalizedModel(
+        id="test-mod",
+        monthly_allowance=30.0,
+        cost=TokenCost(input=1.0, output=4.0, cache_read=0.2),
+        aa_iq=50.0,
+        aa_coding=40.0,
+        speed_tps=120.0,
+    )
+
+    # Turn costs vary by profile
+    cost_gen = compute_turn_cost(m, profile="general")
+    cost_coding = compute_turn_cost(m, profile="coding")
+    cost_reasoning = compute_turn_cost(m, profile="reasoning")
+    cost_fast = compute_turn_cost(m, profile="fast")
+    cost_fallback = compute_turn_cost(m, profile="unknown_profile")
+    assert cost_fallback == cost_gen
+    assert cost_coding > cost_gen
+    assert cost_reasoning > cost_gen
+    assert cost_fast < cost_gen
+
+    # Quota burns vary by profile
+    burn_gen = compute_quota_burn_pct(m, profile="general")
+    burn_coding = compute_quota_burn_pct(m, profile="coding")
+    assert burn_coding > burn_gen
+
+    # Effective quality formulas
+    q_gen = effective_quality(m, profile="general")
+    assert abs(q_gen - (0.7 * 50.0 + 0.3 * 40.0)) < 1e-6
+
+    q_coding = effective_quality(m, profile="coding")
+    assert abs(q_coding - (0.4 * 50.0 + 0.6 * 40.0)) < 1e-6
+
+    q_reasoning = effective_quality(m, profile="reasoning")
+    assert abs(q_reasoning - (0.85 * 50.0 + 0.15 * 40.0)) < 1e-6
+
+    # Fast profile with TPS
+    q_fast = effective_quality(m, profile="fast")
+    base_fast = 0.7 * 50.0 + 0.3 * 40.0
+    expected_fast = base_fast * (0.85 + 0.15 * min(2.0, 120.0 / 100.0))
+    assert abs(q_fast - expected_fast) < 1e-6
+
+    # Fast profile capped at 2.0x TPS
+    m_hyper = NormalizedModel(id="hyper", aa_iq=50.0, aa_coding=40.0, speed_tps=300.0)
+    q_hyper = effective_quality(m_hyper, profile="fast")
+    assert abs(q_hyper - (base_fast * (0.85 + 0.15 * 2.0))) < 1e-6
+
+    # Fast profile without TPS or zero TPS
+    m_no_tps = NormalizedModel(id="no-tps", aa_iq=50.0, aa_coding=40.0)
+    assert effective_quality(m_no_tps, profile="fast") == base_fast
+    m_zero_tps = NormalizedModel(id="zero-tps", aa_iq=50.0, aa_coding=40.0, speed_tps=0.0)
+    assert effective_quality(m_zero_tps, profile="fast") == base_fast
+
+    # Evaluate pareto and allocate tiers with profiles
+    models = _get_fixture_models()
+    for idx, mod in enumerate(models):
+        mod.aa_iq = 50.0 - idx
+        mod.aa_coding = 45.0 - idx
+
+    evaluated_coding = evaluate_pareto(models, profile="coding")
+    assert all(x.composite_burn_pct is not None for x in evaluated_coding)
+
+    tiers_coding = allocate_tiers_pareto(models, profile="coding")
+    assert set(tiers_coding.keys()) == {"heavy", "balanced", "light", "free"}
+
+    ranked_fast = rank_catalog(models, mode="pareto", profile="fast")
+    assert len(ranked_fast) > 0

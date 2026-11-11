@@ -18,6 +18,14 @@ from opencode_go_model_optimizer.ingest.docs import fetch_docs_mdx, norm_name, p
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
 
 
+def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
+    """Apply plan-specific monthly allowances to models."""
+    for m in models:
+        if plan in m.plan_allowances:
+            m.monthly_allowance = m.plan_allowances[plan]
+    return models
+
+
 def fetch_aa_benchmarks(
     api_key: str,
     client: httpx.Client | None = None,
@@ -70,6 +78,7 @@ def merge_docs_pricing(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
+    all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> list[NormalizedModel]:
     """Merge published monthly allowances and prices into catalog models."""
     benchmarks = aa_benchmarks or {}
@@ -77,7 +86,9 @@ def merge_docs_pricing(
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
 
-        info = pricing.get(key_name) or pricing.get(key_id)
+        info = (
+            pricing.get(key_name) or pricing.get(key_id) or pricing.get(m.id) or pricing.get(m.name)
+        )
         if info:
             m.monthly_allowance = info["allowance"]
             if m.cost.output == 0.0 and info["output_cost"] > 0:
@@ -89,6 +100,19 @@ def merge_docs_pricing(
             if m.cost.cache_write == 0.0 and info.get("cached_write_cost", 0) > 0:
                 m.cost.cache_write = info["cached_write_cost"]
             m.is_zero_cost = m.cost.input == 0.0 and m.cost.output == 0.0
+
+        if all_plan_pricing:
+            for plan_name, plan_map in all_plan_pricing.items():
+                plan_info = (
+                    plan_map.get(key_name)
+                    or plan_map.get(key_id)
+                    or plan_map.get(m.id)
+                    or plan_map.get(m.name)
+                )
+                if plan_info:
+                    m.plan_allowances[plan_name] = plan_info["allowance"]
+        elif m.monthly_allowance is not None and "go" not in m.plan_allowances:
+            m.plan_allowances["go"] = m.monthly_allowance
 
         bench = benchmarks.get(m.id) or benchmarks.get(key_id) or benchmarks.get(key_name)
         if bench:
@@ -109,9 +133,15 @@ def create_snapshot(
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
     source_catalogue: str = "live",
     source_docs: str = "live",
+    all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
-    merged_models = merge_docs_pricing(models, pricing, aa_benchmarks=aa_benchmarks)
+    merged_models = merge_docs_pricing(
+        models,
+        pricing,
+        aa_benchmarks=aa_benchmarks,
+        all_plan_pricing=all_plan_pricing,
+    )
     now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     return Snapshot(
@@ -225,7 +255,10 @@ def fetch_and_build_snapshot(
             docs_text = fut_docs.result()
             aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
-        pricing = parse_go_pricing(docs_text, plan=plan)
+        all_plan_pricing = {
+            p: parse_go_pricing(docs_text, plan=p) for p in ("go", "go-plus", "go-teams")
+        }
+        pricing = all_plan_pricing.get(plan, all_plan_pricing["go"])
 
         if not aa_benchmarks and not aa_key and use_reference_benchmarks:
             ref_snap = load_reference_snapshot()
@@ -240,7 +273,13 @@ def fetch_and_build_snapshot(
                     if m.aa_iq is not None
                 }
 
-        return create_snapshot(models, pricing, plan=plan, aa_benchmarks=aa_benchmarks)
+        return create_snapshot(
+            models,
+            pricing,
+            plan=plan,
+            aa_benchmarks=aa_benchmarks,
+            all_plan_pricing=all_plan_pricing,
+        )
     finally:
         if close_client and active_client:
             active_client.close()

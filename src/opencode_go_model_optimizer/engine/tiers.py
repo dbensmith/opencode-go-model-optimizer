@@ -21,6 +21,7 @@ def allocate_tiers_allowance(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    profile: str = "general",
 ) -> dict[str, str]:
     """Allocate models to tiers using allowance heuristic and natural cost clustering."""
     preferred = preferred_tiers or {}
@@ -147,6 +148,7 @@ def allocate_tiers_pareto(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    profile: str = "general",
 ) -> dict[str, str]:
     """Allocate models to tiers using Pareto efficiency and Fisher-Jenks natural breaks."""
     preferred = preferred_tiers or {}
@@ -155,7 +157,7 @@ def allocate_tiers_pareto(
         models = [m for m in models if m.limit.context >= min_context]
 
     # 1. Evaluate BPE on models
-    evaluated = evaluate_pareto(models)
+    evaluated = evaluate_pareto(models, profile=profile)
 
     # Free tier
     free_ranked = rank_free_models(
@@ -208,14 +210,20 @@ def allocate_tiers_pareto(
             selected["free"] = free_ranked[0].full_id
 
     if benchmarked:
-        min_pareto_q = min((effective_quality(m) for m in benchmarked if m.is_pareto), default=0.0)
+        min_pareto_q = min(
+            (effective_quality(m, profile=profile) for m in benchmarked if m.is_pareto),
+            default=0.0,
+        )
         competitive = [
             m
             for m in benchmarked
-            if (m.bpe or 0.0) >= 0.05 and effective_quality(m) >= min_pareto_q * 0.8
+            if (m.bpe or 0.0) >= 0.05
+            and effective_quality(m, profile=profile) >= min_pareto_q * 0.8
         ]
         pool = competitive if len(competitive) >= 3 else benchmarked
-        tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(pool, key=effective_quality)
+        tier_heavy, tier_balanced, tier_light = fisher_jenks_3_clusters(
+            pool, key=lambda m: effective_quality(m, profile=profile)
+        )
 
         def pick_best(cluster: list[NormalizedModel]) -> NormalizedModel | None:
             ranked = sorted(
@@ -263,6 +271,7 @@ def allocate_tiers_pareto(
             skip_models=skips,
             allow_contributor=allow_contributor,
             min_context=min_context,
+            profile=profile,
         )
         for t in STANDARD_TIERS:
             if t not in selected:
@@ -278,6 +287,7 @@ def allocate_tiers(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    profile: str = "general",
 ) -> dict[str, str]:
     """Unified entrypoint to allocate models into capability tiers."""
     if mode == "pareto":
@@ -287,6 +297,7 @@ def allocate_tiers(
             skip_models=skip_models,
             allow_contributor=allow_contributor,
             min_context=min_context,
+            profile=profile,
         )
     else:
         res = allocate_tiers_allowance(
@@ -295,6 +306,7 @@ def allocate_tiers(
             skip_models=skip_models,
             allow_contributor=allow_contributor,
             min_context=min_context,
+            profile=profile,
         )
     return {k: res.get(k, "") for k in STANDARD_TIERS}
 
@@ -305,6 +317,7 @@ def rank_catalog(
     skip_models: set[str] | None = None,
     allow_contributor: bool = True,
     min_context: int = 0,
+    profile: str = "general",
 ) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models."""
     skips = set(skip_models or set())
@@ -315,13 +328,13 @@ def rank_catalog(
     ]
 
     if mode == "pareto":
-        evaluated = evaluate_pareto(active_models)
+        evaluated = evaluate_pareto(active_models, profile=profile)
         # Sort by BPE desc, effective_quality desc, composite_burn asc
         ranked = sorted(
             evaluated,
             key=lambda m: (
                 m.bpe or 0.0,
-                effective_quality(m),
+                effective_quality(m, profile=profile),
                 -(m.composite_burn_pct or 0.0),
             ),
             reverse=True,
@@ -344,6 +357,7 @@ def rank_catalog(
         skip_models=skips,
         allow_contributor=allow_contributor,
         min_context=min_context,
+        profile=profile,
     )
     tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
 

@@ -22,6 +22,7 @@ from opencode_go_model_optimizer.ingest.models import (
     TokenCost,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
+    apply_plan,
     create_snapshot,
     fetch_and_build_snapshot,
     get_cache_snapshot_path,
@@ -38,6 +39,7 @@ __all__ = [
     "Snapshot",
     "SnapshotMetadata",
     "TokenCost",
+    "apply_plan",
     "create_snapshot",
     "extract_plan_section",
     "fetch_and_build_snapshot",

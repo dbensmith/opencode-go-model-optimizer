@@ -36,6 +36,7 @@ class NormalizedModel(BaseModel):
     cost: TokenCost = Field(default_factory=TokenCost)
     limit: ModelLimit = Field(default_factory=ModelLimit)
     monthly_allowance: float | None = None  # USD limit (e.g. 15.0, 60.0, float('inf'))
+    plan_allowances: dict[str, float] = Field(default_factory=dict)
 
     # Benchmark metrics (used in pareto mode)
     aa_iq: float | None = None
@@ -78,6 +79,24 @@ class NormalizedModel(BaseModel):
         if value is not None and math.isinf(value):
             return "unlimited"
         return value
+
+    @field_validator("plan_allowances", mode="before")
+    @classmethod
+    def validate_plan_allowances(cls, value: Any) -> dict[str, float]:
+        """Validate per-plan allowances mapping."""
+        if not isinstance(value, dict):
+            return {}
+        result: dict[str, float] = {}
+        for k, v in value.items():
+            val = cls.validate_allowance(v)
+            if val is not None:
+                result[str(k)] = val
+        return result
+
+    @field_serializer("plan_allowances", when_used="json")
+    def serialize_plan_allowances(self, value: dict[str, float]) -> dict[str, float | str]:
+        """Serialize float inf as 'unlimited' for RFC 8259 JSON compliance."""
+        return {k: ("unlimited" if math.isinf(v) else v) for k, v in value.items()}
 
     def model_post_init(self, context: Any, /) -> None:
         """Derive helper flags and identifiers if not already set."""
