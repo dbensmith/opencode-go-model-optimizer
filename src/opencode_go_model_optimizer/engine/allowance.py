@@ -1,12 +1,11 @@
 """Allowance ranking engine using deterministic allowance and cost heuristics."""
 
-import functools
 import math
+from collections.abc import Set as AbstractSet
 
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
-@functools.lru_cache(maxsize=256)
 def _desc_str_key(s: str) -> tuple[int, ...]:
     """Produce a sort key that reverses lexicographical string order in a single pass."""
     return (*(-ord(c) for c in s), 0)
@@ -42,7 +41,7 @@ def is_eligible_paid(m: NormalizedModel) -> bool:
 
 def rank_free_models(
     models: list[NormalizedModel],
-    skip_models: set[str] | None = None,
+    skip_models: AbstractSet[str] | None = None,
     allow_contributor: bool = True,
 ) -> list[NormalizedModel]:
     """Rank eligible free models by release_date DESC, context DESC, id ASC."""
@@ -63,7 +62,7 @@ def rank_free_models(
 
 def rank_paid_models(
     models: list[NormalizedModel],
-    skip_models: set[str] | None = None,
+    skip_models: AbstractSet[str] | None = None,
 ) -> list[NormalizedModel]:
     """Rank eligible paid models by allowance DESC, output cost ASC, release_date DESC, context DESC, id ASC."""
     skips = skip_models or set()

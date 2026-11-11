@@ -5,10 +5,16 @@ import math
 from datetime import UTC, datetime
 from typing import Any
 
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import SnapshotDiff
 from opencode_go_model_optimizer.engine.pareto import compute_quota_burn_pct, compute_turn_cost
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
+
+
+def _burn_basis(criteria: SelectionCriteria | None) -> tuple[str, tuple[int, int, int] | None]:
+    c = criteria or SelectionCriteria()
+    return c.profile, c.token_mix
 
 
 def format_select_json(
@@ -43,12 +49,10 @@ def format_select_json(
 def explain_tiers(
     tiers: dict[str, str],
     models: list[NormalizedModel],
-    mode: str = "allowance",
-    profile: str = "general",
-    token_mix: tuple[int, int, int] | None = None,
-    weights: tuple[float, float] | None = None,
+    criteria: SelectionCriteria | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build detailed per-tier metrics and selection rationale."""
+    profile, token_mix = _burn_basis(criteria)
     model_map = {m.full_id: m for m in models}
     model_map.update({m.id: m for m in models})
 
@@ -128,11 +132,10 @@ def format_select_table(
     models: list[NormalizedModel],
     plan: str = "go",
     explain: bool = False,
-    profile: str = "general",
-    token_mix: tuple[int, int, int] | None = None,
-    weights: tuple[float, float] | None = None,
+    criteria: SelectionCriteria | None = None,
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
+    profile, token_mix = _burn_basis(criteria)
     model_map = {m.full_id: m for m in models}
     model_map.update({m.id: m for m in models})
 

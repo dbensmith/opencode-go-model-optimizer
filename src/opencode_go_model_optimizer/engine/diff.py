@@ -5,7 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, allocate_tiers, resolve_mode
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
+from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, resolve_mode, select_tiers
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 
@@ -161,8 +162,9 @@ def diff_snapshots(
             note(model_id, change_type, {"status": (old_model.status, new_model.status)})
 
     resolved_mode = resolve_mode(mode, old_models + new_models)
-    old_tiers = allocate_tiers(old_models, mode=resolved_mode, profile=profile)
-    new_tiers = allocate_tiers(new_models, mode=resolved_mode, profile=profile)
+    criteria = SelectionCriteria(mode=resolved_mode, profile=profile)
+    old_tiers = select_tiers(old_models, criteria).primary
+    new_tiers = select_tiers(new_models, criteria).primary
     tier_changes = {
         tier: {"old": old_tiers.get(tier, ""), "new": new_tiers.get(tier, "")}
         for tier in STANDARD_TIERS

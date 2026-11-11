@@ -3,6 +3,7 @@
 import bisect
 import math
 from collections.abc import Callable, Sequence
+from collections.abc import Set as AbstractSet
 
 from opencode_go_model_optimizer.engine.allowance import tie_break_key
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -158,14 +159,18 @@ def fisher_jenks_3_clusters(
 def evaluate_pareto(
     models: list[NormalizedModel],
     profile: str = "general",
-    skip_models: set[str] | None = None,
+    skip_models: AbstractSet[str] | None = None,
     token_mix: tuple[int, int, int] | None = None,
     weights: tuple[float, float] | None = None,
 ) -> list[NormalizedModel]:
-    """Compute Quota Burn and Bidirectional Pareto Efficiency (BPE) for all models."""
-    skips = set(skip_models or set())
+    """Return copies of the models with Quota Burn and Bidirectional Pareto Efficiency (BPE) set.
 
-    # 1. Clear stale metrics and compute burn for each model
+    The input models are never mutated.
+    """
+    skips = skip_models or frozenset()
+
+    # 1. Copy, clear stale metrics and compute burn for each model
+    models = [m.model_copy() for m in models]
     for m in models:
         m.bpe = None
         m.is_pareto = None
