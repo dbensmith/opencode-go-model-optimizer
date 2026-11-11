@@ -17,6 +17,7 @@ import httpx
 
 from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
 from opencode_go_model_optimizer.ingest.docs import fetch_docs_mdx, norm_name, parse_go_pricing
+from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
 from opencode_go_model_optimizer.ingest.models_dev import fetch_models_dev
 
@@ -61,47 +62,37 @@ def fetch_aa_benchmarks(
     client: httpx.Client | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Fetch live benchmark metrics from Artificial Analysis API."""
-    close_client = False
-    if client is None:
-        client = httpx.Client(
-            timeout=10.0,
-            headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"},
-        )
-        close_client = True
-
     try:
-        r = client.get(
-            "https://artificialanalysis.ai/api/v2/data/llms/models",
-            headers={"x-api-key": api_key},
-        )
-        r.raise_for_status()
-        data = r.json()
-        models = data if isinstance(data, list) else data.get("data", [])
-        benchmarks: dict[str, dict[str, Any]] = {}
-        for item in models:
-            if not isinstance(item, dict):
-                continue
-            slug = item.get("slug") or item.get("id") or ""
-            evals = item.get("evaluations")
-            if not isinstance(evals, dict):
-                evals = {}
-            if slug:
-                entry = {
-                    "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
-                    "coding": _to_float(evals.get("artificial_analysis_coding_index")),
-                    "tps": _to_float(item.get("median_output_tokens_per_second")),
-                }
-                slug = str(slug)
-                benchmarks[slug] = entry
-                benchmarks[norm_name(slug)] = entry
-                if item.get("name") and norm_name(str(item["name"])):
-                    benchmarks[norm_name(str(item["name"]))] = entry
-        return benchmarks
+        with client_scope(client) as http:
+            r = http.get(
+                "https://artificialanalysis.ai/api/v2/data/llms/models",
+                headers={"x-api-key": api_key},
+            )
+            r.raise_for_status()
+            data = r.json()
+            models = data if isinstance(data, list) else data.get("data", [])
+            benchmarks: dict[str, dict[str, Any]] = {}
+            for item in models:
+                if not isinstance(item, dict):
+                    continue
+                slug = item.get("slug") or item.get("id") or ""
+                evals = item.get("evaluations")
+                if not isinstance(evals, dict):
+                    evals = {}
+                if slug:
+                    entry = {
+                        "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
+                        "coding": _to_float(evals.get("artificial_analysis_coding_index")),
+                        "tps": _to_float(item.get("median_output_tokens_per_second")),
+                    }
+                    slug = str(slug)
+                    benchmarks[slug] = entry
+                    benchmarks[norm_name(slug)] = entry
+                    if item.get("name") and norm_name(str(item["name"])):
+                        benchmarks[norm_name(str(item["name"]))] = entry
+            return benchmarks
     except (httpx.HTTPError, ValueError):
         return {}
-    finally:
-        if close_client:
-            client.close()
 
 
 def merge_docs_pricing(
@@ -209,8 +200,7 @@ def save_snapshot(snapshot: Snapshot, path: str | Path) -> None:
     """Write snapshot to a JSON file."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(snapshot.model_dump_json(indent=2))
+    atomic_write_text(p, snapshot.model_dump_json(indent=2))
 
 
 def load_snapshot(path: str | Path) -> Snapshot:
@@ -305,16 +295,7 @@ def fetch_and_build_snapshot(
     use_reference_benchmarks: bool = True,
 ) -> Snapshot:
     """Fetch live data from catalogue and docs and build a Snapshot."""
-    close_client = False
-    active_client = client
-    if active_client is None:
-        active_client = httpx.Client(
-            timeout=10.0,
-            headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"},
-        )
-        close_client = True
-
-    try:
+    with client_scope(client) as active_client:
         aa_key = os.environ.get("AA_API_KEY")
         with concurrent.futures.ThreadPoolExecutor() as executor:
             fut_cat = executor.submit(fetch_catalogue, client=active_client)
@@ -351,9 +332,6 @@ def fetch_and_build_snapshot(
             all_plan_pricing=all_plan_pricing,
             models_dev_metadata=models_dev_metadata,
         )
-    finally:
-        if close_client and active_client:
-            active_client.close()
 
 
 def update_reference_snapshot(

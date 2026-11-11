@@ -26,7 +26,9 @@ from opencode_go_model_optimizer.engine.tiers import (
     allocate_tiers,
     allocate_tiers_allowance,
     allocate_tiers_pareto,
+    allocate_tiers_with_fallbacks,
     rank_catalog,
+    resolve_mode,
 )
 
 __all__ = [
@@ -38,6 +40,7 @@ __all__ = [
     "allocate_tiers",
     "allocate_tiers_allowance",
     "allocate_tiers_pareto",
+    "allocate_tiers_with_fallbacks",
     "compute_quota_burn_pct",
     "compute_turn_cost",
     "diff_snapshots",
@@ -49,5 +52,6 @@ __all__ = [
     "rank_catalog",
     "rank_free_models",
     "rank_paid_models",
+    "resolve_mode",
     "tie_break_key",
 ]

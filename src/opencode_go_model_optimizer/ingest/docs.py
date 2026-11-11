@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from opencode_go_model_optimizer.ingest.http import client_scope
+
 DOCS_URLS = [
     "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/site/src/docs/content/console/go.mdx",
     "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/www/src/docs/content/console/go.mdx",
@@ -162,27 +164,17 @@ def fetch_docs_mdx(
     client: httpx.Client | None = None,
 ) -> str:
     """Fetch raw OpenCode Go documentation MDX."""
-    close_client = False
-    if client is None:
-        client = httpx.Client(
-            timeout=10.0, headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"}
-        )
-        close_client = True
-
     urls_to_try = DOCS_URLS if url == DEFAULT_DOCS_URL else [url]
     last_err: Exception | None = None
-    try:
+    with client_scope(client) as http:
         for target_url in urls_to_try:
             try:
-                response = client.get(target_url)
+                response = http.get(target_url)
                 response.raise_for_status()
                 return response.text
             except (httpx.HTTPError, OSError) as e:
                 last_err = e
                 continue
-        if last_err:
-            raise last_err
-        raise httpx.RequestError("No URLs provided to fetch_docs_mdx")
-    finally:
-        if close_client:
-            client.close()
+    if last_err:
+        raise last_err
+    raise httpx.RequestError("No URLs provided to fetch_docs_mdx")

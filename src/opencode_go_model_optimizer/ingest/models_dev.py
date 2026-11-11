@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from opencode_go_model_optimizer.ingest.docs import norm_name
+from opencode_go_model_optimizer.ingest.http import client_scope
 
 MODELS_DEV_URL = "https://models.dev/api.json"
 
@@ -67,20 +68,10 @@ def fetch_models_dev(
     url: str = MODELS_DEV_URL,
 ) -> dict[str, dict[str, Any]]:
     """Fetch models.dev metadata, returning {} on any network or payload error."""
-    close_client = False
-    if client is None:
-        client = httpx.Client(
-            timeout=10.0,
-            headers={"User-Agent": "opencode-go-model-optimizer/0.1.0"},
-        )
-        close_client = True
-
     try:
-        response = client.get(url)
-        response.raise_for_status()
-        return parse_models_dev(response.json())
+        with client_scope(client) as http:
+            response = http.get(url)
+            response.raise_for_status()
+            return parse_models_dev(response.json())
     except (httpx.HTTPError, ValueError):
         return {}
-    finally:
-        if close_client:
-            client.close()
