@@ -5,39 +5,101 @@
     ":dependencyDashboard"
   ],
   "timezone": "UTC",
-  "schedule": ["before 6am every day"],
+  "schedule": [
+    "before 6am"
+  ],
   "automerge": true,
   "automergeType": "pr",
-  "platformAutomerge": true,
+  "description": "Repo has GitHub auto-merge disabled, so platformAutomerge is off; Renovate automerges itself once CI passes.",
+  "platformAutomerge": false,
+  "labels": [
+    "dependencies"
+  ],
   "ignoreTests": false,
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 6am every day"],
+    "schedule": [
+      "before 6am"
+    ],
     "automerge": true
   },
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "enabled": true,
     "automerge": true,
-    "schedule": ["at any time"],
-    "labels": ["security"]
+    "schedule": [
+      "at any time"
+    ],
+    "labels": [
+      "security"
+    ]
   },
   "packageRules": [
     {
       "description": "Daily automerge for non-major PyPI dependencies and GitHub Actions",
-      "matchDatasources": ["pypi", "github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "lockFileMaintenance"],
+      "matchDatasources": [
+        "pypi",
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest",
+        "lockFileMaintenance"
+      ],
       "automerge": true
     },
     {
       "description": "Automerge vulnerability fixes immediately once CI passes",
-      "matchCategories": ["security"],
-      "schedule": ["at any time"],
+      "matchCategories": [
+        "security"
+      ],
+      "schedule": [
+        "at any time"
+      ],
       "automerge": true
     },
     {
+      "description": "Group the uv toolchain so the CI uv pin and uv_build requirement move together",
+      "matchPackageNames": [
+        "uv",
+        "uv_build",
+        "uv-build",
+        "astral-sh/uv",
+        "astral-sh/setup-uv"
+      ],
+      "groupName": "uv toolchain"
+    },
+    {
+      "description": "Bumping .python-version changes the CI/dev interpreter; review requires-python, classifiers and README together",
+      "matchDepNames": [
+        "python"
+      ],
+      "matchManagers": [
+        "pyenv"
+      ],
+      "automerge": false,
+      "labels": [
+        "dependencies",
+        "python"
+      ]
+    },
+    {
+      "description": "requires-python is a support floor, not something to auto-bump",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Require manual review for major breaking upgrades",
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false
     }
   ]
