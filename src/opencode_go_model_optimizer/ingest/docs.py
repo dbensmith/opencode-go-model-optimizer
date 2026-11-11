@@ -272,6 +272,7 @@ def parse_privacy(mdx: str) -> dict[str, dict[str, Any]]:
             "agreement_valid_until": None,
         }
 
+    norm_by_name = {name: norm_name(name) for name in result}
     for line in section.splitlines():
         note_match = _NOTE_RE.match(line)
         if not note_match:
@@ -279,7 +280,7 @@ def parse_privacy(mdx: str) -> dict[str, dict[str, Any]]:
         keys = [norm_name(k) for k in note_match.group(1).split("/")]
         text = note_match.group(2).strip()
         for name, row in result.items():
-            if not any(k and norm_name(name).startswith(k) for k in keys):
+            if not any(k and norm_by_name[name].startswith(k) for k in keys):
                 continue
             row["note"] = f"{row['note']} {text}" if row["note"] else text
             if _GLOBAL_RE.search(text):
