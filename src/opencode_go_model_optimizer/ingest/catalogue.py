@@ -54,25 +54,16 @@ def _extract_token_cost(cost_raw: Any) -> TokenCost:
         inp_obj = text_obj.get("input", {})
         inp_price = inp_obj.get("price", 0.0) if isinstance(inp_obj, dict) else inp_obj
         cache_obj = inp_obj.get("cache", {}) if isinstance(inp_obj, dict) else {}
-        cache_read = cache_obj.get("read", 0.0) if isinstance(cache_obj, dict) else 0.0
-        cache_write = cache_obj.get("write", 0.0) if isinstance(cache_obj, dict) else 0.0
-
         out_obj = text_obj.get("output", {})
         out_price = out_obj.get("price", 0.0) if isinstance(out_obj, dict) else out_obj
+    else:
+        # Case 2: Flat CLI format
+        inp_price = cost_raw.get("input", 0.0)
+        out_price = cost_raw.get("output", 0.0)
+        cache_obj = cost_raw.get("cache", {})
 
-        return TokenCost(
-            input=_safe_float(inp_price),
-            output=_safe_float(out_price),
-            cache_read=_safe_float(cache_read),
-            cache_write=_safe_float(cache_write),
-        )
-
-    # Case 2: Flat CLI format
-    inp_price = cost_raw.get("input", 0.0)
-    out_price = cost_raw.get("output", 0.0)
-    cache_dict = cost_raw.get("cache", {})
-    cache_read = cache_dict.get("read", 0.0) if isinstance(cache_dict, dict) else 0.0
-    cache_write = cache_dict.get("write", 0.0) if isinstance(cache_dict, dict) else 0.0
+    cache_read = cache_obj.get("read", 0.0) if isinstance(cache_obj, dict) else 0.0
+    cache_write = cache_obj.get("write", 0.0) if isinstance(cache_obj, dict) else 0.0
 
     return TokenCost(
         input=_safe_float(inp_price),

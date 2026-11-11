@@ -5,6 +5,35 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
 
+PLANS: tuple[str, ...] = ("go", "go-plus", "go-teams")
+
+
+def normalize_plan(plan: str) -> str:
+    """Normalize plan aliases (e.g. 'plus' -> 'go-plus', 'teams' -> 'go-teams')."""
+    return plan if plan.startswith("go") else f"go-{plan}"
+
+
+_INF_STRINGS = frozenset({"unlimited", "inf", "+inf", "infinity"})
+
+
+def parse_inf_float(value: Any, *, default: float | None = None) -> float | None:
+    """Parse numeric value or 'unlimited'/'inf' string into float (or default on failure)."""
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, str) and value.strip().lower() in _INF_STRINGS:
+        return float("inf")
+    try:
+        return float(value)
+    except ValueError, TypeError:
+        return default
+
+
+def serialize_inf_float(value: float | None) -> float | str | None:
+    """Serialize float('inf') as 'unlimited' for RFC 8259 JSON compliance."""
+    if value is not None and isinstance(value, float) and math.isinf(value):
+        return "unlimited"
+    return value
+
 
 class TokenCost(BaseModel):
     """Token pricing in USD per 1M tokens."""
@@ -50,16 +79,11 @@ class RequestEstimate(BaseModel):
     @field_validator("per_5h", "per_week", "per_month", mode="before")
     @classmethod
     def _parse_count(cls, value: Any) -> float:
-        if isinstance(value, str) and value.strip().lower() in ("unlimited", "inf", "infinity"):
-            return float("inf")
-        try:
-            return float(value)
-        except TypeError, ValueError:
-            return 0.0
+        return parse_inf_float(value, default=0.0) or 0.0
 
     @field_serializer("per_5h", "per_week", "per_month", when_used="json")
     def _serialize_count(self, value: float) -> float | str:
-        return "unlimited" if math.isinf(value) else value
+        return serialize_inf_float(value)  # type: ignore[return-value]
 
 
 class NormalizedModel(BaseModel):
@@ -126,24 +150,12 @@ class NormalizedModel(BaseModel):
     @classmethod
     def validate_allowance(cls, value: Any) -> float | None:
         """Validate allowance, handling string 'unlimited' or float inf."""
-        if value is None:
-            return None
-        if isinstance(value, str):
-            val_lower = value.strip().lower()
-            if val_lower in ("unlimited", "inf", "+inf", "infinity"):
-                return float("inf")
-        try:
-            val = float(value)
-            return val
-        except ValueError, TypeError:
-            return None
+        return parse_inf_float(value, default=None)
 
     @field_serializer("monthly_allowance", when_used="json")
     def serialize_allowance(self, value: float | None) -> float | str | None:
         """Serialize float inf as string 'unlimited' for RFC 8259 JSON compliance."""
-        if value is not None and math.isinf(value):
-            return "unlimited"
-        return value
+        return serialize_inf_float(value)
 
     @field_validator("plan_allowances", mode="before")
     @classmethod
@@ -161,16 +173,10 @@ class NormalizedModel(BaseModel):
     @field_serializer("plan_allowances", when_used="json")
     def serialize_plan_allowances(self, value: dict[str, float]) -> dict[str, float | str]:
         """Serialize float inf as 'unlimited' for RFC 8259 JSON compliance."""
-        return {k: ("unlimited" if math.isinf(v) else v) for k, v in value.items()}
+        return {k: serialize_inf_float(v) for k, v in value.items()}  # type: ignore[misc]
 
-    def model_post_init(self, context: Any, /) -> None:
-        """Derive helper flags and identifiers if not already set."""
-        if not self.full_id:
-            if "/" in self.id:
-                self.full_id = self.id
-            else:
-                self.full_id = f"{self.provider_id}/{self.id}"
-
+    def _update_classification_flags(self) -> None:
+        """Derive classification flags based on cost and naming."""
         id_lower = self.id.lower()
         name_lower = self.name.lower()
 
@@ -187,6 +193,16 @@ class NormalizedModel(BaseModel):
 
         if self.cost.input == 0.0 and self.cost.output == 0.0:
             self.is_zero_cost = True
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Derive helper flags and identifiers if not already set."""
+        if not self.full_id:
+            if "/" in self.id:
+                self.full_id = self.id
+            else:
+                self.full_id = f"{self.provider_id}/{self.id}"
+
+        self._update_classification_flags()
 
 
 class SnapshotMetadata(BaseModel):

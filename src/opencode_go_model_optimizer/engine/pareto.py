@@ -193,6 +193,24 @@ def fisher_jenks_3_clusters(
     return sorted_m[:i], sorted_m[i:j], sorted_m[j:]
 
 
+def filter_benchmarked_models(
+    models: Sequence[NormalizedModel],
+    skip_models: AbstractSet[str] = frozenset(),
+) -> list[NormalizedModel]:
+    """Return active, benchmarked, non-free, non-preview models not in ``skip_models``."""
+    return [
+        m
+        for m in models
+        if m.status == "active"
+        and (m.aa_iq is not None or m.aa_coding is not None)
+        and not m.is_zero_cost
+        and not m.is_contributor
+        and not m.is_preview
+        and m.id not in skip_models
+        and m.full_id not in skip_models
+    ]
+
+
 def evaluate_pareto(
     models: list[NormalizedModel],
     profile: str = "general",
@@ -217,17 +235,7 @@ def evaluate_pareto(
         )
 
     # Models with benchmark intelligence (excluding contributor promos, previews, and skipped models)
-    benchmarked = [
-        m
-        for m in models
-        if m.status == "active"
-        and (m.aa_iq is not None or m.aa_coding is not None)
-        and not m.is_zero_cost
-        and not m.is_contributor
-        and not m.is_preview
-        and m.id not in skips
-        and m.full_id not in skips
-    ]
+    benchmarked = filter_benchmarked_models(models, skips)
     if not benchmarked:
         return models
 
