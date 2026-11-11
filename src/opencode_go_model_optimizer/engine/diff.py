@@ -21,6 +21,8 @@ PRICING_FIELDS = (
     "cache_write_cost",
 )
 
+CAPABILITY_FIELDS = ("context", "max_output", "aa_iq", "aa_coding", "speed_tps")
+
 
 class ModelChange(BaseModel):
     """A single catalog change for one model."""
@@ -40,6 +42,7 @@ class SnapshotDiff(BaseModel):
     removed: list[str] = Field(default_factory=list)
     status_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
     pricing_changes: dict[str, dict[str, tuple[Any, Any]]] = Field(default_factory=dict)
+    capability_changes: dict[str, dict[str, tuple[Any, Any]]] = Field(default_factory=dict)
     tier_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
     changes: list[ModelChange] = Field(default_factory=list)
 
@@ -50,6 +53,7 @@ class SnapshotDiff(BaseModel):
             or self.removed
             or self.status_changes
             or self.pricing_changes
+            or self.capability_changes
             or self.tier_changes
         )
 
@@ -69,6 +73,17 @@ def _pricing(m: NormalizedModel) -> dict[str, Any]:
         "output_cost": m.cost.output,
         "cache_read_cost": m.cost.cache_read,
         "cache_write_cost": m.cost.cache_write,
+    }
+
+
+def _capabilities(m: NormalizedModel) -> dict[str, Any]:
+    """Extract comparable context/output limits and benchmark fields from a model."""
+    return {
+        "context": m.limit.context,
+        "max_output": m.limit.output,
+        "aa_iq": m.aa_iq,
+        "aa_coding": m.aa_coding,
+        "speed_tps": m.speed_tps,
     }
 
 
@@ -95,6 +110,7 @@ def diff_snapshots(
     removed = sorted(old_by_id.keys() - new_by_id.keys())
     status_changes: dict[str, dict[str, str]] = {}
     pricing_changes: dict[str, dict[str, tuple[Any, Any]]] = {}
+    capability_changes: dict[str, dict[str, tuple[Any, Any]]] = {}
     changes_by_id: dict[str, ModelChange] = {}
 
     def note(model_id: str, change_type: ChangeType, changes: dict[str, tuple[Any, Any]]) -> None:
@@ -128,6 +144,17 @@ def diff_snapshots(
             pricing_changes[model_id] = field_changes
             note(model_id, "modified", field_changes)
 
+        old_caps = _capabilities(old_model)
+        new_caps = _capabilities(new_model)
+        cap_changes = {
+            field: (old_caps[field], new_caps[field])
+            for field in CAPABILITY_FIELDS
+            if old_caps[field] != new_caps[field]
+        }
+        if cap_changes:
+            capability_changes[model_id] = cap_changes
+            note(model_id, "modified", cap_changes)
+
         if old_model.status != new_model.status:
             status_changes[model_id] = {"old": old_model.status, "new": new_model.status}
             change_type: ChangeType = (
@@ -152,6 +179,7 @@ def diff_snapshots(
         removed=removed,
         status_changes=status_changes,
         pricing_changes=pricing_changes,
+        capability_changes=capability_changes,
         tier_changes=tier_changes,
         changes=[changes_by_id[model_id] for model_id in sorted(changes_by_id)],
     )

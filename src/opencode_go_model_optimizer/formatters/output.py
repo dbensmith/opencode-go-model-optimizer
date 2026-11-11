@@ -21,6 +21,7 @@ def format_select_json(
     explanations: dict[str, dict[str, Any]] | None = None,
     profile: str | None = None,
     fallbacks: dict[str, list[str]] | None = None,
+    snapshot_info: dict[str, Any] | None = None,
 ) -> str:
     """Format tier selection as standard JSON."""
     ts = evaluated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -30,6 +31,8 @@ def format_select_json(
         "evaluated_at": ts,
         "mode": mode,
     }
+    if snapshot_info is not None:
+        payload["snapshot"] = snapshot_info
     if profile is not None and profile != "general":
         payload["profile"] = profile
     if fallbacks is not None:
@@ -338,6 +341,18 @@ def format_diff_table(diff: SnapshotDiff) -> str:
                 [
                     [model_id, field, _format_diff_value(old), _format_diff_value(new)]
                     for model_id, fields in diff.pricing_changes.items()
+                    for field, (old, new) in fields.items()
+                ],
+            )
+        )
+    if diff.capability_changes:
+        sections.append("Capability / benchmark changes:")
+        sections.append(
+            _render_table(
+                ["Model ID", "Field", "Old", "New"],
+                [
+                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
+                    for model_id, fields in diff.capability_changes.items()
                     for field, (old, new) in fields.items()
                 ],
             )

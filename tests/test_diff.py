@@ -137,3 +137,33 @@ def test_diff_snapshots_auto_mode_with_benchmarks():
 
     assert diff.has_changes() is True
     assert "changing-model" in diff.pricing_changes
+
+
+def test_capability_changes_detected_and_rendered():
+    from opencode_go_model_optimizer.formatters.output import format_diff_table
+
+    old = NormalizedModel(
+        id="cap", limit=ModelLimit(context=100, output=10), aa_iq=50.0, speed_tps=100.0
+    )
+    new = NormalizedModel(
+        id="cap", limit=ModelLimit(context=200, output=10), aa_iq=55.0, aa_coding=40.0
+    )
+    diff = diff_snapshots(_snapshot("a", [old]), _snapshot("b", [new]))
+
+    assert diff.capability_changes == {
+        "cap": {
+            "context": (100, 200),
+            "aa_iq": (50.0, 55.0),
+            "aa_coding": (None, 40.0),
+            "speed_tps": (100.0, None),
+        }
+    }
+    assert diff.has_changes()
+    assert diff.changes[0].change_type == "modified"
+    assert "context" in diff.changes[0].changes
+    table = format_diff_table(diff)
+    assert "Capability / benchmark changes:" in table
+    assert "speed_tps" in table
+
+    same = diff_snapshots(_snapshot("a", [old]), _snapshot("b", [old]))
+    assert same.capability_changes == {}
