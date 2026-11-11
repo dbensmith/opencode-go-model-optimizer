@@ -890,3 +890,61 @@ def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
         assert by_id["m_coding"].aa_coding == 85.0
         assert by_id["m_coding"].speed_tps == 110.0
         assert by_id["unmatched-id"].aa_iq == 92.0
+
+
+def test_norm_name_lru_cache():
+    norm_name.cache_clear()
+    n1 = norm_name("DeepSeek V4.1 Flash")
+    n2 = norm_name("DeepSeek V4.1 Flash")
+    assert n1 == n2
+    info = norm_name.cache_info()
+    assert info.hits >= 1
+
+
+def test_reference_snapshot_caching_and_deep_copy():
+    snap1 = load_reference_snapshot()
+    assert snap1 is not None
+
+    # Load again: should be fast cached load
+    snap2 = load_reference_snapshot()
+    assert snap2 is not None
+
+    # Mutate snap1 and verify deep copy isolation on snap2
+    orig_allowance = snap2.models[0].monthly_allowance
+    snap1.models[0].monthly_allowance = 999999.0
+    assert snap2.models[0].monthly_allowance == orig_allowance
+
+
+def test_cross_plan_cache_sharing(tmp_path):
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        # Save a fresh cache for plan="go" with plan_allowances for "go-plus" and "go-teams"
+        model = NormalizedModel(
+            id="multi-plan-mod",
+            monthly_allowance=15.0,
+            plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": float("inf")},
+        )
+        snap_go = Snapshot(
+            schema_version=1,
+            fetched_at="2026-01-01T00:00:00Z",
+            plan="go",
+            models=[model],
+            metadata=SnapshotMetadata(),
+        )
+        save_cached_snapshot(snap_go)
+
+        # Loading "go-plus" when snapshot-go-plus.json does not exist hits the shared "go" cache
+        shared_plus = load_cached_snapshot("go-plus", ttl_seconds=3600)
+        assert shared_plus is not None
+        assert shared_plus.plan == "go-plus"
+        assert shared_plus.models[0].monthly_allowance == 60.0
+
+        # Loading "teams" (alias) hits the shared cache and normalizes to "go-teams"
+        shared_teams = load_cached_snapshot("teams", ttl_seconds=3600)
+        assert shared_teams is not None
+        assert shared_teams.plan == "go-teams"
+        assert shared_teams.models[0].monthly_allowance == float("inf")
+
+        # Corrupt other plan cache file triggers exception branch and returns None
+        target_file = get_cache_snapshot_path("go")
+        target_file.write_text("{ corrupt json", encoding="utf-8")
+        assert load_cached_snapshot("go-plus", ttl_seconds=3600) is None

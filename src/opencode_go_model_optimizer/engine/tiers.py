@@ -153,6 +153,7 @@ def allocate_tiers_pareto(
     allow_contributor: bool = True,
     min_context: int = 0,
     profile: str = "general",
+    already_evaluated: bool = False,
 ) -> dict[str, str]:
     """Allocate models to tiers using Pareto efficiency and Fisher-Jenks natural breaks."""
     preferred = preferred_tiers or {}
@@ -161,7 +162,9 @@ def allocate_tiers_pareto(
         models = [m for m in models if m.limit.context >= min_context]
 
     # 1. Evaluate BPE on models
-    evaluated = evaluate_pareto(models, profile=profile, skip_models=skips)
+    evaluated = (
+        models if already_evaluated else evaluate_pareto(models, profile=profile, skip_models=skips)
+    )
 
     # Free tier
     free_ranked = rank_free_models(
@@ -273,7 +276,7 @@ def allocate_tiers_pareto(
             preferred_tiers={**preferred, **selected},
             skip_models=skips,
             allow_contributor=allow_contributor,
-            min_context=min_context,
+            min_context=min_context if not already_evaluated else 0,
             profile=profile,
         )
         for t in STANDARD_TIERS:
@@ -291,6 +294,7 @@ def allocate_tiers(
     allow_contributor: bool = True,
     min_context: int = 0,
     profile: str = "general",
+    already_evaluated: bool = False,
 ) -> dict[str, str]:
     """Unified entrypoint to allocate models into capability tiers."""
     if mode == "pareto":
@@ -301,6 +305,7 @@ def allocate_tiers(
             allow_contributor=allow_contributor,
             min_context=min_context,
             profile=profile,
+            already_evaluated=already_evaluated,
         )
     else:
         res = allocate_tiers_allowance(
@@ -359,8 +364,9 @@ def rank_catalog(
         mode=mode,
         skip_models=skips,
         allow_contributor=allow_contributor,
-        min_context=min_context,
+        min_context=0,
         profile=profile,
+        already_evaluated=(mode == "pareto"),
     )
     tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
 

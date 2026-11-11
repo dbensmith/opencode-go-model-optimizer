@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from opencode_go_model_optimizer.engine.allowance import (
+    _desc_str_key,
     rank_free_models,
     rank_paid_models,
     tie_break_key,
@@ -1050,3 +1051,68 @@ def test_allocate_tiers_pareto_fallback_respects_already_selected():
     assert len(set(assigned)) == 4
     assert tiers["heavy"] == "opencode-go/m-heavy"
     assert "opencode-go/m-heavy" not in (tiers["balanced"], tiers["light"], tiers["free"])
+
+
+def test_desc_str_key_lru_cache():
+    _desc_str_key.cache_clear()
+    k1 = _desc_str_key("2026-09-01")
+    k2 = _desc_str_key("2026-09-01")
+    assert k1 == k2
+    info = _desc_str_key.cache_info()
+    assert info.hits >= 1
+
+
+def test_evaluate_pareto_nan_burn_handling():
+    m_nan = NormalizedModel(
+        id="mod-nan",
+        aa_iq=85.0,
+        cost=TokenCost(output=10.0),
+        monthly_allowance=100.0,
+    )
+    with patch(
+        "opencode_go_model_optimizer.engine.pareto.compute_quota_burn_pct",
+        return_value=float("nan"),
+    ):
+        evaluated = evaluate_pareto([m_nan])
+        assert evaluated[0].bpe == 0.0
+
+
+def test_allocate_tiers_already_evaluated_flag():
+    m1 = NormalizedModel(
+        id="mod-1",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.9,
+    )
+    m_free = NormalizedModel(id="mod-free", is_zero_cost=True)
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=RuntimeError("evaluate_pareto called unexpectedly"),
+    ):
+        tiers = allocate_tiers_pareto([m1, m_free], already_evaluated=True)
+        assert tiers["free"] == "opencode-go/mod-free"
+
+
+def test_rank_catalog_single_evaluate_pareto_call():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+
+    call_count = 0
+    real_eval = evaluate_pareto
+
+    def counted_eval(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return real_eval(*args, **kwargs)
+
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=counted_eval,
+    ):
+        ranked = rank_catalog(models, mode="pareto")
+        assert len(ranked) > 0
+        # Exactly 1 call, not 2
+        assert call_count == 1

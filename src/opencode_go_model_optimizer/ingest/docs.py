@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any
 
@@ -13,16 +14,26 @@ DOCS_URLS = [
 ]
 DEFAULT_DOCS_URL = DOCS_URLS[0]
 
+_TAG_RE = re.compile(r"<[^>]*>")
+_PAREN_RE = re.compile(r"\([^)]*\)")
+_NON_ALNUM_RE = re.compile(r"[^A-Za-z0-9]+")
+_SEP_ROW_RE = re.compile(r"^:?-+:?$")
+_STRIKE_RE = re.compile(r"~~.*?~~")
+_PRICE_RE = re.compile(r"\$?([0-9]+(?:\.[0-9]+)?)")
+_BOLD_DOLLAR_RE = re.compile(r"\*\*\$(\d+(?:\.\d+)?)\*\*")
+_PLAIN_DOLLAR_RE = re.compile(r"\$(\d+(?:\.\d+)?)")
 
+
+@functools.lru_cache(maxsize=512)
 def norm_name(s: str) -> str:
     """Normalize model names for deterministic matching.
 
     Strips HTML tags, parenthetical suffixes like '(Off-Peak)' or '(50% off)',
     and non-alphanumeric characters, returning a lowercase string.
     """
-    s = re.sub(r"<[^>]*>", " ", str(s))
-    s = re.sub(r"\([^)]*\)", " ", s)
-    s = re.sub(r"[^A-Za-z0-9]+", "", s)
+    s = _TAG_RE.sub(" ", str(s))
+    s = _PAREN_RE.sub(" ", s)
+    s = _NON_ALNUM_RE.sub("", s)
     return s.lower()
 
 
@@ -57,7 +68,7 @@ def parse_table_rows(section: str) -> list[list[str]]:
         if len(cells) < 2:
             continue
         first_col = cells[0].lower()
-        if first_col == "model" or re.match(r"^:?-+:?$", cells[0].replace(" ", "")):
+        if first_col == "model" or _SEP_ROW_RE.match(cells[0].replace(" ", "")):
             continue
         rows.append(cells)
     return rows
@@ -68,11 +79,11 @@ def parse_price_value(cell: str) -> float:
     if not cell:
         return 0.0
     # Strip strikethroughs: ~~$4.00~~
-    cleaned = re.sub(r"~~.*?~~", "", cell).strip()
+    cleaned = _STRIKE_RE.sub("", cell).strip()
     if "free" in cleaned.lower():
         return 0.0
     # Match numeric dollar or decimal value
-    match = re.search(r"\$?([0-9]+(?:\.[0-9]+)?)", cleaned)
+    match = _PRICE_RE.search(cleaned)
     if match:
         return float(match.group(1))
     return 0.0
@@ -109,7 +120,7 @@ def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, 
 
         monthly_col = cells[-1]
         is_unlimited = "unlimited" in monthly_col.lower()
-        dollar_match = re.search(r"\*\*\$(\d+(?:\.\d+)?)\*\*", monthly_col)
+        dollar_match = _BOLD_DOLLAR_RE.search(monthly_col)
 
         if is_unlimited:
             allowance = float("inf")
@@ -117,7 +128,7 @@ def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, 
             allowance = float(dollar_match.group(1))
         else:
             # Check for plain dollar amounts
-            plain_dollar = re.search(r"\$(\d+(?:\.\d+)?)", monthly_col)
+            plain_dollar = _PLAIN_DOLLAR_RE.search(monthly_col)
             allowance = float(plain_dollar.group(1)) if plain_dollar else 0.0
 
         input_cost = parse_price_value(cells[1]) if len(cells) > 1 else 0.0

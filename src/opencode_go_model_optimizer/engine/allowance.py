@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import math
 
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
+@functools.lru_cache(maxsize=256)
 def _desc_str_key(s: str) -> tuple[int, ...]:
     """Produce a sort key that reverses lexicographical string order in a single pass."""
     return (*(-ord(c) for c in s), 0)
