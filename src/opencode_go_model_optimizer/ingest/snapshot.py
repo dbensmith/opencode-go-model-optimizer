@@ -19,9 +19,15 @@ from opencode_go_model_optimizer.ingest.docs import (
     norm_name,
     parse_endpoints_table,
     parse_go_pricing,
+    parse_privacy,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
+from opencode_go_model_optimizer.ingest.models import (
+    NormalizedModel,
+    Privacy,
+    Snapshot,
+    SnapshotMetadata,
+)
 from opencode_go_model_optimizer.ingest.models_dev import fetch_models_dev
 
 
@@ -213,6 +219,44 @@ def merge_docs_pricing(
     return models
 
 
+def merge_privacy(
+    models: list[NormalizedModel],
+    privacy: dict[str, dict[str, Any]],
+    endpoints: dict[str, str] | None = None,
+    warnings: list[str] | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Attach docs privacy rows to models, resolving names the same way pricing does.
+
+    `warnings`, if given, receives messages about active models without a privacy row and
+    expired ZDR agreement dates (relative to `now`).
+    """
+    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
+    endpoint_ids = set(id_by_norm_name.values())
+    by_norm = {norm_name(n): row for n, row in privacy.items() if norm_name(n)}
+    missing: list[str] = []
+    expired: set[str] = set()
+    today = (now or datetime.now(UTC)).date().isoformat()
+    for m in models:
+        found = _lookup_pricing(m, by_norm, id_by_norm_name, endpoint_ids)
+        if not found:
+            if m.status == "active":
+                missing.append(m.id)
+            continue
+        m.privacy = Privacy(**found[1])
+        until = m.privacy.agreement_valid_until
+        if until and until < today:
+            expired.add(until)
+    if warnings is None:
+        return
+    if missing:
+        warnings.append(
+            f"{len(missing)} active model(s) have no docs privacy row: " + ", ".join(missing)
+        )
+    for until in sorted(expired):
+        warnings.append(f"privacy agreement date {until} is in the past; docs may be stale")
+
+
 def create_snapshot(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
@@ -225,6 +269,7 @@ def create_snapshot(
     endpoints: dict[str, str] | None = None,
     benchmark_source: str = "none",
     warnings: list[str] | None = None,
+    privacy: dict[str, dict[str, Any]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
     all_warnings = list(warnings or [])
@@ -252,7 +297,15 @@ def create_snapshot(
         endpoints=endpoints,
         warnings=all_warnings if pricing else None,
     )
-    now_utc = datetime.now(UTC).isoformat(timespec="seconds")
+    now = datetime.now(UTC)
+    now_utc = now.isoformat(timespec="seconds")
+    if privacy is not None:
+        if not privacy:
+            all_warnings.append(
+                "no rows parsed from the docs Privacy table; privacy/region filters have no data"
+            )
+        else:
+            merge_privacy(merged_models, privacy, endpoints, all_warnings, now)
 
     return Snapshot(
         schema_version=1,
@@ -415,6 +468,7 @@ def fetch_and_build_snapshot(
             all_plan_pricing=all_plan_pricing,
             models_dev_metadata=models_dev_metadata,
             endpoints=parse_endpoints_table(docs_text),
+            privacy=parse_privacy(docs_text),
             benchmark_source=benchmark_source,
             warnings=warnings,
         )

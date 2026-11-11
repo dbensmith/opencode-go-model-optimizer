@@ -98,6 +98,8 @@ def explain_tiers(
                 "is_pareto": m.is_pareto,
                 "context": m.limit.context,
             }
+            if m.privacy is not None:
+                explanations[tier]["privacy"] = m.privacy.model_dump(mode="json")
             if m.price_multiplier is not None:
                 explanations[tier]["price_multiplier"] = round(m.price_multiplier, 4)
                 change = _next_change(m, criteria)
@@ -317,12 +319,30 @@ def format_rank_table(
                 ]
             )
 
+    if any(m.privacy is not None for m in ranked_models):
+        headers.append("Privacy")
+        for row, m in zip(rows, ranked_models, strict=True):
+            row.append(_privacy_cell(m))
+
     if any(m.price_multiplier is not None for m in ranked_models):
         headers.append("Price x")
         for row, m in zip(rows, ranked_models, strict=True):
             row.append(_multiplier_cell(m, None))
 
     return _render_table(headers, rows)
+
+
+def _privacy_cell(m: NormalizedModel) -> str:
+    """Compact privacy summary: ZDR / <N>d retention, plus train and global flags."""
+    p = m.privacy
+    if p is None:
+        return "-"
+    parts = ["ZDR" if p.zdr else f"{p.retention_days}d" if p.retention_days is not None else "?"]
+    if p.trains_on_data:
+        parts.append("train")
+    if p.requires_global_region:
+        parts.append("global")
+    return ",".join(parts)
 
 
 def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
@@ -407,6 +427,18 @@ def format_diff_table(diff: SnapshotDiff) -> str:
                 [
                     [model_id, field, _format_diff_value(old), _format_diff_value(new)]
                     for model_id, fields in diff.capability_changes.items()
+                    for field, (old, new) in fields.items()
+                ],
+            )
+        )
+    if diff.privacy_changes:
+        sections.append("Privacy / region changes:")
+        sections.append(
+            _render_table(
+                ["Model ID", "Field", "Old", "New"],
+                [
+                    [model_id, field, _format_diff_value(old), _format_diff_value(new)]
+                    for model_id, fields in diff.privacy_changes.items()
                     for field, (old, new) in fields.items()
                 ],
             )

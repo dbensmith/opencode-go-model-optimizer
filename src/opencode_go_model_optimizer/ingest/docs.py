@@ -2,6 +2,7 @@
 
 import functools
 import re
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -178,6 +179,81 @@ def parse_endpoints_table(mdx: str) -> dict[str, str]:
         if name and model_id and model_id.lower() != "model id":
             mapping[name] = model_id
     return mapping
+
+
+_NOTE_RE = re.compile(r"^\s*[-*]\s+\*\*(.+?):\*\*\s*(.*)$")
+_GLOBAL_RE = re.compile(r"requires\s+\W*global\W*\s+regions?", re.IGNORECASE)
+_VALID_THROUGH_RE = re.compile(r"valid\s+through\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})", re.IGNORECASE)
+_RETENTION_RE = re.compile(r"(\d+)\s*days?", re.IGNORECASE)
+
+
+def _privacy_section(mdx: str) -> str:
+    idx = mdx.find("## Privacy")
+    if idx == -1:
+        return ""
+    rest = mdx[idx + len("## Privacy") :]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _parse_valid_through(text: str) -> str | None:
+    match = _VALID_THROUGH_RE.search(text)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(" ".join(match.group(1).split()), "%B %d, %Y").date().isoformat()
+    except ValueError:
+        return None
+
+
+def parse_privacy(mdx: str) -> dict[str, dict[str, Any]]:
+    """Parse the `## Privacy` table and notes into {display name: Privacy field dict}.
+
+    Table columns are `Model | Model training | Data retention`. Bullet notes of the form
+    `- **Name / Other:** text` attach to every row whose name equals or starts with a
+    note key (so "DeepSeek" covers all DeepSeek rows). Returns {} when the section is missing.
+    """
+    section = _privacy_section(mdx)
+    result: dict[str, dict[str, Any]] = {}
+    for cells in parse_table_rows(section):
+        if len(cells) < 3:
+            continue
+        name = _TAG_RE.sub(" ", cells[0]).strip()
+        if not name:
+            continue
+        training = cells[1].replace("\\", "").replace("*", "").strip().lower()
+        retention = cells[2].replace("\\", "").replace("*", "").strip().lower()
+        days = _RETENTION_RE.search(retention)
+        retention_days = int(days.group(1)) if days else None
+        result[name] = {
+            "trains_on_data": True
+            if training.startswith("yes")
+            else False
+            if training.startswith("not used")
+            else None,
+            "retention_days": retention_days,
+            "zdr": (retention_days == 0) if days else (False if "not zdr" in retention else None),
+            "requires_global_region": False,
+            "note": None,
+            "agreement_valid_until": None,
+        }
+
+    for line in section.splitlines():
+        note_match = _NOTE_RE.match(line)
+        if not note_match:
+            continue
+        keys = [norm_name(k) for k in note_match.group(1).split("/")]
+        text = note_match.group(2).strip()
+        for name, row in result.items():
+            if not any(k and norm_name(name).startswith(k) for k in keys):
+                continue
+            row["note"] = f"{row['note']} {text}" if row["note"] else text
+            if _GLOBAL_RE.search(text):
+                row["requires_global_region"] = True
+            row["agreement_valid_until"] = (
+                _parse_valid_through(text) or row["agreement_valid_until"]
+            )
+    return result
 
 
 def fetch_docs_mdx(
