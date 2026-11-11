@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import json
 import os
 import time
@@ -172,9 +173,7 @@ def save_snapshot(snapshot: Snapshot, path: str | Path) -> None:
 def load_snapshot(path: str | Path) -> Snapshot:
     """Load and validate snapshot from a JSON file."""
     p = Path(path)
-    with open(p, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return Snapshot.model_validate(data)
+    return Snapshot.model_validate_json(p.read_bytes())
 
 
 def get_reference_snapshot_path() -> Path:
@@ -186,12 +185,20 @@ def get_reference_snapshot_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "reference_snapshot.json"
 
 
+@functools.lru_cache(maxsize=1)
+def _load_reference_snapshot_cached(path_str: str, mtime_ns: int) -> Snapshot:
+    """Internal cached loader for reference snapshot."""
+    return load_snapshot(path_str)
+
+
 def load_reference_snapshot() -> Snapshot | None:
     """Load bundled reference snapshot if present."""
     p = get_reference_snapshot_path()
     if p.exists():
         try:
-            return load_snapshot(p)
+            stat = p.stat()
+            snap = _load_reference_snapshot_cached(str(p), stat.st_mtime_ns)
+            return snap.model_copy(deep=True)
         except (json.JSONDecodeError, OSError, ValueError):
             return None
     return None
@@ -207,14 +214,35 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: int = 3600) -> Snapshot 
     """Load cached snapshot if within TTL, else return None."""
     if ttl_seconds <= 0:
         return None
+
+    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
     path = get_cache_snapshot_path(plan=plan)
-    if not path.exists():
-        return None
-    try:
-        if time.time() - path.stat().st_mtime <= ttl_seconds:
-            return load_snapshot(path)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
+    if path.exists():
+        try:
+            if time.time() - path.stat().st_mtime <= ttl_seconds:
+                return load_snapshot(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
+    # Check for another plan's fresh cached snapshot that can share plan allowances
+    other_plans = [p for p in ("go", "go-plus", "go-teams") if p != plan and p != norm_plan]
+    now = time.time()
+    for other_p in other_plans:
+        other_path = get_cache_snapshot_path(plan=other_p)
+        if other_path.exists():
+            try:
+                if now - other_path.stat().st_mtime <= ttl_seconds:
+                    snap = load_snapshot(other_path)
+                    if any(
+                        norm_plan in m.plan_allowances or plan in m.plan_allowances
+                        for m in snap.models
+                    ):
+                        apply_plan(snap.models, norm_plan)
+                        snap.plan = norm_plan
+                        return snap
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+
     return None
 
 

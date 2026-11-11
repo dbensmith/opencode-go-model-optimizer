@@ -82,8 +82,13 @@ def fisher_jenks_3_clusters(
 ) -> tuple[list[NormalizedModel], list[NormalizedModel], list[NormalizedModel]]:
     """1D Fisher-Jenks Natural Breaks into 3 clusters (WCSS minimization)."""
     val_fn = key or effective_quality
-    sorted_m = sorted(models, key=lambda m: (-val_fn(m), tie_break_key(m)))
-    qs = [val_fn(x) for x in sorted_m]
+    decorated = []
+    for m in models:
+        v = val_fn(m)
+        decorated.append((-v, tie_break_key(m), v, m))
+    decorated.sort()
+    sorted_m = [item[3] for item in decorated]
+    qs = [item[2] for item in decorated]
     n = len(qs)
 
     if n <= 1:
@@ -167,13 +172,20 @@ def evaluate_pareto(
         (effective_quality(m, profile=profile), m.composite_burn_pct or 0.0) for m in benchmarked
     ]
 
-    # Precompute min_burn_at_q using unique qualities sorted descending
-    unique_qs = sorted({q for q, _ in qb_list}, reverse=True)
+    # Precompute min_burn_at_q using single-pass min_burn_by_q
+    min_burn_by_q: dict[float, float] = {}
+    for q, b in qb_list:
+        if not math.isnan(b):
+            curr = min_burn_by_q.get(q)
+            if curr is None or b < curr:
+                min_burn_by_q[q] = b
+        elif q not in min_burn_by_q:
+            min_burn_by_q[q] = float("inf")
+
     q_to_min_burn: dict[float, float] = {}
     running_min_burn = float("inf")
-    for uq in unique_qs:
-        burns_at_uq = [b for q, b in qb_list if q == uq]
-        running_min_burn = min(running_min_burn, min(burns_at_uq))
+    for uq in sorted(min_burn_by_q, reverse=True):
+        running_min_burn = min(running_min_burn, min_burn_by_q[uq])
         q_to_min_burn[uq] = running_min_burn
 
     # Precompute max_q_at_burn using models sorted by burn ascending
