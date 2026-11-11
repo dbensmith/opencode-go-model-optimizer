@@ -237,6 +237,8 @@ def test_extract_token_cost_and_model_limit_edge_cases():
 
     # Direct _safe_float edge cases
     assert _safe_float(None) == 0.0
+    assert _safe_float(True) == 0.0
+    assert _safe_float(False) == 0.0
     assert _safe_float(42) == 42.0
     assert _safe_float("3.14") == 3.14
     assert _safe_float({"default": 1.25}) == 1.25

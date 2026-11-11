@@ -35,6 +35,8 @@ def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
 
 def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
     """Apply privacy/region, context, output, output-cost, and quota-burn constraints."""
+    if c.skip_models:
+        models = [m for m in models if m.id not in c.skip_models and m.full_id not in c.skip_models]
     models = [m for m in models if passes_privacy(m, c)]
     if c.min_context > 0:
         models = [m for m in models if m.limit.context >= c.min_context]

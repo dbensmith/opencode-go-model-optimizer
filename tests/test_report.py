@@ -20,6 +20,7 @@ from opencode_go_model_optimizer.ingest.docs import (
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Privacy, TokenCost
 from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, load_cached_snapshot
 from opencode_go_model_optimizer.report import (
+    _strip_aa,
     assert_no_aa,
     build_report,
     exclusion_reasons,
@@ -118,6 +119,22 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     assert exclusion_reasons(trains, SelectionCriteria(allow_training=False)) == [
         "excluded by privacy criteria"
     ]
+    contrib = NormalizedModel(
+        id="c1",
+        is_contributor=True,
+        cost=TokenCost(output=0.0),
+        monthly_allowance=10.0,
+    )
+    assert exclusion_reasons(contrib, SelectionCriteria(allow_contributor=True)) == []
+    no_priv = NormalizedModel(
+        id="np",
+        privacy=None,
+        cost=TokenCost(output=1.0),
+        monthly_allowance=10.0,
+    )
+    assert exclusion_reasons(no_priv, SelectionCriteria(require_zdr=True)) == [
+        "excluded by privacy criteria"
+    ]
 
 
 def test_empty_tier_becomes_warning():
@@ -134,6 +151,22 @@ def test_assert_no_aa_rejects_benchmark_keys():
         assert_no_aa({"a": [{"aa_iq": 1}]})
     with pytest.raises(ValueError, match="speed_tps"):
         assert_no_aa({"speed_tps": 1})
+
+
+def test_strip_aa_arbitrary_keys():
+    data = {
+        "name": "test",
+        "aa_extra": 42,
+        "nested": {"aa_custom": "x", "ok": 1},
+        "list": [{"aa_sub": True, "keep": 2}],
+    }
+    stripped = _strip_aa(data)
+    assert_no_aa(stripped)
+    assert stripped == {
+        "name": "test",
+        "nested": {"ok": 1},
+        "list": [{"keep": 2}],
+    }
 
 
 def test_summarize_junit(tmp_path):

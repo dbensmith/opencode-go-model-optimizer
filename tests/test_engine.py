@@ -12,6 +12,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.pareto import (
     WORKLOAD_PROFILES,
+    compute_burn_pct,
     compute_quota_burn_pct,
     compute_turn_cost,
     effective_quality,
@@ -22,7 +23,12 @@ from opencode_go_model_optimizer.engine.pareto import (
 from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
 from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
-from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
+from opencode_go_model_optimizer.ingest.models import (
+    ModelLimit,
+    NormalizedModel,
+    RequestEstimate,
+    TokenCost,
+)
 from opencode_go_model_optimizer.ingest.snapshot import merge_docs_pricing
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -258,6 +264,21 @@ def test_compute_quota_burn_pct_guards():
     )
     burn_default = compute_quota_burn_pct(m_none_allowance)
     assert burn_default > 0.0
+
+
+def test_quota_burn_zero_allowance_and_zero_multiplier():
+    m_zero_allowance = NormalizedModel(
+        id="zero-allowance", monthly_allowance=0.0, cost=TokenCost(input=1.0, output=1.0)
+    )
+    assert compute_quota_burn_pct(m_zero_allowance) == 100000.0
+
+    m_zero_mult = NormalizedModel(
+        id="zero-mult",
+        cost=TokenCost(input=1.0, output=1.0),
+    )
+    m_zero_mult.request_estimate = RequestEstimate(per_month=5000.0)
+    m_zero_mult.price_multiplier = 0.0
+    assert compute_burn_pct(m_zero_mult, basis="estimate") == 0.0
 
 
 def test_effective_quality():
