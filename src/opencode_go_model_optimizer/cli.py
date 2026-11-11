@@ -9,7 +9,11 @@ from pathlib import Path
 
 import httpx
 
-from opencode_go_model_optimizer.engine.tiers import allocate_tiers, rank_catalog
+from opencode_go_model_optimizer.engine.tiers import (
+    allocate_tier_fallbacks,
+    allocate_tiers,
+    rank_catalog,
+)
 from opencode_go_model_optimizer.formatters.output import (
     explain_tiers,
     format_rank_json,
@@ -97,6 +101,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Minimum context window in tokens (default: 0)",
     )
     select_parser.add_argument(
+        "--min-output",
+        type=int,
+        default=0,
+        help="Minimum output token limit (default: 0)",
+    )
+    select_parser.add_argument(
+        "--max-output-cost",
+        type=float,
+        default=None,
+        help="Maximum output token cost in USD per 1M tokens",
+    )
+    select_parser.add_argument(
+        "--top-n",
+        type=int,
+        default=1,
+        help="Number of ordered candidate models per tier for fallback chains (default: 1)",
+    )
+    select_parser.add_argument(
         "--no-contributor",
         action="store_true",
         help="Exclude contributor-tier models from free tier selection",
@@ -165,6 +187,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Minimum context window in tokens (default: 0)",
+    )
+    rank_parser.add_argument(
+        "--min-output",
+        type=int,
+        default=0,
+        help="Minimum output token limit (default: 0)",
+    )
+    rank_parser.add_argument(
+        "--max-output-cost",
+        type=float,
+        default=None,
+        help="Maximum output token cost in USD per 1M tokens",
     )
     rank_parser.add_argument(
         "--no-contributor",
@@ -285,6 +319,9 @@ def handle_select(args: argparse.Namespace) -> int:
     skip_models = set(getattr(args, "skip", []) or [])
     preferred_tiers = _parse_preferred_tiers(getattr(args, "prefer", []))
     min_context = getattr(args, "min_context", 0) or 0
+    min_output = getattr(args, "min_output", 0) or 0
+    max_output_cost = getattr(args, "max_output_cost", None)
+    top_n = getattr(args, "top_n", 1) or 1
     allow_contributor = not getattr(args, "no_contributor", False)
     profile = getattr(args, "profile", "general") or "general"
     explain = bool(getattr(args, "explain", False))
@@ -296,7 +333,26 @@ def handle_select(args: argparse.Namespace) -> int:
         skip_models=skip_models,
         allow_contributor=allow_contributor,
         min_context=min_context,
+        min_output=min_output,
+        max_output_cost=max_output_cost,
         profile=profile,
+    )
+
+    fallbacks = (
+        allocate_tier_fallbacks(
+            models,
+            top_n=top_n,
+            mode=mode,
+            preferred_tiers=preferred_tiers,
+            skip_models=skip_models,
+            allow_contributor=allow_contributor,
+            min_context=min_context,
+            min_output=min_output,
+            max_output_cost=max_output_cost,
+            profile=profile,
+        )
+        if top_n > 1
+        else None
     )
 
     if args.format == "json":
@@ -307,13 +363,14 @@ def handle_select(args: argparse.Namespace) -> int:
             plan=plan,
             explanations=explanations,
             profile=profile,
+            fallbacks=fallbacks,
         )
     elif args.format == "table":
         out = format_select_table(tiers, models, plan=plan, explain=explain, profile=profile)
     elif args.format == "env":
-        out = format_select_env(tiers)
+        out = format_select_env(tiers, fallbacks=fallbacks)
     elif args.format == "github-output":
-        out = format_select_github_output(tiers)
+        out = format_select_github_output(tiers, fallbacks=fallbacks)
     else:
         out = format_select_compact(tiers)
 
@@ -330,6 +387,8 @@ def handle_rank(args: argparse.Namespace) -> int:
 
     skip_models = set(getattr(args, "skip", []) or [])
     min_context = getattr(args, "min_context", 0) or 0
+    min_output = getattr(args, "min_output", 0) or 0
+    max_output_cost = getattr(args, "max_output_cost", None)
     allow_contributor = not getattr(args, "no_contributor", False)
     profile = getattr(args, "profile", "general") or "general"
 
@@ -339,6 +398,8 @@ def handle_rank(args: argparse.Namespace) -> int:
         skip_models=skip_models,
         allow_contributor=allow_contributor,
         min_context=min_context,
+        min_output=min_output,
+        max_output_cost=max_output_cost,
         profile=profile,
     )
 

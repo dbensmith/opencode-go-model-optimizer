@@ -98,6 +98,38 @@ def test_format_select_github_output():
     assert "free=" in partial_gh
 
 
+def test_formatters_with_fallbacks():
+    tiers = {
+        "heavy": "opencode-go/mod-h1",
+        "balanced": "opencode-go/mod-b1",
+        "light": "opencode-go/mod-l1",
+        "free": "opencode-go/mod-f1",
+    }
+    fallbacks = {
+        "heavy": ["opencode-go/mod-h1", "opencode-go/mod-h2"],
+        "balanced": ["opencode-go/mod-b1", "opencode-go/mod-b2"],
+        "light": ["opencode-go/mod-l1", "opencode-go/mod-l2"],
+        "free": ["opencode-go/mod-f1", "opencode-go/mod-f2"],
+    }
+
+    # JSON format with fallbacks
+    res_json = format_select_json(tiers, mode="allowance", fallbacks=fallbacks)
+    data = json.loads(res_json)
+    assert data["fallbacks"] == fallbacks
+
+    # Env format with fallbacks
+    res_env = format_select_env(tiers, fallbacks=fallbacks)
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/mod-h1"' in res_env
+    assert 'OPENCODE_MODEL_HEAVY_FALLBACKS="opencode-go/mod-h1,opencode-go/mod-h2"' in res_env
+    assert 'OPENCODE_MODEL_FREE_FALLBACKS="opencode-go/mod-f1,opencode-go/mod-f2"' in res_env
+
+    # GitHub Actions output with fallbacks
+    res_gh = format_select_github_output(tiers, fallbacks=fallbacks)
+    assert "heavy=opencode-go/mod-h1" in res_gh
+    assert "heavy_fallbacks=opencode-go/mod-h1,opencode-go/mod-h2" in res_gh
+    assert "free_fallbacks=opencode-go/mod-f1,opencode-go/mod-f2" in res_gh
+
+
 def test_format_select_table_with_missing_and_varied_models():
     m1 = NormalizedModel(
         id="model-inf",

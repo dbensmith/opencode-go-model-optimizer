@@ -101,6 +101,9 @@ The `select` and `rank` subcommands support filtering, optimization, and export 
 - **`--skip <model_id>`**: Exclude specific model IDs from selection or ranking (can be specified multiple times).
 - **`--prefer <tier>=<model_id>`**: Pin a model to a tier (e.g. `--prefer heavy=kimi-k3.1-pro`).
 - **`--min-context <tokens>`**: Enforce a minimum context window threshold (default: 0).
+- **`--min-output <tokens>`**: Enforce a minimum output token limit threshold (default: 0).
+- **`--max-output-cost <usd>`**: Enforce a maximum output token cost cap in USD per 1M tokens (e.g. `--max-output-cost 15.0`).
+- **`--top-n <count>`**: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (or via `OPENCODE_GO_CACHE_TTL`).
 - **`--explain`**: Include detailed per-tier metrics (`turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) in table and JSON output.

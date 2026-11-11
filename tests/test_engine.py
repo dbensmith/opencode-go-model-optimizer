@@ -19,6 +19,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     ssd,
 )
 from opencode_go_model_optimizer.engine.tiers import (
+    allocate_tier_fallbacks,
     allocate_tiers,
     allocate_tiers_allowance,
     allocate_tiers_pareto,
@@ -1116,3 +1117,163 @@ def test_rank_catalog_single_evaluate_pareto_call():
         assert len(ranked) > 0
         # Exactly 1 call, not 2
         assert call_count == 1
+
+
+def test_output_token_and_cost_filtering():
+    m_low_out = NormalizedModel(
+        id="mod-low-out",
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        limit=ModelLimit(output=4000),
+        aa_iq=80.0,
+    )
+    m_high_cost = NormalizedModel(
+        id="mod-high-cost",
+        monthly_allowance=100.0,
+        cost=TokenCost(output=25.0),
+        limit=ModelLimit(output=16000),
+        aa_iq=85.0,
+    )
+    m_compliant = NormalizedModel(
+        id="mod-compliant",
+        monthly_allowance=100.0,
+        cost=TokenCost(output=3.0),
+        limit=ModelLimit(output=16000),
+        aa_iq=75.0,
+    )
+    m_free = NormalizedModel(id="mod-free", is_zero_cost=True, limit=ModelLimit(output=16000))
+
+    models = [m_low_out, m_high_cost, m_compliant, m_free]
+
+    # Filtering by min_output=8000 excludes m_low_out
+    tiers_out = allocate_tiers_allowance(models, min_output=8000)
+    assert "opencode-go/mod-low-out" not in tiers_out.values()
+
+    # Filtering by max_output_cost=5.0 excludes m_high_cost
+    tiers_cost = allocate_tiers_allowance(models, max_output_cost=5.0)
+    assert "opencode-go/mod-high-cost" not in tiers_cost.values()
+
+    # In pareto mode
+    tiers_pareto = allocate_tiers_pareto(models, min_output=8000, max_output_cost=5.0)
+    assert "opencode-go/mod-low-out" not in tiers_pareto.values()
+    assert "opencode-go/mod-high-cost" not in tiers_pareto.values()
+
+    # In rank_catalog
+    ranked = rank_catalog(models, min_output=8000, max_output_cost=5.0)
+    ranked_ids = [m.id for m in ranked]
+    assert "mod-low-out" not in ranked_ids
+    assert "mod-high-cost" not in ranked_ids
+    assert "mod-compliant" in ranked_ids
+
+
+def test_allocate_tier_fallbacks_top_n_1():
+    models = _get_fixture_models()
+    # top_n=1 returns single-element lists
+    fallbacks_1 = allocate_tier_fallbacks(models, top_n=1, mode="allowance")
+    assert set(fallbacks_1.keys()) == {"heavy", "balanced", "light", "free"}
+    for tier in ("heavy", "balanced", "light", "free"):
+        assert len(fallbacks_1[tier]) <= 1
+
+    # top_n=0 returns single-element lists
+    fallbacks_0 = allocate_tier_fallbacks(models, top_n=0, mode="allowance")
+    assert set(fallbacks_0.keys()) == {"heavy", "balanced", "light", "free"}
+
+
+def test_allocate_tier_fallbacks_pareto_mode():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+
+    fallbacks = allocate_tier_fallbacks(models, top_n=3, mode="pareto")
+    assert set(fallbacks.keys()) == {"heavy", "balanced", "light", "free"}
+    assert len(fallbacks["heavy"]) <= 3
+    assert len(fallbacks["free"]) >= 1
+
+    # When benchmarked pool is empty in pareto mode
+    unbenchmarked = [
+        NormalizedModel(id="p1", monthly_allowance=50.0, cost=TokenCost(output=1.0)),
+        NormalizedModel(id="p2", monthly_allowance=40.0, cost=TokenCost(output=1.0)),
+        NormalizedModel(id="f1", is_zero_cost=True),
+    ]
+    fb_empty = allocate_tier_fallbacks(unbenchmarked, top_n=2, mode="pareto")
+    assert "opencode-go/f1" in fb_empty["free"]
+    assert len(fb_empty["heavy"]) <= 2
+
+
+def test_allocate_tier_fallbacks_allowance_mode():
+    models = _get_fixture_models()
+    fallbacks = allocate_tier_fallbacks(models, top_n=3, mode="allowance")
+    assert set(fallbacks.keys()) == {"heavy", "balanced", "light", "free"}
+    for tier in ("heavy", "balanced", "light", "free"):
+        assert len(fallbacks[tier]) <= 3
+
+    # Empty paid models in allowance mode
+    free_only = [NormalizedModel(id="f1", is_zero_cost=True)]
+    fb_free = allocate_tier_fallbacks(free_only, top_n=2, mode="allowance")
+    assert fb_free["heavy"] == []
+    assert fb_free["free"] == ["opencode-go/f1"]
+
+
+def test_allocate_tier_fallbacks_filters():
+    m1 = NormalizedModel(
+        id="mod-1",
+        monthly_allowance=100.0,
+        cost=TokenCost(output=2.0),
+        limit=ModelLimit(context=100000, output=16000),
+    )
+    m2 = NormalizedModel(
+        id="mod-2",
+        monthly_allowance=80.0,
+        cost=TokenCost(output=30.0),  # High cost
+        limit=ModelLimit(context=50000, output=16000),
+    )
+    m3 = NormalizedModel(
+        id="mod-3",
+        monthly_allowance=60.0,
+        cost=TokenCost(output=3.0),
+        limit=ModelLimit(context=100000, output=2000),  # Low output
+    )
+    m_free = NormalizedModel(
+        id="mod-f",
+        is_zero_cost=True,
+        limit=ModelLimit(context=100000, output=16000),
+    )
+
+    models = [m1, m2, m3, m_free]
+    fb = allocate_tier_fallbacks(
+        models,
+        top_n=3,
+        min_context=60000,
+        min_output=8000,
+        max_output_cost=10.0,
+    )
+    all_assigned = [mid for candidates in fb.values() for mid in candidates]
+    assert "opencode-go/mod-2" not in all_assigned
+    assert "opencode-go/mod-3" not in all_assigned
+    assert "opencode-go/mod-1" in all_assigned
+
+
+def test_allocate_tier_fallbacks_top_n_truncation():
+    free_models = [
+        NormalizedModel(id=f"free-{i}", is_zero_cost=True, release_date=f"2026-09-0{i}")
+        for i in range(1, 6)
+    ]
+    paid_models = [
+        NormalizedModel(
+            id=f"paid-{i}",
+            monthly_allowance=100.0,
+            cost=TokenCost(output=10.0),
+            release_date=f"2026-09-0{i}",
+            aa_iq=90.0,
+        )
+        for i in range(1, 10)
+    ]
+    # In pareto mode with top_n=2
+    fb_pareto = allocate_tier_fallbacks(free_models + paid_models, top_n=2, mode="pareto")
+    assert len(fb_pareto["free"]) == 2
+    assert len(fb_pareto["heavy"]) == 2
+
+    # In allowance mode with top_n=2
+    fb_allowance = allocate_tier_fallbacks(free_models + paid_models, top_n=2, mode="allowance")
+    assert len(fb_allowance["free"]) == 2
+    assert len(fb_allowance["heavy"]) == 2
