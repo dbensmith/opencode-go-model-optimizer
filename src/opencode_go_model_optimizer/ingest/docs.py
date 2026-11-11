@@ -89,7 +89,9 @@ def parse_price_value(cell: str) -> float:
     return 0.0
 
 
-def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, Any]]:
+def parse_go_pricing(
+    mdx_content: str, plan: str = "go", *, fallback_to_go: bool = True
+) -> dict[str, dict[str, Any]]:
     """Parse `<PlanTabs id="go-pricing">` `<div slot="{plan}">` table from MDX.
 
     Supported plan slots: 'go', 'go-plus', 'go-teams'.
@@ -104,7 +106,7 @@ def parse_go_pricing(mdx_content: str, plan: str = "go") -> dict[str, dict[str, 
     # Normalize plan alias (e.g., 'plus' -> 'go-plus', 'teams' -> 'go-teams')
     slot = plan if plan.startswith("go") else f"go-{plan}"
     section = extract_plan_section(mdx_content, plan_id="go-pricing", slot=slot)
-    if not section:
+    if not section and fallback_to_go:
         # Fallback to base 'go' if custom slot not found
         slot = "go"
         section = extract_plan_section(mdx_content, plan_id="go-pricing", slot="go")

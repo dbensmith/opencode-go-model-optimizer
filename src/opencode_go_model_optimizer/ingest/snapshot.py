@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import functools
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -29,6 +30,30 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
         elif plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[plan]
     return models
+
+
+def _to_float(value: Any) -> float | None:
+    """Coerce a value to a finite float, returning None if not numeric."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _benchmarks_from_snapshot(snap: Snapshot) -> dict[str, dict[str, Any]]:
+    """Build a benchmark index (by id, normalized id and normalized name) from a snapshot."""
+    benchmarks: dict[str, dict[str, Any]] = {}
+    for m in snap.models:
+        if m.aa_iq is None and m.aa_coding is None and m.speed_tps is None:
+            continue
+        entry = {"iq": m.aa_iq, "coding": m.aa_coding, "tps": m.speed_tps}
+        for key in (m.id, norm_name(m.id) if m.id else "", norm_name(m.name) if m.name else ""):
+            if key:
+                benchmarks[key] = entry
+    return benchmarks
 
 
 def fetch_aa_benchmarks(
@@ -57,16 +82,16 @@ def fetch_aa_benchmarks(
             if not isinstance(item, dict):
                 continue
             slug = item.get("slug") or item.get("id") or ""
-            evals = item.get("evaluations", {})
-            iq = evals.get("artificial_analysis_intelligence_index")
-            coding = evals.get("artificial_analysis_coding_index")
-            tps = item.get("median_output_tokens_per_second")
+            evals = item.get("evaluations")
+            if not isinstance(evals, dict):
+                evals = {}
             if slug:
                 entry = {
-                    "iq": float(iq) if iq is not None else None,
-                    "coding": float(coding) if coding is not None else None,
-                    "tps": float(tps) if tps is not None else None,
+                    "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
+                    "coding": _to_float(evals.get("artificial_analysis_coding_index")),
+                    "tps": _to_float(item.get("median_output_tokens_per_second")),
                 }
+                slug = str(slug)
                 benchmarks[slug] = entry
                 benchmarks[norm_name(slug)] = entry
                 if item.get("name") and norm_name(str(item["name"])):
@@ -306,31 +331,17 @@ def fetch_and_build_snapshot(
             models_dev_metadata = fut_models_dev.result()
             aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
-        all_plan_pricing = {
-            p: parse_go_pricing(docs_text, plan=p) for p in ("go", "go-plus", "go-teams")
-        }
-        pricing = all_plan_pricing.get(plan, all_plan_pricing["go"])
+        all_plan_pricing = {}
+        for p in ("go", "go-plus", "go-teams"):
+            parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
+            if parsed:
+                all_plan_pricing[p] = parsed
+        pricing = all_plan_pricing.get(plan) or parse_go_pricing(docs_text, plan=plan)
 
-        if not aa_benchmarks and not aa_key and use_reference_benchmarks:
+        if not aa_benchmarks and use_reference_benchmarks:
             ref_snap = load_reference_snapshot()
             if ref_snap:
-                aa_benchmarks = {}
-                for m in ref_snap.models:
-                    if m.aa_iq is not None or m.aa_coding is not None or m.speed_tps is not None:
-                        entry = {
-                            "iq": m.aa_iq,
-                            "coding": m.aa_coding,
-                            "tps": m.speed_tps,
-                        }
-                        if m.id:
-                            aa_benchmarks[m.id] = entry
-                            norm_id = norm_name(m.id)
-                            if norm_id:
-                                aa_benchmarks[norm_id] = entry
-                        if m.name:
-                            norm_n = norm_name(m.name)
-                            if norm_n:
-                                aa_benchmarks[norm_n] = entry
+                aa_benchmarks = _benchmarks_from_snapshot(ref_snap)
 
         return create_snapshot(
             models,
