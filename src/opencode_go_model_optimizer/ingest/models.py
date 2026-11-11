@@ -40,6 +40,28 @@ class Privacy(BaseModel):
     agreement_valid_until: str | None = None  # ISO date
 
 
+class RequestEstimate(BaseModel):
+    """Docs-published request estimates for one model on one plan (inf = unlimited)."""
+
+    per_5h: float = 0.0
+    per_week: float = 0.0
+    per_month: float = 0.0
+
+    @field_validator("per_5h", "per_week", "per_month", mode="before")
+    @classmethod
+    def _parse_count(cls, value: Any) -> float:
+        if isinstance(value, str) and value.strip().lower() in ("unlimited", "inf", "infinity"):
+            return float("inf")
+        try:
+            return float(value)
+        except TypeError, ValueError:
+            return 0.0
+
+    @field_serializer("per_5h", "per_week", "per_month", when_used="json")
+    def _serialize_count(self, value: float) -> float | str:
+        return "unlimited" if math.isinf(value) else value
+
+
 class NormalizedModel(BaseModel):
     """Unified representation of a model in the OpenCode Go catalog."""
 
@@ -55,6 +77,7 @@ class NormalizedModel(BaseModel):
     plan_allowances: dict[str, float] = Field(default_factory=dict)
     multipliers: list[PriceMultiplier] = Field(default_factory=list)
     privacy: Privacy | None = None
+    request_estimates: dict[str, RequestEstimate] = Field(default_factory=dict)
 
     # Benchmark metrics (used in pareto mode)
     aa_iq: float | None = None
@@ -75,8 +98,20 @@ class NormalizedModel(BaseModel):
     is_pareto: bool | None = None
     composite_burn_pct: float | None = None
 
+    # Active plan's request estimate, set by apply_plan (not serialized).
+    _request_estimate: RequestEstimate | None = PrivateAttr(default=None)
+
     # Effective multiplier applied to ``cost`` for this run (not serialized).
     _price_multiplier: float | None = PrivateAttr(default=None)
+
+    @property
+    def request_estimate(self) -> RequestEstimate | None:
+        """Request estimate for the plan last applied with ``apply_plan``, if published."""
+        return self._request_estimate
+
+    @request_estimate.setter
+    def request_estimate(self, value: RequestEstimate | None) -> None:
+        self._request_estimate = value
 
     @property
     def price_multiplier(self) -> float | None:

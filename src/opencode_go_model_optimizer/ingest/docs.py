@@ -158,6 +158,40 @@ def parse_go_pricing(
     return pricing_by_norm_name
 
 
+_COUNT_RE = re.compile(r"[0-9][0-9,]*(?:\.[0-9]+)?")
+
+
+def _parse_count(cell: str) -> float | None:
+    """Parse '6,320' to a float and 'Unlimited' to inf; None when unparseable."""
+    if "unlimited" in cell.lower():
+        return float("inf")
+    match = _COUNT_RE.search(cell)
+    return float(match.group(0).replace(",", "")) if match else None
+
+
+def parse_request_estimates(mdx: str) -> dict[str, dict[str, dict[str, float]]]:
+    """Parse `<PlanTabs id="go-requests">` into {plan: {display name: estimate dict}}.
+
+    Columns are `Model | Requests per 5 hours | Requests per week | Requests per month`.
+    Plans with no parseable rows are omitted.
+    """
+    result: dict[str, dict[str, dict[str, float]]] = {}
+    for plan in ("go", "go-plus", "go-teams"):
+        section = extract_plan_section(mdx, plan_id="go-requests", slot=plan)
+        rows: dict[str, dict[str, float]] = {}
+        for cells in parse_table_rows(section):
+            if len(cells) < 4:
+                continue
+            name = _TAG_RE.sub(" ", cells[0]).strip()
+            counts = [_parse_count(c) for c in cells[1:4]]
+            if not name or any(c is None for c in counts):
+                continue
+            rows[name] = dict(zip(("per_5h", "per_week", "per_month"), counts, strict=True))  # type: ignore[arg-type]
+        if rows:
+            result[plan] = rows
+    return result
+
+
 def parse_endpoints_table(mdx: str) -> dict[str, str]:
     """Parse the `## Endpoints` table into {display name: model id}.
 

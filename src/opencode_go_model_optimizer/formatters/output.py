@@ -7,15 +7,32 @@ from typing import Any
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import SnapshotDiff
-from opencode_go_model_optimizer.engine.pareto import compute_quota_burn_pct, compute_turn_cost
+from opencode_go_model_optimizer.engine.pareto import (
+    compute_burn_pct,
+    compute_turn_cost,
+    resolve_burn_basis,
+)
 from opencode_go_model_optimizer.engine.pricing import next_price_change
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
-def _burn_basis(criteria: SelectionCriteria | None) -> tuple[str, tuple[int, int, int] | None]:
+def _burn_basis(
+    criteria: SelectionCriteria | None,
+) -> tuple[str, tuple[int, int, int] | None, str]:
     c = criteria or SelectionCriteria()
-    return c.profile, c.token_mix
+    return c.profile, c.token_mix, c.burn_basis
+
+
+def _count(value: float) -> float | int | str:
+    return "unlimited" if math.isinf(value) else int(value) if value.is_integer() else value
+
+
+def _requests_cell(m: NormalizedModel) -> str:
+    est = m.request_estimate
+    if est is None:
+        return "-"
+    return "Unlimited" if math.isinf(est.per_month) else f"{est.per_month:,.0f}"
 
 
 def _next_change(m: NormalizedModel, criteria: SelectionCriteria | None) -> dict[str, Any] | None:
@@ -65,7 +82,7 @@ def explain_tiers(
     criteria: SelectionCriteria | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build detailed per-tier metrics and selection rationale."""
-    profile, token_mix = _burn_basis(criteria)
+    profile, token_mix, basis = _burn_basis(criteria)
     model_map = {m.full_id: m for m in models}
     model_map.update({m.id: m for m in models})
 
@@ -81,7 +98,7 @@ def explain_tiers(
             quota_burn = (
                 m.composite_burn_pct
                 if m.composite_burn_pct is not None
-                else compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
+                else compute_burn_pct(m, profile, token_mix, basis)
             )
             explanations[tier] = {
                 "model_id": full_id,
@@ -98,6 +115,13 @@ def explain_tiers(
                 "is_pareto": m.is_pareto,
                 "context": m.limit.context,
             }
+            est = m.request_estimate
+            explanations[tier]["requests_per_5h"] = _count(est.per_5h) if est else None
+            explanations[tier]["requests_per_month"] = _count(est.per_month) if est else None
+            used = resolve_burn_basis(basis, profile, token_mix)
+            if used == "estimate" and (est is None or est.per_month <= 0):
+                used = "tokens"
+            explanations[tier]["burn_basis_used"] = used
             if m.privacy is not None:
                 explanations[tier]["privacy"] = m.privacy.model_dump(mode="json")
             if m.price_multiplier is not None:
@@ -164,7 +188,7 @@ def format_select_table(
     criteria: SelectionCriteria | None = None,
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
-    profile, token_mix = _burn_basis(criteria)
+    profile, token_mix, basis = _burn_basis(criteria)
     model_map = {m.full_id: m for m in models}
     model_map.update({m.id: m for m in models})
 
@@ -208,7 +232,7 @@ def format_select_table(
                 burn_val = (
                     m.composite_burn_pct
                     if m.composite_burn_pct is not None
-                    else compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
+                    else compute_burn_pct(m, profile, token_mix, basis)
                 )
                 burn_str = f"{burn_val:.1f}%" if burn_val is not None else "-"
                 turn_cost = compute_turn_cost(m, profile=profile, token_mix=token_mix)
@@ -319,6 +343,11 @@ def format_rank_table(
                 ]
             )
 
+    if any(m.request_estimate is not None for m in ranked_models):
+        headers.append("Req/month")
+        for row, m in zip(rows, ranked_models, strict=True):
+            row.append(_requests_cell(m))
+
     if any(m.privacy is not None for m in ranked_models):
         headers.append("Privacy")
         for row, m in zip(rows, ranked_models, strict=True):
@@ -352,6 +381,10 @@ def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
         item = m.model_dump(mode="json", exclude_none=True)
         if not item.get("multipliers"):
             item.pop("multipliers", None)
+        if not item.get("request_estimates"):
+            item.pop("request_estimates", None)
+        if m.request_estimate is not None:
+            item["requests_per_month"] = _count(m.request_estimate.per_month)
         if m.price_multiplier is not None:
             item["price_multiplier"] = round(m.price_multiplier, 4)
         data.append(item)

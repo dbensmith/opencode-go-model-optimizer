@@ -20,11 +20,13 @@ from opencode_go_model_optimizer.ingest.docs import (
     parse_endpoints_table,
     parse_go_pricing,
     parse_privacy,
+    parse_request_estimates,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Privacy,
+    RequestEstimate,
     Snapshot,
     SnapshotMetadata,
 )
@@ -39,7 +41,14 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
             m.monthly_allowance = m.plan_allowances[norm_plan]
         elif plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[plan]
+        m.request_estimate = estimate_for(m, norm_plan)
     return models
+
+
+def estimate_for(m: NormalizedModel, plan: str) -> RequestEstimate | None:
+    """Return the docs request estimate for a model on a plan (None if unpublished)."""
+    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
+    return m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
 
 
 def _to_float(value: Any) -> float | None:
@@ -257,6 +266,37 @@ def merge_privacy(
         warnings.append(f"privacy agreement date {until} is in the past; docs may be stale")
 
 
+def merge_request_estimates(
+    models: list[NormalizedModel],
+    estimates: dict[str, dict[str, dict[str, float]]],
+    endpoints: dict[str, str] | None = None,
+    warnings: list[str] | None = None,
+) -> None:
+    """Attach docs request estimates per plan, resolving names the same way pricing does.
+
+    `warnings`, if given, receives a message listing active paid models with no estimate.
+    """
+    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
+    endpoint_ids = set(id_by_norm_name.values())
+    by_plan = {
+        plan: {norm_name(n): row for n, row in rows.items() if norm_name(n)}
+        for plan, rows in estimates.items()
+    }
+    missing: list[str] = []
+    for m in models:
+        for plan, by_norm in by_plan.items():
+            found = _lookup_pricing(m, by_norm, id_by_norm_name, endpoint_ids)
+            if found:
+                m.request_estimates[plan] = RequestEstimate(**found[1])
+        if m.status == "active" and not m.is_zero_cost and not m.request_estimates:
+            missing.append(m.id)
+    if warnings is not None and missing:
+        warnings.append(
+            f"{len(missing)} active paid model(s) have no docs request estimate "
+            "(quota burn falls back to synthetic token costs): " + ", ".join(missing)
+        )
+
+
 def create_snapshot(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
@@ -270,6 +310,7 @@ def create_snapshot(
     benchmark_source: str = "none",
     warnings: list[str] | None = None,
     privacy: dict[str, dict[str, Any]] | None = None,
+    request_estimates: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
     all_warnings = list(warnings or [])
@@ -306,6 +347,15 @@ def create_snapshot(
             )
         else:
             merge_privacy(merged_models, privacy, endpoints, all_warnings, now)
+
+    if request_estimates is not None:
+        if not request_estimates:
+            all_warnings.append(
+                "no rows parsed from the docs go-requests table; "
+                "quota burn uses synthetic token costs"
+            )
+        else:
+            merge_request_estimates(merged_models, request_estimates, endpoints, all_warnings)
 
     return Snapshot(
         schema_version=1,
@@ -469,6 +519,7 @@ def fetch_and_build_snapshot(
             models_dev_metadata=models_dev_metadata,
             endpoints=parse_endpoints_table(docs_text),
             privacy=parse_privacy(docs_text),
+            request_estimates=parse_request_estimates(docs_text),
             benchmark_source=benchmark_source,
             warnings=warnings,
         )

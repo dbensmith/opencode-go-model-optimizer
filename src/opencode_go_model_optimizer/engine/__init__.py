@@ -15,6 +15,7 @@ from opencode_go_model_optimizer.engine.diff import (
 )
 from opencode_go_model_optimizer.engine.pareto import (
     WORKLOAD_PROFILES,
+    compute_burn_pct,
     compute_quota_burn_pct,
     compute_turn_cost,
     effective_quality,
@@ -36,6 +37,7 @@ __all__ = [
     "SelectionCriteria",
     "SnapshotDiff",
     "TierSelection",
+    "compute_burn_pct",
     "compute_quota_burn_pct",
     "compute_turn_cost",
     "diff_snapshots",
