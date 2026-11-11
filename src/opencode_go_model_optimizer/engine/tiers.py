@@ -1,7 +1,5 @@
 """Tier allocator mapping models to industry-standard capability tiers."""
 
-from __future__ import annotations
-
 import math
 
 from opencode_go_model_optimizer.engine.allowance import (
@@ -154,7 +152,9 @@ def _pareto_clusters(
                 tie_break_key(m),
             ),
         )
-        for tier, cluster in zip(_PAID_TIERS, fisher_jenks_3_clusters(pool, key=quality))
+        for tier, cluster in zip(
+            _PAID_TIERS, fisher_jenks_3_clusters(pool, key=quality), strict=True
+        )
     }
 
 
@@ -163,7 +163,7 @@ def _allowance_clusters(paid: list[NormalizedModel]) -> dict[str, list[Normalize
     if not paid:
         return {t: [] for t in _PAID_TIERS}
     clusters = fisher_jenks_3_clusters(paid, key=lambda m: math.log1p(m.cost.output))
-    return {tier: rank_paid_models(c) for tier, c in zip(_PAID_TIERS, clusters)}
+    return {tier: rank_paid_models(c) for tier, c in zip(_PAID_TIERS, clusters, strict=True)}
 
 
 def _allocate_allowance(

@@ -1,7 +1,5 @@
 """Data models for OpenCode Go Model Optimizer."""
 
-from __future__ import annotations
-
 import math
 from typing import Any
 
@@ -70,7 +68,7 @@ class NormalizedModel(BaseModel):
         try:
             val = float(value)
             return val
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     @field_serializer("monthly_allowance", when_used="json")

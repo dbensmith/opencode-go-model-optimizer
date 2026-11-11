@@ -1,7 +1,5 @@
 """Snapshot drift diffing for catalog and tier assignment changes."""
 
-from __future__ import annotations
-
 import math
 from typing import Any, Literal
 
