@@ -23,6 +23,14 @@ PRICING_FIELDS = (
 
 CAPABILITY_FIELDS = ("context", "max_output", "aa_iq", "aa_coding", "speed_tps")
 
+PRIVACY_FIELDS = (
+    "trains_on_data",
+    "retention_days",
+    "zdr",
+    "requires_global_region",
+    "agreement_valid_until",
+)
+
 
 class ModelChange(BaseModel):
     """A single catalog change for one model."""
@@ -43,6 +51,7 @@ class SnapshotDiff(BaseModel):
     status_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
     pricing_changes: dict[str, dict[str, tuple[Any, Any]]] = Field(default_factory=dict)
     capability_changes: dict[str, dict[str, tuple[Any, Any]]] = Field(default_factory=dict)
+    privacy_changes: dict[str, dict[str, tuple[Any, Any]]] = Field(default_factory=dict)
     tier_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
     changes: list[ModelChange] = Field(default_factory=list)
 
@@ -54,6 +63,7 @@ class SnapshotDiff(BaseModel):
             or self.status_changes
             or self.pricing_changes
             or self.capability_changes
+            or self.privacy_changes
             or self.tier_changes
         )
 
@@ -88,6 +98,13 @@ def _capabilities(m: NormalizedModel) -> dict[str, Any]:
     }
 
 
+def _privacy(m: NormalizedModel) -> dict[str, Any]:
+    """Extract comparable privacy fields (without the free-text note)."""
+    if m.privacy is None:
+        return dict.fromkeys(PRIVACY_FIELDS)
+    return {f: getattr(m.privacy, f) for f in PRIVACY_FIELDS}
+
+
 def _prepare_models(snapshot: Snapshot, plan: str) -> list[NormalizedModel]:
     """Return deep-copied models with the requested plan allowances applied."""
     models = [m.model_copy(deep=True) for m in snapshot.models]
@@ -112,6 +129,7 @@ def diff_snapshots(
     status_changes: dict[str, dict[str, str]] = {}
     pricing_changes: dict[str, dict[str, tuple[Any, Any]]] = {}
     capability_changes: dict[str, dict[str, tuple[Any, Any]]] = {}
+    privacy_changes: dict[str, dict[str, tuple[Any, Any]]] = {}
     changes_by_id: dict[str, ModelChange] = {}
 
     def note(model_id: str, change_type: ChangeType, changes: dict[str, tuple[Any, Any]]) -> None:
@@ -156,6 +174,17 @@ def diff_snapshots(
             capability_changes[model_id] = cap_changes
             note(model_id, "modified", cap_changes)
 
+        old_priv = _privacy(old_model)
+        new_priv = _privacy(new_model)
+        priv_changes = {
+            field: (old_priv[field], new_priv[field])
+            for field in PRIVACY_FIELDS
+            if old_priv[field] != new_priv[field]
+        }
+        if priv_changes:
+            privacy_changes[model_id] = priv_changes
+            note(model_id, "modified", priv_changes)
+
         if old_model.status != new_model.status:
             status_changes[model_id] = {"old": old_model.status, "new": new_model.status}
             change_type: ChangeType = (
@@ -182,6 +211,7 @@ def diff_snapshots(
         status_changes=status_changes,
         pricing_changes=pricing_changes,
         capability_changes=capability_changes,
+        privacy_changes=privacy_changes,
         tier_changes=tier_changes,
         changes=[changes_by_id[model_id] for model_id in sorted(changes_by_id)],
     )

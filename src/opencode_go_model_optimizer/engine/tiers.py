@@ -8,7 +8,7 @@ from opencode_go_model_optimizer.engine.allowance import (
     rank_paid_models,
     tie_break_key,
 )
-from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.pareto import (
     compute_quota_burn_pct,
     effective_quality,
@@ -34,7 +34,8 @@ def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
 
 
 def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
-    """Apply context, output, output-cost, and quota-burn constraints."""
+    """Apply privacy/region, context, output, output-cost, and quota-burn constraints."""
+    models = [m for m in models if passes_privacy(m, c)]
     if c.min_context > 0:
         models = [m for m in models if m.limit.context >= c.min_context]
     if c.min_output > 0:

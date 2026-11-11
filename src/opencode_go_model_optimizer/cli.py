@@ -9,7 +9,7 @@ from typing import Any, NamedTuple
 
 import httpx
 
-from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.engine.tiers import rank_catalog, resolve_mode, select_tiers
 from opencode_go_model_optimizer.formatters.output import (
@@ -252,6 +252,37 @@ _FILTER_PARENT = _parent(
             "help": "Exclude contributor-tier models from free tier selection",
         },
     ),
+    (
+        ("--allow-global-region",),
+        {
+            "action": "store_true",
+            "help": "Allow models that require Global regions in workspace privacy settings "
+            "(excluded by default)",
+        },
+    ),
+    (
+        ("--no-training",),
+        {
+            "action": "store_true",
+            "help": "Exclude models whose provider trains on your prompts",
+        },
+    ),
+    (
+        ("--max-retention-days",),
+        {
+            "type": int,
+            "metavar": "N",
+            "default": None,
+            "help": "Exclude models retaining data longer than N days (unknown retention fails)",
+        },
+    ),
+    (
+        ("--require-zdr",),
+        {
+            "action": "store_true",
+            "help": "Only allow zero-data-retention models (unknown fails)",
+        },
+    ),
 )
 
 
@@ -460,6 +491,10 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
         skip_models=frozenset(args.skip),
         allow_contributor=not args.no_contributor,
+        allow_global_region=args.allow_global_region,
+        allow_training=not args.no_training,
+        max_retention_days=args.max_retention_days,
+        require_zdr=args.require_zdr,
         min_context=args.min_context,
         min_output=args.min_output,
         max_output_cost=args.max_output_cost,
@@ -488,13 +523,18 @@ def handle_select(args: argparse.Namespace) -> int:
         and m.full_id not in criteria.skip_models
         and m.limit.context >= args.min_context
         and m.limit.output >= args.min_output
+        and passes_privacy(m, criteria)
         for ref in (m.id, m.full_id)
+    }
+    privacy_excluded = {
+        ref for m in models if not passes_privacy(m, criteria) for ref in (m.id, m.full_id)
     }
     for tier, model_id in criteria.preferred_tiers.items():
         if model_id not in candidate_ids:
+            reason = "excluded by privacy filters" if model_id in privacy_excluded else "not found"
             print(
                 f"{_PROG}: warning: preferred model '{model_id}' for tier '{tier}' "
-                "not found; ignoring",
+                f"{reason}; ignoring",
                 file=sys.stderr,
             )
     profile = criteria.profile

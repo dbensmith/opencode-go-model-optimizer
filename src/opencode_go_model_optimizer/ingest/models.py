@@ -29,6 +29,17 @@ class ModelLimit(BaseModel):
     output: int = 0
 
 
+class Privacy(BaseModel):
+    """Data-handling and region requirements from the docs Privacy section."""
+
+    trains_on_data: bool | None = None
+    retention_days: int | None = None  # None: "Not ZDR" or unknown
+    zdr: bool | None = None  # True only for "0 days"
+    requires_global_region: bool = False
+    note: str | None = None
+    agreement_valid_until: str | None = None  # ISO date
+
+
 class NormalizedModel(BaseModel):
     """Unified representation of a model in the OpenCode Go catalog."""
 
@@ -43,6 +54,7 @@ class NormalizedModel(BaseModel):
     monthly_allowance: float | None = None  # USD limit (e.g. 15.0, 60.0, float('inf'))
     plan_allowances: dict[str, float] = Field(default_factory=dict)
     multipliers: list[PriceMultiplier] = Field(default_factory=list)
+    privacy: Privacy | None = None
 
     # Benchmark metrics (used in pareto mode)
     aa_iq: float | None = None
