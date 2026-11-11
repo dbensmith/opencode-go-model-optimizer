@@ -349,6 +349,12 @@ class LoadedSnapshot(NamedTuple):
     source: str
 
 
+def _print_snapshot_warnings(snap: Snapshot) -> None:
+    """Print each ingest warning to stderr without failing the command."""
+    for warning in snap.warnings:
+        print(f"{_PROG}: warning: {warning}", file=sys.stderr)
+
+
 def _load_or_fetch_snapshot(
     snapshot_path: str | None = None,
     plan: str = "go",
@@ -365,6 +371,7 @@ def _load_or_fetch_snapshot(
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
+        _print_snapshot_warnings(snap)
         if cache_ttl > 0:
             save_cached_snapshot(snap)
         return LoadedSnapshot(snap, "live")
@@ -484,7 +491,11 @@ def handle_select(args: argparse.Namespace) -> int:
             explanations=explanations,
             profile=profile,
             fallbacks=fallbacks,
-            snapshot_info={"source": loaded.source, "fetched_at": snap.fetched_at},
+            snapshot_info={
+                "source": loaded.source,
+                "fetched_at": snap.fetched_at,
+                "benchmark_source": snap.metadata.benchmark_source,
+            },
         )
     elif args.format == "table":
         out = format_select_table(
@@ -587,6 +598,7 @@ def handle_fetch(args: argparse.Namespace) -> int:
         return 0
 
     snap = fetch_and_build_snapshot(plan=target_plan)
+    _print_snapshot_warnings(snap)
     save_snapshot(snap, args.out)
     print(
         f"opencode-go-model-optimizer: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",

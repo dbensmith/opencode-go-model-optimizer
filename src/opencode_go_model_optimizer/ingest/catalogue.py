@@ -160,30 +160,46 @@ def parse_catalogue_http(data: dict[str, Any] | list[Any]) -> list[NormalizedMod
     return models
 
 
+def _fetch_catalogue_cli() -> list[NormalizedModel]:
+    """Fallback: read the catalogue from the local `opencode` CLI, or [] on any failure."""
+    if not shutil.which("opencode"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["opencode", "models", "--verbose", "opencode-go"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.SubprocessError, OSError:
+        return []
+    if proc.returncode == 0 and proc.stdout.strip():
+        return parse_catalogue_cli(proc.stdout)
+    return []
+
+
 def fetch_catalogue(
     http_url: str = DEFAULT_MODELS_HTTP_URL,
     client: httpx.Client | None = None,
 ) -> list[NormalizedModel]:
-    """Fetch model catalogue via local CLI if available, otherwise direct HTTP."""
-    # 1. Attempt CLI
-    if shutil.which("opencode"):
-        try:
-            proc = subprocess.run(
-                ["opencode", "models", "--verbose", "opencode-go"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                models = parse_catalogue_cli(proc.stdout)
-                if models:
-                    return models
-        except subprocess.SubprocessError, OSError:
-            pass
+    """Fetch the model catalogue via HTTP (primary), falling back to the local CLI.
 
-    # 2. Fallback to direct HTTP
-    with client_scope(client) as http:
-        response = http.get(http_url)
-        response.raise_for_status()
-        return parse_catalogue_http(response.json())
+    The HTTP payload is richer (multipliers, release_date, limit). If HTTP fails and the
+    CLI fallback yields nothing, the original HTTP error is re-raised.
+    """
+    try:
+        with client_scope(client) as http:
+            response = http.get(http_url)
+            response.raise_for_status()
+            models = parse_catalogue_http(response.json())
+        if models:
+            return models
+        http_error: Exception = ValueError("catalogue HTTP response contained no models")
+    except (httpx.HTTPError, ValueError) as exc:
+        http_error = exc
+
+    models = _fetch_catalogue_cli()
+    if models:
+        return models
+    raise http_error

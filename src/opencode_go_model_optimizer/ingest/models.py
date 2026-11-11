@@ -129,6 +129,7 @@ class SnapshotMetadata(BaseModel):
     source_docs: str = ""
     catalogue_count: int = 0
     docs_pricing_count: int = 0
+    benchmark_source: str = "none"  # "aa_live", "reference:<fetched_at>", or "none"
 
 
 class Snapshot(BaseModel):
@@ -139,3 +140,4 @@ class Snapshot(BaseModel):
     plan: str = "go"
     models: list[NormalizedModel] = Field(default_factory=list)
     metadata: SnapshotMetadata = Field(default_factory=SnapshotMetadata)
+    warnings: list[str] = Field(default_factory=list)

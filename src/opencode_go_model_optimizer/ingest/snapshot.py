@@ -14,7 +14,12 @@ from typing import Any
 import httpx
 
 from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
-from opencode_go_model_optimizer.ingest.docs import fetch_docs_mdx, norm_name, parse_go_pricing
+from opencode_go_model_optimizer.ingest.docs import (
+    fetch_docs_mdx,
+    norm_name,
+    parse_endpoints_table,
+    parse_go_pricing,
+)
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, SnapshotMetadata
 from opencode_go_model_optimizer.ingest.models_dev import fetch_models_dev
@@ -93,23 +98,59 @@ def fetch_aa_benchmarks(
         return {}
 
 
+def _lookup_pricing(
+    m: NormalizedModel,
+    pricing_map: dict[str, dict[str, Any]],
+    id_by_norm_name: dict[str, str],
+    endpoint_ids: set[str],
+) -> tuple[str, dict[str, Any]] | None:
+    """Find a pricing row for a model: by endpoint model ID first, then fuzzy names.
+
+    Fuzzy matching is only used when the Endpoints table does not list the model's ID.
+    Returns (pricing key, row) or None.
+    """
+    if m.id in endpoint_ids:
+        for key, row in pricing_map.items():
+            if id_by_norm_name.get(key) == m.id:
+                return key, row
+        return None
+    for key in (norm_name(m.name), norm_name(m.id), m.id, m.name):
+        if pricing_map.get(key):
+            return key, pricing_map[key]
+    return None
+
+
 def merge_docs_pricing(
     models: list[NormalizedModel],
     pricing: dict[str, dict[str, Any]],
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
     all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
+    endpoints: dict[str, str] | None = None,
+    warnings: list[str] | None = None,
 ) -> list[NormalizedModel]:
-    """Merge published monthly allowances and prices into catalog models."""
+    """Merge published monthly allowances and prices into catalog models.
+
+    `endpoints` is the docs Endpoints table (display name -> model ID); pricing rows are
+    matched to catalogue models by ID through it. `warnings`, if given, receives messages
+    about active models without pricing and pricing rows without a model.
+    """
     benchmarks = aa_benchmarks or {}
     external_metadata = models_dev_metadata or {}
+    id_by_norm_name = {norm_name(n): i for n, i in (endpoints or {}).items() if norm_name(n)}
+    endpoint_ids = set(id_by_norm_name.values())
+    used_keys: set[str] = set()
+    unpriced: list[str] = []
     for m in models:
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
 
-        info = (
-            pricing.get(key_name) or pricing.get(key_id) or pricing.get(m.id) or pricing.get(m.name)
-        )
+        found = _lookup_pricing(m, pricing, id_by_norm_name, endpoint_ids)
+        info = found[1] if found else None
+        if found:
+            used_keys.add(found[0])
+        elif m.status == "active":
+            unpriced.append(m.id)
         if info:
             m.monthly_allowance = info["allowance"]
             if m.cost.output == 0.0 and info["output_cost"] > 0:
@@ -124,14 +165,9 @@ def merge_docs_pricing(
 
         if all_plan_pricing:
             for plan_name, plan_map in all_plan_pricing.items():
-                plan_info = (
-                    plan_map.get(key_name)
-                    or plan_map.get(key_id)
-                    or plan_map.get(m.id)
-                    or plan_map.get(m.name)
-                )
-                if plan_info:
-                    m.plan_allowances[plan_name] = plan_info["allowance"]
+                plan_found = _lookup_pricing(m, plan_map, id_by_norm_name, endpoint_ids)
+                if plan_found:
+                    m.plan_allowances[plan_name] = plan_found[1]["allowance"]
         elif m.monthly_allowance is not None and "go" not in m.plan_allowances:
             m.plan_allowances["go"] = m.monthly_allowance
 
@@ -157,6 +193,23 @@ def merge_docs_pricing(
             if m.speed_tps is None:
                 m.speed_tps = bench.get("tps")
 
+    if warnings is not None:
+        if unpriced:
+            warnings.append(
+                f"{len(unpriced)} active catalogue model(s) have no docs pricing match: "
+                + ", ".join(unpriced)
+            )
+        orphans = [
+            str(row.get("raw_name", key))
+            for key, row in pricing.items()
+            if key not in used_keys and isinstance(row, dict)
+        ]
+        if orphans:
+            warnings.append(
+                f"{len(orphans)} docs pricing row(s) matched no catalogue model: "
+                + ", ".join(orphans)
+            )
+
     return models
 
 
@@ -169,14 +222,25 @@ def create_snapshot(
     source_docs: str = "live",
     all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
+    endpoints: dict[str, str] | None = None,
+    benchmark_source: str = "none",
+    warnings: list[str] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
+    all_warnings = list(warnings or [])
+    if not pricing:
+        all_warnings.append(
+            "no rows parsed from the go-pricing table in the docs; "
+            "the docs format may have changed and no pricing was applied"
+        )
     merged_models = merge_docs_pricing(
         models,
         pricing,
         aa_benchmarks=aa_benchmarks,
         all_plan_pricing=all_plan_pricing,
         models_dev_metadata=models_dev_metadata,
+        endpoints=endpoints,
+        warnings=all_warnings if pricing else None,
     )
     now_utc = datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -190,7 +254,9 @@ def create_snapshot(
             source_docs=source_docs,
             catalogue_count=len(models),
             docs_pricing_count=len(pricing),
+            benchmark_source=benchmark_source,
         ),
+        warnings=all_warnings,
     )
 
 
@@ -317,10 +383,19 @@ def fetch_and_build_snapshot(
                 all_plan_pricing[p] = parsed
         pricing = all_plan_pricing.get(plan) or parse_go_pricing(docs_text, plan=plan)
 
+        warnings: list[str] = []
+        benchmark_source = "aa_live" if aa_benchmarks else "none"
         if not aa_benchmarks and use_reference_benchmarks:
             ref_snap = load_reference_snapshot()
             if ref_snap:
                 aa_benchmarks = _benchmarks_from_snapshot(ref_snap)
+                if aa_benchmarks:
+                    benchmark_source = f"reference:{ref_snap.fetched_at}"
+                    warnings.append(
+                        "benchmarks (aa_iq/aa_coding/speed_tps) come from the bundled reference "
+                        f"snapshot ({ref_snap.fetched_at}), not live Artificial Analysis data; "
+                        "set AA_API_KEY for live values"
+                    )
 
         return create_snapshot(
             models,
@@ -329,6 +404,9 @@ def fetch_and_build_snapshot(
             aa_benchmarks=aa_benchmarks,
             all_plan_pricing=all_plan_pricing,
             models_dev_metadata=models_dev_metadata,
+            endpoints=parse_endpoints_table(docs_text),
+            benchmark_source=benchmark_source,
+            warnings=warnings,
         )
 
 
