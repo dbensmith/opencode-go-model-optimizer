@@ -13,14 +13,15 @@ from pathlib import Path
 import httpx
 
 
-def _package_version() -> str:
+def package_version() -> str:
+    """Return the installed package version, or a placeholder when not installed."""
     try:
         return version("opencode-go-model-optimizer")
     except PackageNotFoundError:
         return "0+unknown"
 
 
-USER_AGENT = f"opencode-go-model-optimizer/{_package_version()}"
+USER_AGENT = f"opencode-go-model-optimizer/{package_version()}"
 
 
 @contextmanager

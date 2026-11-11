@@ -6,7 +6,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 
@@ -28,7 +28,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_json,
     format_select_table,
 )
-from opencode_go_model_optimizer.ingest.http import atomic_write_text
+from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
@@ -43,6 +43,14 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 
 _PROG = "opencode-go-model-optimizer"
 _TIERS = ("heavy", "balanced", "light", "free")
+_EXIT_CODES = """\
+exit codes:
+  0    success
+  1    runtime error
+  2    usage error, or diff --fail-on-change detected changes
+  3    select --strict found an empty tier
+  130  interrupted
+"""
 
 
 def _parse_token_mix(value: str) -> tuple[int, int, int]:
@@ -224,7 +232,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="opencode-go-model-optimizer",
         description="Dynamic model tiering and Pareto efficiency optimizer for OpenCode Go",
+        epilog=_EXIT_CODES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"{_PROG} {package_version()}")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     select_parser = subparsers.add_parser(
@@ -250,6 +261,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=1,
         help="Number of ordered candidate models per tier for fallback chains (default: 1)",
+    )
+    select_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 3 (after writing output) when any tier has no model",
     )
     select_parser.add_argument(
         "--explain",
@@ -328,25 +344,32 @@ def _effective_plan(snap_plan: str, requested_plan: str, models: list[Normalized
     return snap_plan
 
 
+class LoadedSnapshot(NamedTuple):
+    """A snapshot plus where it came from: file, cache, live, or reference."""
+
+    snapshot: Snapshot
+    source: str
+
+
 def _load_or_fetch_snapshot(
     snapshot_path: str | None = None,
     plan: str = "go",
     cache_ttl: int = 0,
-) -> Snapshot:
+) -> LoadedSnapshot:
     """Retrieve a snapshot from a file if provided, otherwise fetch/cache live."""
     if snapshot_path:
-        return load_snapshot(snapshot_path)
+        return LoadedSnapshot(load_snapshot(snapshot_path), "file")
 
     if cache_ttl > 0:
         cached = load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)
         if cached:
-            return cached
+            return LoadedSnapshot(cached, "cache")
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
         if cache_ttl > 0:
             save_cached_snapshot(snap)
-        return snap
+        return LoadedSnapshot(snap, "live")
     except (httpx.HTTPError, OSError, ValueError) as exc:
         ref_snap = load_reference_snapshot()
         if ref_snap:
@@ -355,7 +378,7 @@ def _load_or_fetch_snapshot(
                 f"using bundled reference snapshot from {ref_snap.fetched_at}",
                 file=sys.stderr,
             )
-            return ref_snap
+            return LoadedSnapshot(ref_snap, "reference")
         raise
 
 
@@ -365,7 +388,7 @@ def _load_or_fetch_models(
     cache_ttl: int = 0,
 ) -> tuple[list[NormalizedModel], str]:
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
-    snap = _load_or_fetch_snapshot(snapshot_path, plan=plan, cache_ttl=cache_ttl)
+    snap = _load_or_fetch_snapshot(snapshot_path, plan=plan, cache_ttl=cache_ttl).snapshot
     return apply_plan(snap.models, plan), _effective_plan(snap.plan, plan, snap.models)
 
 
@@ -396,7 +419,10 @@ def _parse_preferred_tiers(prefer_list: list[str] | None) -> dict[str, str]:
 
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
-    models, plan = _load_or_fetch_models(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    snap = loaded.snapshot
+    models = apply_plan(snap.models, args.plan)
+    plan = _effective_plan(snap.plan, args.plan, snap.models)
     mode = resolve_mode(args.mode, models)
 
     skip_models = set(args.skip)
@@ -458,6 +484,7 @@ def handle_select(args: argparse.Namespace) -> int:
             explanations=explanations,
             profile=profile,
             fallbacks=fallbacks,
+            snapshot_info={"source": loaded.source, "fetched_at": snap.fetched_at},
         )
     elif args.format == "table":
         out = format_select_table(
@@ -477,6 +504,13 @@ def handle_select(args: argparse.Namespace) -> int:
         out = format_select_compact(tiers)
 
     _write_output(out, args.output)
+    empty = [t for t in _TIERS if not tiers.get(t)]
+    if args.strict and empty:
+        print(
+            f"{_PROG}: error: no model available for tier(s): {', '.join(empty)}",
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 
@@ -523,7 +557,9 @@ def handle_diff(args: argparse.Namespace) -> int:
             )
             return 1
 
-    new_snap = _load_or_fetch_snapshot(args.new, plan=target_plan, cache_ttl=_cache_ttl(args))
+    new_snap = _load_or_fetch_snapshot(
+        args.new, plan=target_plan, cache_ttl=_cache_ttl(args)
+    ).snapshot
     diff = diff_snapshots(
         old_snap,
         new_snap,
