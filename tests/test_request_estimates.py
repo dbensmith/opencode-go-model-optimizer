@@ -34,8 +34,8 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 
 FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "live_go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "live_oc_models.json").read_text(encoding="utf-8"))
+MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
+OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
 
 
 def _m(mid="m", per_month=None, out=10.0, allowance=15.0, plan="go", **kw):
@@ -53,33 +53,33 @@ def _m(mid="m", per_month=None, out=10.0, allowance=15.0, plan="go", **kw):
     return apply_plan([m], plan)[0]
 
 
-def test_parse_live_fixture():
+def test_parse_fixture():
     est = parse_request_estimates(MDX)
     assert set(est) == {"go", "go-plus", "go-teams"}
-    assert est["go"]["GLM-5.3-Flash"] == {
-        "per_5h": 6320.0,
-        "per_week": 15790.0,
-        "per_month": 31580.0,
+    assert est["go"]["Gamma-Flash"] == {
+        "per_5h": 1372.0,
+        "per_week": 3430.0,
+        "per_month": 6861.0,
     }
-    assert est["go"]["Beam Free"]["per_month"] == float("inf")
-    assert est["go-plus"]["GLM-5.3-Flash"]["per_month"] == 94740.0
-    assert est["go-plus"]["Beam Free"]["per_5h"] == float("inf")
+    assert est["go"]["Epsilon Free"]["per_month"] == float("inf")
+    assert est["go-plus"]["Gamma-Flash"]["per_month"] == 24671.0
+    assert est["go-plus"]["Epsilon Free"]["per_5h"] == float("inf")
     assert parse_request_estimates("nothing") == {}
 
 
-def test_merge_into_live_catalogue_and_warning():
+def test_merge_into_catalogue_and_warning():
     models = parse_catalogue_http(OC)
     warnings: list[str] = []
     merge_request_estimates(
         models, parse_request_estimates(MDX), parse_endpoints_table(MDX), warnings
     )
     by_id = {m.id: m for m in models}
-    assert by_id["glm-5.3-flash"].request_estimates["go"].per_month == 31580.0
-    assert by_id["glm-5.3-flash"].request_estimates["go-teams"].per_month > 0
+    assert by_id["gamma-flash"].request_estimates["go"].per_month == 6861.0
+    assert by_id["gamma-flash"].request_estimates["go-teams"].per_month > 0
     assert not any("no docs request estimate" in w for w in warnings)
-    assert estimate_for(by_id["glm-5.3-flash"], "plus").per_month == 94740.0
+    assert estimate_for(by_id["gamma-flash"], "plus").per_month == 24671.0
     apply_plan(models, "go-plus")
-    assert by_id["glm-5.3-flash"].request_estimate.per_month == 94740.0
+    assert by_id["gamma-flash"].request_estimate.per_month == 24671.0
 
     orphan = NormalizedModel(id="x", name="X", cost=TokenCost(input=1, output=1))
     warnings = []
@@ -100,11 +100,11 @@ def test_create_snapshot_roundtrip_serializes_unlimited(tmp_path):
     raw = path.read_text()
     assert '"unlimited"' in raw
     loaded = Snapshot.model_validate_json(raw)
-    beam = next(m for m in loaded.models if m.request_estimates)
+    epsilon = next(m for m in loaded.models if m.request_estimates)
     assert any(
         e.per_month == float("inf") for m in loaded.models for e in m.request_estimates.values()
     )
-    assert beam
+    assert epsilon
 
 
 def test_old_snapshot_without_estimates_loads():

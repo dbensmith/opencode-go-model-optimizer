@@ -196,7 +196,10 @@ class SnapshotMetadata(BaseModel):
     source_docs: str = ""
     catalogue_count: int = 0
     docs_pricing_count: int = 0
-    benchmark_source: str = "none"  # "aa_live", "reference:<fetched_at>", or "none"
+    benchmark_source: str = "none"  # "aa_live" or "none"
+    # Provenance per fetched source (catalogue, docs, models_dev): url, status, fetched_at,
+    # sha256 and bytes of the raw body. Digests only; bodies are never stored.
+    sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class Snapshot(BaseModel):

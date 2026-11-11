@@ -2,34 +2,123 @@
   "object": "list",
   "data": [
     {
-      "id": "qwen3.8-max",
-      "name": "Qwen3.8 Max",
+      "id": "alpha-max",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Alpha Max",
+      "type": "chat",
+      "family": "alpha",
+      "release_date": "2026-08-20",
+      "last_updated": "2026-08-20",
       "status": "active",
-      "release_date": "2026-09-15",
       "limit": {
-        "context": 1000000,
-        "output": 32768
+        "context": 512000,
+        "output": 40000
       },
       "cost": {
         "text": {
           "input": {
-            "price": 2.0,
+            "price": 3.0,
             "cache": {
-              "read": 0.25,
-              "write": 2.5
+              "read": 0.4,
+              "write": 3.5
             }
           },
           "output": {
-            "price": 6.0
+            "price": 9.0
           }
         }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
       }
     },
     {
-      "id": "deepseek-v4.1-flash",
-      "name": "DeepSeek V4.1 Flash",
+      "id": "theta-pro",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Theta Pro",
+      "type": "chat",
+      "family": "theta",
+      "release_date": "2026-09-12",
+      "last_updated": "2026-09-12",
       "status": "active",
-      "release_date": "2026-09-10",
+      "limit": {
+        "context": 1000000,
+        "output": 65000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 6.0,
+            "cache": {
+              "read": 0.6
+            }
+          },
+          "output": {
+            "price": 18.0
+          }
+        },
+        "multipliers": [
+          {
+            "when": {
+              "date": {
+                "gte": "2026-12-01"
+              }
+            },
+            "factor": 2
+          }
+        ]
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "zeta-pro",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Zeta Pro",
+      "type": "chat",
+      "family": "zeta",
+      "release_date": "2026-07-30",
+      "last_updated": "2026-07-30",
+      "status": "active",
+      "limit": {
+        "context": 300000,
+        "output": 32000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 4.5,
+            "cache": {
+              "read": 0.5
+            }
+          },
+          "output": {
+            "price": 13.0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "beta-flash",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Beta Flash 1101",
+      "type": "chat",
+      "family": "beta",
+      "release_date": "2026-10-17",
+      "last_updated": "2026-10-17",
+      "status": "active",
       "limit": {
         "context": 1000000,
         "output": 384000
@@ -37,15 +126,421 @@
       "cost": {
         "text": {
           "input": {
-            "price": 0.15,
+            "price": 0.2,
             "cache": {
-              "read": 0.003
+              "read": 0.004
             }
           },
           "output": {
-            "price": 0.6
+            "price": 0.7
+          }
+        },
+        "multipliers": [
+          {
+            "when": {
+              "utc_days": {
+                "in": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri"
+                ]
+              },
+              "any": [
+                {
+                  "all": [
+                    {
+                      "utc_hours": {
+                        "gte": "01:00"
+                      }
+                    },
+                    {
+                      "utc_hours": {
+                        "lt": "04:00"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "utc_hours": {
+                        "gte": "06:00"
+                      }
+                    },
+                    {
+                      "utc_hours": {
+                        "lt": "10:00"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "factor": 2
+          }
+        ]
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "beta-pro",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Beta Pro",
+      "type": "chat",
+      "family": "beta",
+      "release_date": "2026-10-10",
+      "last_updated": "2026-10-10",
+      "status": "active",
+      "limit": {
+        "context": 1000000,
+        "output": 384000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.7,
+            "cache": {
+              "read": 0.02
+            }
+          },
+          "output": {
+            "price": 2.1
+          }
+        },
+        "multipliers": [
+          {
+            "when": {
+              "utc_days": {
+                "in": [
+                  "mon",
+                  "tue",
+                  "wed",
+                  "thu",
+                  "fri"
+                ]
+              },
+              "any": [
+                {
+                  "all": [
+                    {
+                      "utc_hours": {
+                        "gte": "01:00"
+                      }
+                    },
+                    {
+                      "utc_hours": {
+                        "lt": "04:00"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "utc_hours": {
+                        "gte": "06:00"
+                      }
+                    },
+                    {
+                      "utc_hours": {
+                        "lt": "10:00"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "factor": 2
+          }
+        ]
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "gamma-flash",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Gamma-Flash",
+      "type": "chat",
+      "family": "gamma",
+      "release_date": "2026-09-01",
+      "last_updated": "2026-09-01",
+      "status": "active",
+      "limit": {
+        "context": 256000,
+        "output": 32000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.1,
+            "cache": {
+              "read": 0.02
+            }
+          },
+          "output": {
+            "price": 0.4
           }
         }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "gamma-prime",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Gamma Prime",
+      "type": "chat",
+      "family": "gamma",
+      "release_date": "2026-08-01",
+      "last_updated": "2026-08-01",
+      "status": "active",
+      "limit": {
+        "context": 200000,
+        "output": 64000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 1.0,
+            "cache": {
+              "read": 0.1
+            }
+          },
+          "output": {
+            "price": 4.0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "eta-flash",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Eta Flash",
+      "type": "chat",
+      "family": "eta",
+      "release_date": "2026-06-15",
+      "last_updated": "2026-06-15",
+      "status": "active",
+      "limit": {
+        "context": 128000,
+        "output": 16000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.3,
+            "cache": {
+              "read": 0.05
+            }
+          },
+          "output": {
+            "price": 1.2
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "lambda-contributor",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Lambda Contributor",
+      "type": "chat",
+      "family": "lambda",
+      "release_date": "2026-10-25",
+      "last_updated": "2026-10-25",
+      "status": "active",
+      "limit": {
+        "context": 262144,
+        "output": 32768
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.5,
+            "cache": {
+              "read": 0.05
+            }
+          },
+          "output": {
+            "price": 1.0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "omega-preview",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Omega Preview",
+      "type": "chat",
+      "family": "omega",
+      "release_date": "2026-11-01",
+      "last_updated": "2026-11-01",
+      "status": "active",
+      "limit": {
+        "context": 200000,
+        "output": 16000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 1.2,
+            "cache": {
+              "read": 0.12
+            }
+          },
+          "output": {
+            "price": 3.0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "deprecated-old-model",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Deprecated Old Model",
+      "type": "chat",
+      "family": "deprecated",
+      "release_date": "2025-12-01",
+      "last_updated": "2025-12-01",
+      "status": "deprecated",
+      "limit": {
+        "context": 100000,
+        "output": 8000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 1.0,
+            "cache": {
+              "read": 0.1
+            }
+          },
+          "output": {
+            "price": 1.0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "delta-contributor",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Delta Contributor",
+      "type": "chat",
+      "family": "delta",
+      "release_date": "2026-10-01",
+      "last_updated": "2026-10-01",
+      "status": "active",
+      "limit": {
+        "context": 262144,
+        "output": 32768
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0
+          },
+          "output": {
+            "price": 0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "epsilon-free",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Epsilon Free",
+      "type": "chat",
+      "family": "epsilon",
+      "release_date": "2026-09-20",
+      "last_updated": "2026-09-20",
+      "status": "active",
+      "limit": {
+        "context": 128000,
+        "output": 16000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0
+          },
+          "output": {
+            "price": 0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
+      }
+    },
+    {
+      "id": "kappa-free",
+      "object": "model",
+      "created": 1794000000,
+      "owned_by": "opencode",
+      "name": "Kappa Free",
+      "type": "chat",
+      "family": "kappa",
+      "release_date": "2026-08-25",
+      "last_updated": "2026-08-25",
+      "status": "active",
+      "limit": {
+        "context": 200000,
+        "output": 16000
+      },
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0
+          },
+          "output": {
+            "price": 0
+          }
+        }
+      },
+      "api": {
+        "npm": "@ai-sdk/openai-compatible"
       }
     }
   ]

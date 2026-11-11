@@ -21,3 +21,8 @@ build/
 .env.*
 !.env.example
 snapshot.json
+
+# Report and test outputs
+out/
+offline.xml
+live.xml

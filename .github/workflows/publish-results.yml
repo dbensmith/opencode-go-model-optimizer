@@ -1,0 +1,86 @@
+name: Publish results
+
+# Publishes the current tier selections, how and why they were decided, source provenance and
+# test results to the `results` branch twice a day. The branch always holds exactly one
+# (orphan) commit, so it has no history.
+#
+# No Artificial Analysis key is used anywhere in this workflow: their terms forbid
+# republishing their data, so nothing derived from it may be published.
+
+on:
+  schedule:
+    - cron: "17 5,17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-results
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Test, report and publish
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Offline tests
+        id: offline
+        continue-on-error: true
+        run: uv run pytest --ignore=tests/live --junitxml=offline.xml
+
+      - name: Live contract tests
+        id: live
+        continue-on-error: true
+        env:
+          OCGO_LIVE: "1"
+        run: uv run pytest tests/live -m live --junitxml=live.xml
+
+      - name: Generate report
+        id: report
+        run: |
+          junit=()
+          for f in offline.xml live.xml; do
+            if [ -f "$f" ]; then junit+=(--tests-junit "$f"); fi
+          done
+          uv run opencode-go-model-optimizer report --out-dir out "${junit[@]}"
+          cat out/README.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "generated_at=$(uv run python -c "import json; print(json.load(open('out/results.json'))['generated_at'])")"
+            echo "result=$(uv run python -c "import json; t = json.load(open('out/results.json'))['tests']; print(t['result'] if t else 'fail')")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish to results branch
+        run: |
+          mv out "$RUNNER_TEMP/out"
+          git checkout --orphan results
+          git rm -rf -q .
+          git clean -ffdxq
+          cp -r "$RUNNER_TEMP/out/." .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "results: ${{ steps.report.outputs.generated_at }} (${{ steps.report.outputs.result }})"
+          git push -f origin HEAD:results
+
+      - name: Fail if tests failed
+        if: steps.offline.outcome == 'failure' || steps.live.outcome == 'failure'
+        run: |
+          echo "::error::offline or live tests failed; results were still published"
+          exit 1

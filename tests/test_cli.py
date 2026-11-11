@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import math
 import runpy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +13,8 @@ import pytest
 
 from opencode_go_model_optimizer.cli import (
     LoadedSnapshot,
+    SnapshotUnavailableError,
+    _age,
     _load_or_fetch_models,
     _load_or_fetch_snapshot,
     _parse_preferred_tiers,
@@ -29,7 +33,9 @@ from opencode_go_model_optimizer.ingest.models import (
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
+    get_cache_snapshot_path,
     load_snapshot,
+    save_cached_snapshot,
     save_snapshot,
 )
 
@@ -62,7 +68,7 @@ def test_parse_args_select():
             "--skip",
             "model-b",
             "--prefer",
-            "heavy=kimi-k3.1-pro",
+            "heavy=zeta-pro",
             "--min-context",
             "128000",
             "--no-contributor",
@@ -76,7 +82,7 @@ def test_parse_args_select():
     assert args.mode == "allowance"
     assert args.cache_ttl == 300
     assert args.skip == ["model-a", "model-b"]
-    assert args.prefer == ["heavy=kimi-k3.1-pro"]
+    assert args.prefer == ["heavy=zeta-pro"]
     assert args.min_context == 128000
     assert args.no_contributor is True
     assert args.profile == "coding"
@@ -114,16 +120,16 @@ def test_parse_preferred_tiers_helper():
 
     parsed = _parse_preferred_tiers(
         [
-            "heavy=kimi-k3.1-pro",
-            "balanced = deepseek-v4.1-flash ",
+            "heavy=zeta-pro",
+            "balanced = beta-flash ",
             "invalid_format",
             "=no_key",
             "no_val=",
         ]
     )
     assert parsed == {
-        "heavy": "kimi-k3.1-pro",
-        "balanced": "deepseek-v4.1-flash",
+        "heavy": "zeta-pro",
+        "balanced": "beta-flash",
     }
 
 
@@ -142,10 +148,10 @@ def test_cli_select_json(tmp_path, capsys):
     data = json.loads(captured.out)
     assert "tiers" in data
     assert data["plan"] == "go"
-    assert data["tiers"]["heavy"] == "opencode-go/qwen3.8-max"
-    assert data["tiers"]["balanced"] == "opencode-go/deepseek-v4.1-flash"
-    assert data["tiers"]["light"] == "opencode-go/glm-5.3-flash"
-    assert data["tiers"]["free"] == "opencode-go/iceman-contributor-free"
+    assert data["tiers"]["heavy"] == "opencode-go/alpha-max"
+    assert data["tiers"]["balanced"] == "opencode-go/beta-pro"
+    assert data["tiers"]["light"] == "opencode-go/beta-flash"
+    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
     assert data["mode"] == "allowance"
 
 
@@ -156,7 +162,7 @@ def test_cli_select_table(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "Tier" in captured.out
     assert "heavy" in captured.out
-    assert "opencode-go/qwen3.8-max" in captured.out
+    assert "opencode-go/alpha-max" in captured.out
 
 
 def test_cli_select_env_and_github_output(tmp_path, capsys):
@@ -166,15 +172,15 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
     rc = main(["select", "--format", "env", "--snapshot", str(snap_path)])
     assert rc == 0
     env_out = capsys.readouterr().out
-    assert 'OPENCODE_MODEL_HEAVY="opencode-go/qwen3.8-max"' in env_out
-    assert 'OPENCODE_MODEL_FREE="opencode-go/iceman-contributor-free"' in env_out
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/alpha-max"' in env_out
+    assert 'OPENCODE_MODEL_FREE="opencode-go/delta-contributor"' in env_out
 
     # --format github-output
     rc = main(["select", "--format", "github-output", "--snapshot", str(snap_path)])
     assert rc == 0
     gh_out = capsys.readouterr().out
-    assert "heavy=opencode-go/qwen3.8-max" in gh_out
-    assert "free=opencode-go/iceman-contributor-free" in gh_out
+    assert "heavy=opencode-go/alpha-max" in gh_out
+    assert "free=opencode-go/delta-contributor" in gh_out
 
 
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
@@ -189,18 +195,18 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
             "--snapshot",
             str(snap_path),
             "--skip",
-            "opencode-go/qwen3.8-max",
+            "opencode-go/alpha-max",
             "--prefer",
-            "heavy=opencode-go/glm-5.3-flash",
+            "heavy=opencode-go/gamma-flash",
             "--no-contributor",
             "--min-context",
-            "200000",
+            "100000",
         ]
     )
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert data["tiers"]["heavy"] == "opencode-go/glm-5.3-flash"
-    assert data["tiers"]["free"] == "opencode-go/beam-free"
+    assert data["tiers"]["heavy"] == "opencode-go/gamma-flash"
+    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
 
 
 def test_cli_rank_filters(tmp_path, capsys):
@@ -214,16 +220,16 @@ def test_cli_rank_filters(tmp_path, capsys):
             "--snapshot",
             str(snap_path),
             "--skip",
-            "qwen3.8-max",
+            "alpha-max",
             "--min-context",
-            "500000",
+            "120000",
             "--no-contributor",
         ]
     )
     assert rc == 0
     models = json.loads(capsys.readouterr().out)
-    assert all(m["id"] != "qwen3.8-max" for m in models)
-    assert all(m["limit"]["context"] >= 500000 for m in models)
+    assert all(m["id"] != "alpha-max" for m in models)
+    assert all(m["limit"]["context"] >= 120000 for m in models)
     free_models = [m for m in models if m.get("tier") == "free"]
     assert len(free_models) == 1
     assert not free_models[0].get("is_contributor", False)
@@ -252,11 +258,11 @@ def test_cli_select_plan_switch(tmp_path):
     assert snap_go["plan"] == "go"
     assert snap_plus["plan"] == "go-plus"
 
-    # GLM-5.3-Flash allowance is $60 under go, but $200 under go-plus in the fixture
-    glm_go = next(m for m in snap_go["models"] if m["id"] == "glm-5.3-flash")
-    glm_plus = next(m for m in snap_plus["models"] if m["id"] == "glm-5.3-flash")
-    assert glm_go["monthly_allowance"] == 60.0
-    assert glm_plus["monthly_allowance"] == 200.0
+    # Gamma-Flash allowance is $50 under go, but $180 under go-plus in the fixture
+    gamma_go = next(m for m in snap_go["models"] if m["id"] == "gamma-flash")
+    gamma_plus = next(m for m in snap_plus["models"] if m["id"] == "gamma-flash")
+    assert gamma_go["monthly_allowance"] == 50.0
+    assert gamma_plus["monthly_allowance"] == 180.0
 
 
 def test_cli_select_compact(tmp_path, capsys):
@@ -265,9 +271,9 @@ def test_cli_select_compact(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     lines = captured.out.strip().splitlines()
-    assert "heavy opencode-go/qwen3.8-max" in lines
-    assert "balanced opencode-go/deepseek-v4.1-flash" in lines
-    assert "light opencode-go/glm-5.3-flash" in lines
+    assert "heavy opencode-go/alpha-max" in lines
+    assert "balanced opencode-go/beta-pro" in lines
+    assert "light opencode-go/beta-flash" in lines
 
 
 def test_cli_select_profile_and_explain(tmp_path, capsys):
@@ -316,9 +322,9 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
     snap_path = _create_temp_snapshot(tmp_path)
     snap = Snapshot.model_validate_json(snap_path.read_text(encoding="utf-8"))
 
-    # Add plan_allowances to GLM
+    # Add plan_allowances to Gamma
     for m in snap.models:
-        if m.id == "glm-5.3-flash":
+        if m.id == "gamma-flash":
             m.plan_allowances = {"go": 60.0, "go-plus": 250.0}
     save_snapshot(snap, snap_path)
 
@@ -333,7 +339,7 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
             "--plan",
             "go-plus",
             "--prefer",
-            "heavy=opencode-go/glm-5.3-flash",
+            "heavy=opencode-go/gamma-flash",
         ]
     )
     assert rc == 0
@@ -373,7 +379,7 @@ def test_cli_rank_table(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert "Rank" in captured.out
-    assert "deepseek-v4.1-flash" in captured.out
+    assert "beta-flash" in captured.out
 
 
 def test_cli_rank_json(tmp_path, capsys):
@@ -404,32 +410,13 @@ def test_cli_fetch(tmp_path):
         assert out_snap.exists()
         data = json.loads(out_snap.read_text(encoding="utf-8"))
         assert data["schema_version"] == 1
-        assert len(data["models"]) == 7
+        assert len(data["models"]) == 14
 
 
-def test_cli_fetch_update_reference(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
-    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
-    fake_ref_path = tmp_path / "reference_snapshot.json"
-
-    with (
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=parse_catalogue_cli(cli_text),
-        ),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
-            return_value=fake_ref_path,
-        ),
-    ):
-        rc = main(["fetch", "--update-reference"])
-        assert rc == 0
-        assert fake_ref_path.exists()
-        data = json.loads(fake_ref_path.read_text(encoding="utf-8"))
-        assert data["schema_version"] == 1
-        assert len(data["models"]) == 7
+def test_cli_fetch_update_reference_flag_removed():
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["fetch", "--update-reference"])
+    assert exc.value.code == 2
 
 
 def testresolve_mode():
@@ -455,7 +442,7 @@ def test_load_or_fetch_models(tmp_path):
     # Snapshot provided
     snap_path = _create_temp_snapshot(tmp_path)
     models, plan = _load_or_fetch_models(str(snap_path))
-    assert len(models) == 7
+    assert len(models) == 14
     assert plan == "go"
 
     # Live fetch succeeds
@@ -507,12 +494,12 @@ def test_load_or_fetch_models(tmp_path):
     models, plan = _load_or_fetch_models(str(multi_path), plan="go-plus")
     assert plan == "go-plus"
 
-    # Live fetch fails with network error, falls back to reference snapshot with plan_allowances
-    ref_snap_with_allowances = Snapshot(
+    # Live fetch fails with a network error: the consumer cache (any age) is used
+    stale_with_allowances = Snapshot(
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
-        plan="reference",
-        models=[NormalizedModel(id="ref1", plan_allowances={"go-plus": 100.0})],
+        plan="go",
+        models=[NormalizedModel(id="cached1", plan_allowances={"go-plus": 100.0})],
         metadata=SnapshotMetadata(),
     )
     with (
@@ -521,46 +508,23 @@ def test_load_or_fetch_models(tmp_path):
             side_effect=httpx.ConnectError("Connection failed"),
         ),
         patch(
-            "opencode_go_model_optimizer.cli.load_reference_snapshot",
-            return_value=ref_snap_with_allowances,
-        ),
+            "opencode_go_model_optimizer.cli.load_cached_snapshot",
+            return_value=stale_with_allowances,
+        ) as mock_stale,
     ):
         models, plan = _load_or_fetch_models(plan="go-plus")
         assert plan == "go-plus"
+        assert models[0].monthly_allowance == 100.0
+        mock_stale.assert_called_once_with(plan="go-plus", ttl_seconds=math.inf)
 
-    # Live fetch fails with network error, falls back to reference snapshot
-    ref_snap = Snapshot(
-        schema_version=1,
-        fetched_at="2026-01-01T00:00:00Z",
-        plan="reference",
-        models=[NormalizedModel(id="ref1"), NormalizedModel(id="ref2")],
-        metadata=SnapshotMetadata(),
-    )
+    # Live fetch fails and there is no cache -> clear error pointing at --snapshot / fetch
     with (
         patch(
             "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
             side_effect=httpx.ConnectError("Connection failed"),
         ),
-        patch(
-            "opencode_go_model_optimizer.cli.load_reference_snapshot",
-            return_value=ref_snap,
-        ),
-    ):
-        models, plan = _load_or_fetch_models()
-        assert len(models) == 2
-        assert plan == "reference"
-
-    # Live fetch fails and reference snapshot is missing (None) -> raises error
-    with (
-        patch(
-            "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
-            side_effect=httpx.ConnectError("Connection failed"),
-        ),
-        patch(
-            "opencode_go_model_optimizer.cli.load_reference_snapshot",
-            return_value=None,
-        ),
-        pytest.raises(httpx.ConnectError),
+        patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=None),
+        pytest.raises(SnapshotUnavailableError, match=r"--snapshot FILE.*'fetch'"),
     ):
         _load_or_fetch_models()
 
@@ -866,7 +830,7 @@ def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
     rc_json = main(["diff", "--old", str(old_path), "--new", str(new_path), "--format", "json"])
     assert rc_json == 0
     diff_data = json.loads(capsys.readouterr().out)
-    assert diff_data["status_changes"]["qwen3.8-max"] == {
+    assert diff_data["status_changes"]["alpha-max"] == {
         "old": "active",
         "new": "deprecated",
     }
@@ -904,7 +868,7 @@ def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
     assert "Snapshot diff" in out_path.read_text(encoding="utf-8")
 
 
-def test_cli_diff_defaults_and_missing_reference(tmp_path, capsys):
+def test_cli_diff_default_new_and_required_old(tmp_path, capsys):
     old_path = _create_temp_snapshot(tmp_path)
     new_snap = load_snapshot(old_path)
     new_snap.fetched_at = "2026-03-01T00:00:00Z"
@@ -929,13 +893,10 @@ def test_cli_diff_defaults_and_missing_reference(tmp_path, capsys):
     assert rc == 0
     assert "plan: go-plus" in capsys.readouterr().out
 
-    with patch(
-        "opencode_go_model_optimizer.cli.load_reference_snapshot",
-        return_value=None,
-    ):
-        rc_missing = main(["diff", "--new", str(old_path)])
-    assert rc_missing == 1
-    assert "no reference snapshot available" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        main(["diff", "--new", str(old_path)])
+    assert exc.value.code == 2
+    assert "--old" in capsys.readouterr().err
 
 
 def test_prefer_validation_errors(capsys):
@@ -969,22 +930,22 @@ def test_prefer_full_id_is_honored_without_warning(tmp_path, capsys):
             "--snapshot",
             str(snap_path),
             "--prefer",
-            "heavy=opencode-go/deepseek-v4.1-flash",
+            "heavy=opencode-go/beta-flash",
         ]
     )
     assert rc == 0
     cap = capsys.readouterr()
     assert "warning" not in cap.err
-    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/deepseek-v4.1-flash"
+    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/beta-flash"
 
 
 def test_prefer_bare_id_is_honored_without_warning(tmp_path, capsys):
     snap_path = _create_temp_snapshot(tmp_path)
-    rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=deepseek-v4.1-flash"])
+    rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=beta-flash"])
     assert rc == 0
     cap = capsys.readouterr()
     assert "warning" not in cap.err
-    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/deepseek-v4.1-flash"
+    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/beta-flash"
 
 
 def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
@@ -995,16 +956,16 @@ def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
             "--snapshot",
             str(snap_path),
             "--skip",
-            "opencode-go/deepseek-v4.1-flash",
+            "opencode-go/beta-flash",
             "--prefer",
-            "heavy=opencode-go/deepseek-v4.1-flash",
+            "heavy=opencode-go/beta-flash",
             "--prefer",
             "light=opencode-go/does-not-exist",
         ]
     )
     assert rc == 0
     err = capsys.readouterr().err
-    assert "preferred model 'opencode-go/deepseek-v4.1-flash' for tier 'heavy'" in err
+    assert "preferred model 'opencode-go/beta-flash' for tier 'heavy'" in err
     assert "preferred model 'opencode-go/does-not-exist' for tier 'light'" in err
 
 
@@ -1022,16 +983,49 @@ def test_cache_ttl_env_invalid(monkeypatch, capsys):
     assert capsys.readouterr().err == ""
 
 
-def test_live_fetch_failure_warns_and_uses_reference(monkeypatch, capsys):
+def _offline(monkeypatch):
     def boom(*a, **k):
         raise httpx.ConnectError("offline")
 
     monkeypatch.setattr("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", boom)
-    rc = main(["select"])
+
+
+def test_live_fetch_failure_warns_and_uses_consumer_cache(tmp_path, monkeypatch, capsys):
+    save_cached_snapshot(load_snapshot(_create_temp_snapshot(tmp_path)))
+    _offline(monkeypatch)
+    rc = main(["select"])  # no --cache-ttl: the cache is used regardless of age
     cap = capsys.readouterr()
     assert rc == 0
-    assert "warning: live fetch failed (ConnectError: offline); using bundled reference" in cap.err
-    json.loads(cap.out)
+    assert "warning: live fetch failed (ConnectError: offline); using local cache fetched at" in (
+        cap.err
+    )
+    assert " old)" in cap.err
+    assert json.loads(cap.out)["snapshot"]["source"] == "stale-cache"
+
+
+def test_live_fetch_failure_without_cache_suggests_snapshot(monkeypatch, capsys):
+    _offline(monkeypatch)
+    assert main(["select"]) == 1
+    err = capsys.readouterr().err
+    assert "live fetch failed (ConnectError: offline) and no local cache exists" in err
+    assert "--snapshot FILE" in err and "'fetch'" in err
+
+
+def test_successful_live_fetch_populates_consumer_cache(tmp_path, monkeypatch):
+    snap = load_snapshot(_create_temp_snapshot(tmp_path))
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.cli.fetch_and_build_snapshot", lambda **k: snap
+    )
+    assert main(["select", "-o", str(tmp_path / "out.json")]) == 0
+    assert get_cache_snapshot_path("go").exists()
+
+
+def test_age_formatting():
+    now = datetime.now(UTC)
+    assert _age((now - timedelta(days=3, hours=4)).isoformat()) == "3d 4h"
+    assert _age((now - timedelta(minutes=90)).isoformat()) == "1h 30m"
+    assert _age((now - timedelta(minutes=5)).replace(tzinfo=None).isoformat()) == "0h 5m"
+    assert _age("garbage") == "unknown"
 
 
 def test_main_error_handling(tmp_path, capsys, monkeypatch):
@@ -1061,21 +1055,25 @@ def test_main_error_handling(tmp_path, capsys, monkeypatch):
     assert main(["fetch"]) == 130
 
 
-def test_invalid_cache_ttl_env_warns_once(monkeypatch, capsys):
+def test_invalid_cache_ttl_env_warns_once(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "abc")
-    ref = "src/opencode_go_model_optimizer/data/reference_snapshot.json"
+    ref = str(_create_temp_snapshot(tmp_path))
     assert main(["select", "--snapshot", ref, "--format", "compact"]) == 0
     assert capsys.readouterr().err.count("invalid OPENCODE_GO_CACHE_TTL") == 1
 
 
-def test_select_evaluates_pareto_once(monkeypatch, capsys):
+def test_select_evaluates_pareto_once(tmp_path, monkeypatch, capsys):
     from opencode_go_model_optimizer.engine import tiers
 
     calls = []
     real = tiers.evaluate_pareto
     monkeypatch.setattr(tiers, "evaluate_pareto", lambda *a, **k: calls.append(1) or real(*a, **k))
-    ref = "src/opencode_go_model_optimizer/data/reference_snapshot.json"
-    assert main(["select", "--snapshot", ref, "--mode", "pareto", "--top-n", "3"]) == 0
+    snap = load_snapshot(_create_temp_snapshot(tmp_path))
+    for idx, m in enumerate(snap.models):
+        m.aa_iq = 40.0 + idx
+    ref = tmp_path / "bench.json"
+    save_snapshot(snap, ref)
+    assert main(["select", "--snapshot", str(ref), "--mode", "pareto", "--top-n", "3"]) == 0
     capsys.readouterr()
     assert len(calls) == 1
 
@@ -1137,9 +1135,9 @@ def test_snapshot_source_tracking(tmp_path):
             "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
             side_effect=httpx.ConnectError("down"),
         ),
-        patch("opencode_go_model_optimizer.cli.load_reference_snapshot", return_value=dummy),
+        patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=dummy),
     ):
-        assert _load_or_fetch_snapshot().source == "reference"
+        assert _load_or_fetch_snapshot().source == "stale-cache"
 
 
 def test_select_json_snapshot_provenance(tmp_path, capsys):

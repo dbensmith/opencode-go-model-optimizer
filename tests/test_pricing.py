@@ -165,19 +165,19 @@ def test_apply_price_basis_scales_all_costs_and_leaves_plain_models_alone():
         apply_price_basis([PEAKED], "bogus")
 
 
-def test_parse_multipliers_from_live_fixture():
+def test_parse_multipliers_from_fixture():
     models = {
-        m.id: m for m in parse_catalogue_http(json.loads((FIX / "live_oc_models.json").read_text()))
+        m.id: m for m in parse_catalogue_http(json.loads((FIX / "catalogue_http.json").read_text()))
     }
-    for mid in ("deepseek-v4.1-flash", "deepseek-v4-pro"):
+    for mid in ("beta-flash", "beta-pro"):
         (mult,) = models[mid].multipliers
         assert mult.factor == 2 and mult.when == PEAK
         assert blended_multiplier(models[mid], dt("2026-11-10T00:00")) == pytest.approx(
             1 + 35 / 168
         )
-    (promo,) = models["gemini-4-argon"].multipliers
+    (promo,) = models["theta-pro"].multipliers
     assert promo.factor == 2 and promo.when == PROMO
-    assert models["glm-5.2"].multipliers == []
+    assert models["gamma-flash"].multipliers == []
     assert all(validate_multiplier(x) is None for m in models.values() for x in m.multipliers)
 
 

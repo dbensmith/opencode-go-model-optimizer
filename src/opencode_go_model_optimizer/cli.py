@@ -1,6 +1,7 @@
 """Command line interface for opencode-go-model-optimizer."""
 
 import argparse
+import math
 import os
 import sys
 from datetime import UTC, datetime
@@ -30,12 +31,11 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     apply_plan,
     fetch_and_build_snapshot,
     load_cached_snapshot,
-    load_reference_snapshot,
     load_snapshot,
     save_cached_snapshot,
     save_snapshot,
-    update_reference_snapshot,
 )
+from opencode_go_model_optimizer.report import build_report, write_report
 
 _PROG = "opencode-go-model-optimizer"
 _TIERS = ("heavy", "balanced", "light", "free")
@@ -43,7 +43,8 @@ _EXIT_CODES = """\
 exit codes:
   0    success
   1    runtime error
-  2    usage error, or diff --fail-on-change detected changes
+  2    usage error, diff --fail-on-change detected changes, or report --fail-on-warnings
+       found warnings
   3    select --strict found an empty tier
   130  interrupted
 """
@@ -103,7 +104,7 @@ def _prefer_arg(value: str) -> str:
     tier, sep, model_id = value.partition("=")
     if not sep:
         raise argparse.ArgumentTypeError(
-            f"--prefer must be TIER=MODEL_ID (e.g. heavy=kimi-k3.1-pro), got {value!r}"
+            f"--prefer must be TIER=MODEL_ID (e.g. heavy=zeta-pro), got {value!r}"
         )
     if tier.strip() not in _TIERS:
         raise argparse.ArgumentTypeError(
@@ -325,7 +326,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         type=_prefer_arg,
         default=[],
-        help="Pin a model to a tier, e.g. --prefer heavy=kimi-k3.1-pro (can be specified multiple times)",
+        help="Pin a model to a tier, e.g. --prefer heavy=zeta-pro (can be specified multiple times)",
     )
     select_parser.add_argument(
         "--top-n",
@@ -368,13 +369,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     diff_parser.add_argument(
         "--old",
-        default=None,
-        help="Path to the old snapshot (default: bundled reference snapshot)",
+        required=True,
+        help="Path to the old snapshot (e.g. one saved earlier with 'fetch')",
     )
     diff_parser.add_argument(
         "--new",
         default=None,
-        help="Path to the new snapshot (default: live fetch or cached snapshot)",
+        help="Path to the new snapshot (default: live fetch, else your local cache)",
     )
     diff_parser.add_argument(
         "--format",
@@ -398,10 +399,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="snapshot.json",
         help="Destination path for snapshot (default: snapshot.json)",
     )
-    fetch_parser.add_argument(
-        "--update-reference",
+
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Fetch live and publish per-plan results with how and why they were decided",
+    )
+    report_parser.add_argument(
+        "--out-dir", required=True, help="Directory to write results.json and README.md into"
+    )
+    report_parser.add_argument(
+        "--tests-junit",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="JUnit XML from a test run to summarise in the report (can be repeated)",
+    )
+    report_parser.add_argument(
+        "--fail-on-warnings",
         action="store_true",
-        help="Fetch live data and update repository reference snapshot",
+        help="Exit with code 2 (after writing) when the report contains warnings",
     )
 
     return parser.parse_args(argv)
@@ -416,7 +432,7 @@ def _effective_plan(snap_plan: str, requested_plan: str, models: list[Normalized
 
 
 class LoadedSnapshot(NamedTuple):
-    """A snapshot plus where it came from: file, cache, live, or reference."""
+    """A snapshot plus where it came from: file, cache, stale-cache, or live."""
 
     snapshot: Snapshot
     source: str
@@ -426,6 +442,24 @@ def _print_snapshot_warnings(snap: Snapshot) -> None:
     """Print each ingest warning to stderr without failing the command."""
     for warning in snap.warnings:
         print(f"{_PROG}: warning: {warning}", file=sys.stderr)
+
+
+class SnapshotUnavailableError(ValueError):
+    """Live fetch failed and there is no local cache to fall back to."""
+
+
+def _age(fetched_at: str) -> str:
+    """Human-readable age of an ISO timestamp (e.g. '3d 4h'), or 'unknown age'."""
+    try:
+        then = datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return "unknown"
+    seconds = int(
+        (datetime.now(UTC) - (then if then.tzinfo else then.replace(tzinfo=UTC))).total_seconds()
+    )
+    days, rest = divmod(max(seconds, 0), 86400)
+    hours, rest = divmod(rest, 3600)
+    return f"{days}d {hours}h" if days else f"{hours}h {rest // 60}m"
 
 
 def _load_or_fetch_snapshot(
@@ -444,20 +478,22 @@ def _load_or_fetch_snapshot(
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
-        _print_snapshot_warnings(snap)
-        if cache_ttl > 0:
-            save_cached_snapshot(snap)
-        return LoadedSnapshot(snap, "live")
     except (httpx.HTTPError, OSError, ValueError) as exc:
-        ref_snap = load_reference_snapshot()
-        if ref_snap:
-            print(
-                f"{_PROG}: warning: live fetch failed ({type(exc).__name__}: {exc}); "
-                f"using bundled reference snapshot from {ref_snap.fetched_at}",
-                file=sys.stderr,
-            )
-            return LoadedSnapshot(ref_snap, "reference")
-        raise
+        stale = load_cached_snapshot(plan=plan, ttl_seconds=math.inf)
+        if stale is None:
+            raise SnapshotUnavailableError(
+                f"live fetch failed ({type(exc).__name__}: {exc}) and no local cache exists; "
+                "pass --snapshot FILE (see the 'fetch' command) or retry when online"
+            ) from exc
+        print(
+            f"{_PROG}: warning: live fetch failed ({type(exc).__name__}: {exc}); "
+            f"using local cache fetched at {stale.fetched_at} ({_age(stale.fetched_at)} old)",
+            file=sys.stderr,
+        )
+        return LoadedSnapshot(stale, "stale-cache")
+    _print_snapshot_warnings(snap)
+    save_cached_snapshot(snap)
+    return LoadedSnapshot(snap, "live")
 
 
 def _load_or_fetch_models(
@@ -614,16 +650,7 @@ def handle_diff(args: argparse.Namespace) -> int:
     """Handle the 'diff' command."""
     target_plan = args.plan
 
-    if args.old:
-        old_snap = load_snapshot(args.old)
-    else:
-        old_snap = load_reference_snapshot()
-        if old_snap is None:
-            print(
-                "opencode-go-model-optimizer: no reference snapshot available; pass --old",
-                file=sys.stderr,
-            )
-            return 1
+    old_snap = load_snapshot(args.old)
 
     new_snap = _load_or_fetch_snapshot(
         args.new, plan=target_plan, cache_ttl=_cache_ttl(args)
@@ -646,14 +673,6 @@ def handle_diff(args: argparse.Namespace) -> int:
 def handle_fetch(args: argparse.Namespace) -> int:
     """Handle the 'fetch' command."""
     target_plan = args.plan
-    if args.update_reference:
-        path = update_reference_snapshot(plan=target_plan)
-        print(
-            f"opencode-go-model-optimizer: updated reference snapshot at {path}",
-            file=sys.stderr,
-        )
-        return 0
-
     snap = fetch_and_build_snapshot(plan=target_plan)
     _print_snapshot_warnings(snap)
     save_snapshot(snap, args.out)
@@ -661,6 +680,17 @@ def handle_fetch(args: argparse.Namespace) -> int:
         f"opencode-go-model-optimizer: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",
         file=sys.stderr,
     )
+    return 0
+
+
+def handle_report(args: argparse.Namespace) -> int:
+    """Handle the 'report' command: fetch live (no cache) and publish results."""
+    report = build_report(junit_paths=args.tests_junit)
+    write_report(report, args.out_dir)
+    print(f"{_PROG}: wrote results.json and README.md to {args.out_dir}", file=sys.stderr)
+    if args.fail_on_warnings and report["warnings"]:
+        print(f"{_PROG}: error: report contains warnings", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -680,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
             return handle_diff(args)
         if args.command == "fetch":
             return handle_fetch(args)
+        if args.command == "report":
+            return handle_report(args)
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, httpx.HTTPError) as exc:

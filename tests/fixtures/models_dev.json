@@ -1,0 +1,205 @@
+{
+  "opencode-go": {
+    "id": "opencode-go",
+    "name": "OpenCode Go",
+    "models": {
+      "alpha-max": {
+        "id": "alpha-max",
+        "name": "Alpha Max",
+        "release_date": "2026-08-20",
+        "limit": {
+          "context": 512000,
+          "output": 40000
+        },
+        "cost": {
+          "input": 3.0,
+          "output": 9.0
+        }
+      },
+      "theta-pro": {
+        "id": "theta-pro",
+        "name": "Theta Pro",
+        "release_date": "2026-09-12",
+        "limit": {
+          "context": 1000000,
+          "output": 65000
+        },
+        "cost": {
+          "input": 6.0,
+          "output": 18.0
+        }
+      },
+      "zeta-pro": {
+        "id": "zeta-pro",
+        "name": "Zeta Pro",
+        "release_date": "2026-07-30",
+        "limit": {
+          "context": 300000,
+          "output": 32000
+        },
+        "cost": {
+          "input": 4.5,
+          "output": 13.0
+        }
+      },
+      "beta-flash": {
+        "id": "beta-flash",
+        "name": "Beta Flash",
+        "release_date": "2026-10-17",
+        "limit": {
+          "context": 1000000,
+          "output": 384000
+        },
+        "cost": {
+          "input": 0.2,
+          "output": 0.7
+        }
+      },
+      "beta-pro": {
+        "id": "beta-pro",
+        "name": "Beta Pro",
+        "release_date": "2026-10-10",
+        "limit": {
+          "context": 1000000,
+          "output": 384000
+        },
+        "cost": {
+          "input": 0.7,
+          "output": 2.1
+        }
+      },
+      "gamma-flash": {
+        "id": "gamma-flash",
+        "name": "Gamma-Flash",
+        "release_date": "2026-09-01",
+        "limit": {
+          "context": 256000,
+          "output": 32000
+        },
+        "cost": {
+          "input": 0.1,
+          "output": 0.4
+        }
+      },
+      "gamma-prime": {
+        "id": "gamma-prime",
+        "name": "Gamma Prime",
+        "release_date": "2026-08-01",
+        "limit": {
+          "context": 200000,
+          "output": 64000
+        },
+        "cost": {
+          "input": 1.0,
+          "output": 4.0
+        }
+      },
+      "eta-flash": {
+        "id": "eta-flash",
+        "name": "Eta Flash",
+        "release_date": "2026-06-15",
+        "limit": {
+          "context": 128000,
+          "output": 16000
+        },
+        "cost": {
+          "input": 0.3,
+          "output": 1.2
+        }
+      },
+      "lambda-contributor": {
+        "id": "lambda-contributor",
+        "name": "Lambda Contributor",
+        "release_date": "2026-10-25",
+        "limit": {
+          "context": 262144,
+          "output": 32768
+        },
+        "cost": {
+          "input": 0.5,
+          "output": 1.0
+        }
+      },
+      "omega-preview": {
+        "id": "omega-preview",
+        "name": "Omega Preview",
+        "release_date": "2026-11-01",
+        "limit": {
+          "context": 200000,
+          "output": 16000
+        },
+        "cost": {
+          "input": 1.2,
+          "output": 3.0
+        }
+      },
+      "deprecated-old-model": {
+        "id": "deprecated-old-model",
+        "name": "Deprecated Old Model",
+        "release_date": "2025-12-01",
+        "limit": {
+          "context": 100000,
+          "output": 8000
+        },
+        "cost": {
+          "input": 1.0,
+          "output": 1.0
+        }
+      },
+      "delta-contributor": {
+        "id": "delta-contributor",
+        "name": "Delta Contributor",
+        "release_date": "2026-10-01",
+        "limit": {
+          "context": 262144,
+          "output": 32768
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        }
+      },
+      "epsilon-free": {
+        "id": "epsilon-free",
+        "name": "Epsilon Free",
+        "release_date": "2026-09-20",
+        "limit": {
+          "context": 128000,
+          "output": 16000
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        }
+      },
+      "kappa-free": {
+        "id": "kappa-free",
+        "name": "Kappa Free",
+        "release_date": "2026-08-25",
+        "limit": {
+          "context": 200000,
+          "output": 16000
+        },
+        "cost": {
+          "input": 0,
+          "output": 0
+        }
+      }
+    }
+  },
+  "other-provider": {
+    "id": "other-provider",
+    "name": "Other",
+    "models": {
+      "alpha-max": {
+        "id": "alpha-max",
+        "name": "Alpha Max",
+        "release_date": "1999-01-01",
+        "limit": {
+          "context": 1,
+          "output": 1
+        }
+      }
+    }
+  }
+}

@@ -47,6 +47,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 - **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Coding Indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks natural breaks.
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
+- **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
 
 ---
 
@@ -71,33 +72,29 @@ uvx opencode-go-model-optimizer select --format json
   ```bash
   opencode-go-model-optimizer select --format json
   ```
-  Example output against the bundled reference snapshot:
-  ```bash
-  opencode-go-model-optimizer select --snapshot src/opencode_go_model_optimizer/data/reference_snapshot.json --format json
-  ```
+  Example output (allowance mode, no API key; model IDs are illustrative):
   ```json
   {
     "plan": "go",
     "tiers": {
-      "heavy": "opencode-go/gemini-4-argon",
-      "balanced": "opencode-go/deepseek-v4.1-flash",
-      "light": "opencode-go/mimo-v2.6-flash",
-      "free": "opencode-go/longcat-2.5-free"
+      "heavy": "opencode-go/model-a",
+      "balanced": "opencode-go/model-b",
+      "light": "opencode-go/model-c",
+      "free": "opencode-go/model-d"
     },
     "evaluated_at": "2026-11-11T02:47:40+00:00",
-    "mode": "pareto",
+    "mode": "allowance",
     "snapshot": {
-      "source": "file",
-      "fetched_at": "2026-11-10T21:45:55+00:00",
-      "benchmark_source": "reference:2026-11-10T21:45:55+00:00"
+      "source": "live",
+      "fetched_at": "2026-11-11T02:47:38+00:00",
+      "benchmark_source": "none"
     }
   }
   ```
   The `snapshot` block (JSON only) records provenance: `source` is `file` (`--snapshot`),
-  `cache`, `live`, or `reference` (bundled fallback after a live fetch failure).
+  `cache`, `live`, or `stale-cache` (your local cache, used after a live fetch failure).
   `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
-  `speed_tps`) came from: `aa_live` (fetched with `AA_API_KEY`), `reference:<fetched_at>`
-  (copied from the bundled reference snapshot, so possibly stale), or `none`.
+  `speed_tps`) came from: `aa_live` (fetched with your own `AA_API_KEY`) or `none`.
   `--format table` (the default for `rank`) and `--format json` are also available.
 
 - **`rank`**: Produces a ranked comparison of every model in the catalog. Table output is the default:
@@ -105,14 +102,13 @@ uvx opencode-go-model-optimizer select --format json
   opencode-go-model-optimizer rank --format table
   opencode-go-model-optimizer rank --format json
   ```
-  Excerpt from `rank --snapshot src/opencode_go_model_optimizer/data/reference_snapshot.json`:
+  Example table (illustrative values):
   ```text
-  +------+----------------------------+----------+-------+------+--------+-----------+-------------+------------+
-  | Rank | Model ID                   | Tier     | BPE   | IQ   | Burn % | Allowance | Output Cost | Release    |
-  +------+----------------------------+----------+-------+------+--------+-----------+-------------+------------+
-  | 1    | kimi-k3.1-pro              | -        | 1.000 | 55.0 | 106.7% | $15.00    | $10.00/1M   | 2026-10-23 |
-  | 2    | gemini-4-argon             | heavy    | 1.000 | 53.0 | 33.3%  | $30.00    | $10.00/1M   | 2026-10-13 |
-  | 3    | mimo-v2.6-pro              | -        | 1.000 | 46.0 | 5.1%   | $15.00    | $0.87/1M    | 2026-09-22 |
+  +------+----------+-------+-----------+-------------+------------+
+  | Rank | Model ID | Tier  | Allowance | Output Cost | Release    |
+  +------+----------+-------+-----------+-------------+------------+
+  | 1    | model-a  | heavy | $30.00    | $10.00/1M   | 2026-10-13 |
+  | 2    | model-b  | -     | $15.00    | $0.87/1M    | 2026-09-22 |
   ```
   The legacy `rank --table` flag is still accepted, but `--format table` is the default.
 
@@ -120,8 +116,8 @@ uvx opencode-go-model-optimizer select --format json
   ```bash
   opencode-go-model-optimizer diff --old previous.json --new snapshot.json
   ```
-  Defaults to the bundled reference snapshot for `--old` and a live (or cached) fetch for
-  `--new`. Use `--format json` for machine-readable drift reports and `--fail-on-change`
+  `--old` is required (save one earlier with `fetch`); `--new` defaults to a live fetch, falling
+  back to your local cache. Use `--format json` for machine-readable drift reports and `--fail-on-change`
   (alias `--exit-code`) to exit `2` when anything changed, which is ideal for scheduled CI jobs.
 
 - **`fetch`**: Captures a normalized, timestamped `snapshot.json` from upstream sources:
@@ -132,14 +128,37 @@ uvx opencode-go-model-optimizer select --format json
   (falling back to name matching for models it does not list). The catalogue comes from the HTTP
   endpoint, with the `opencode` CLI as a fallback; models.dev metadata is read from its
   `opencode-go` provider only. Ingest problems (unmatched models or pricing rows, an empty
-  pricing table, benchmarks copied from the bundled reference) are stored in the snapshot's
+  pricing table, an AA key that returned no benchmarks) are stored in the snapshot's
   `warnings` list and printed to stderr; they never fail the fetch.
+
+- **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (eligibility filters, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
+  ```bash
+  opencode-go-model-optimizer report --out-dir out --tests-junit offline.xml --tests-junit live.xml
+  ```
+
+### Published results
+
+A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.yml)) runs twice daily (05:17 and 17:17 UTC), executes the offline and live contract tests, runs `report`, and force-pushes a single orphan commit to the `results` branch, so the branch has no history. It is published whatever the test outcome, and the job then fails if a test run failed.
+
+- Machine-readable: <https://raw.githubusercontent.com/dbensmith/opencode-go-model-optimizer/results/results.json>
+- Human-readable (tables, how it was decided, warnings, provenance, test results): <https://raw.githubusercontent.com/dbensmith/opencode-go-model-optimizer/results/README.md>
+
+### Data policy
+
+- **No source data is stored in this repository.** The repo ships no model catalogue, docs, pricing or benchmark snapshots, and the tests use synthetic fixtures with fictional models.
+- **Caches are consumer-maintained.** The tool writes a snapshot cache under `$XDG_CACHE_HOME/opencode-go-model-optimizer` (default `~/.cache/opencode-go-model-optimizer`) after each successful live fetch. Nothing is bundled or pre-populated; if you never fetch, there is no cache.
+- **Do it yourself.** Everything is fetched live from the public OpenCode catalogue, the OpenCode docs and models.dev on your machine. Use `fetch --out snapshot.json` to keep your own snapshot.
+- **Artificial Analysis** terms forbid republishing their raw data, so none is committed or published by CI. Benchmarks are used only when you supply your own key.
+
+### API keys
+
+None are required. Allowance mode (and therefore `auto` without a key) needs no key. For Pareto mode you can set a free Artificial Analysis key in `AA_API_KEY`; it stays on your machine and only your own runs use it. When you display AA-derived values (`aa_iq`, `aa_coding`, `speed_tps`), attribute them: "Source: Artificial Analysis (artificialanalysis.ai)".
 
 ### Offline Usage
 
-- `--snapshot <file>` reads a local snapshot JSON and makes no network calls, so it works fully offline. Use it with `fetch` output or the bundled reference snapshot.
-- When a live fetch fails, the tool falls back to the bundled reference snapshot and prints a warning to stderr. The JSON `snapshot.source` field reports `reference` in that case.
-- `--cache-ttl <seconds>` (or `OPENCODE_GO_CACHE_TTL`) caches live fetches locally for that many seconds. The default is `0` (no caching).
+- `--snapshot <file>` reads a local snapshot JSON and makes no network calls, so it works fully offline. Use it with your own `fetch` output.
+- When a live fetch fails, the tool uses your local cache (of any age, ignoring the TTL) and prints a warning with the cache's `fetched_at` and age to stderr. The JSON `snapshot.source` field reports `stale-cache` in that case. If there is no cache it fails with an error suggesting `--snapshot` or `fetch`.
+- `--cache-ttl <seconds>` (or `OPENCODE_GO_CACHE_TTL`) serves a fresh-enough cache instead of fetching, for that many seconds. The default is `0` (always fetch).
 
 ### Shell / CI Usage
 
@@ -196,14 +215,14 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and Coding weights (e.g. `--weights 0.5,0.5`).
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
-- **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (e.g. `longcat-2.5-free`, hosted in China). Excluded by default, because default workspace settings block these models and selecting one would fail at request time.
+- **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (e.g. a free model hosted outside your allowed regions). Excluded by default, because default workspace settings block these models and selecting one would fail at request time.
 - **`--no-training`**: Exclude models whose provider trains on your prompts and completions (e.g. contributor-tier models).
 - **`--max-retention-days <N>`**: Exclude models that retain data longer than N days. Models with unknown retention (`Not ZDR`, or no privacy data) fail.
 - **`--require-zdr`**: Only allow zero-data-retention models. Models with no privacy data fail.
 
   These four filters apply to every tier (including `free`), to `rank`, and to `--prefer` pins: a pinned model that fails them is ignored with an `excluded by privacy filters; ignoring` warning. Models without privacy data (older snapshots) pass unless `--max-retention-days` or `--require-zdr` is set. Privacy data comes from the `## Privacy` table and notes in the Go docs and is stored per model as `privacy`: `trains_on_data`, `retention_days` (null for `Not ZDR`/unknown), `zdr` (true when retention is `0 days`), `requires_global_region`, `note` (raw docs note), and `agreement_valid_until` (ISO date from notes such as "valid through November 30, 2026"; a warning is recorded when it is in the past). `select --explain` and `rank --format json` include these fields; the `rank` table adds a `Privacy` column (`ZDR`, `30d`, `train`, `global`), and `diff` reports privacy changes in their own section.
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (default: 0, or `OPENCODE_GO_CACHE_TTL`).
-- **`--prefer <tier>=<model_id>`** *(`select` only)*: Pin a model to a tier (e.g. `--prefer heavy=kimi-k3.1-pro`).
+- **`--prefer <tier>=<model_id>`** *(`select` only)*: Pin a model to a tier (e.g. `--prefer heavy=model-a`).
 - **`--top-n <count>`** *(`select` only)*: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.
 - **`--explain`** *(`select` only)*: Include detailed per-tier metrics (`turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) and selection rationale in table and JSON output.
 - **`--strict`** *(`select` only)*: Still writes output, but exits `3` with an stderr error when any tier is empty.
@@ -220,7 +239,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 | ---- | ------- |
 | 0 | Success |
 | 1 | Runtime error |
-| 2 | Usage error, or `diff --fail-on-change` detected changes |
+| 2 | Usage error, `diff --fail-on-change` detected changes, or `report --fail-on-warnings` found warnings |
 | 3 | `select --strict` found an empty tier |
 | 130 | Interrupted |
 
@@ -239,6 +258,12 @@ cd opencode-go-model-optimizer
 uv sync
 uv run pytest
 uv run ruff check
+```
+
+The default `pytest` run is offline and uses only synthetic fixtures. Live contract tests (`tests/live`, marked `live`) fetch the real sources and assert structural invariants only (tables parse, every active model is matched to pricing/privacy/estimates, multipliers are understood, paid tiers are non-empty). They are skipped unless you opt in:
+
+```bash
+OCGO_LIVE=1 uv run pytest tests/live -m live
 ```
 
 ---
