@@ -142,6 +142,21 @@ def test_parse_catalogue_http():
     assert qwen.cost.cache_read == 0.25
 
 
+def test_parse_catalogue_http_uses_opencode_go_provider_not_owned_by():
+    # Live endpoint sets owned_by to the vendor ("opencode") and no providerID.
+    live_item = {
+        "id": "gemini-4-argon",
+        "object": "model",
+        "owned_by": "opencode",
+        "status": "active",
+    }
+    models = parse_catalogue_http({"object": "list", "data": [live_item]})
+
+    assert len(models) == 1
+    assert models[0].provider_id == "opencode-go"
+    assert models[0].full_id == "opencode-go/gemini-4-argon"
+
+
 def test_snapshot_lifecycle(tmp_path):
     cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")

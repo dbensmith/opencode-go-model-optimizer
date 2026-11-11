@@ -90,7 +90,8 @@ def _extract_model_limit(limit_raw: Any) -> ModelLimit:
 def model_from_dict(d: dict[str, Any]) -> NormalizedModel:
     """Convert raw catalog dictionary to a NormalizedModel."""
     model_id = str(d.get("id", ""))
-    provider_id = str(d.get("providerID", d.get("owned_by", "opencode-go")))
+    # `owned_by` is the vendor label ("opencode"), not a provider ID; never use it.
+    provider_id = str(d.get("providerID") or "opencode-go")
     name = str(d.get("name", model_id))
     status = str(d.get("status", "active"))
     release_date = str(d.get("release_date", d.get("last_updated", "")))

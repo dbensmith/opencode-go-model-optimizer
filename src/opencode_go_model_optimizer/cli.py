@@ -426,11 +426,13 @@ def handle_select(args: argparse.Namespace) -> int:
     skip_models = set(args.skip)
     preferred_tiers = _parse_preferred_tiers(args.prefer)
     candidate_ids = {
-        m.id
+        ref
         for m in models
         if m.id not in skip_models
+        and m.full_id not in skip_models
         and m.limit.context >= args.min_context
         and m.limit.output >= args.min_output
+        for ref in (m.id, m.full_id)
     }
     for tier, model_id in preferred_tiers.items():
         if model_id not in candidate_ids:

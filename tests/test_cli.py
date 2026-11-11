@@ -958,6 +958,53 @@ def test_prefer_unknown_model_warns(tmp_path, capsys):
     json.loads(cap.out)
 
 
+def test_prefer_full_id_is_honored_without_warning(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    rc = main(
+        [
+            "select",
+            "--snapshot",
+            str(snap_path),
+            "--prefer",
+            "heavy=opencode-go/deepseek-v4.1-flash",
+        ]
+    )
+    assert rc == 0
+    cap = capsys.readouterr()
+    assert "warning" not in cap.err
+    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/deepseek-v4.1-flash"
+
+
+def test_prefer_bare_id_is_honored_without_warning(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=deepseek-v4.1-flash"])
+    assert rc == 0
+    cap = capsys.readouterr()
+    assert "warning" not in cap.err
+    assert json.loads(cap.out)["tiers"]["heavy"] == "opencode-go/deepseek-v4.1-flash"
+
+
+def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    rc = main(
+        [
+            "select",
+            "--snapshot",
+            str(snap_path),
+            "--skip",
+            "opencode-go/deepseek-v4.1-flash",
+            "--prefer",
+            "heavy=opencode-go/deepseek-v4.1-flash",
+            "--prefer",
+            "light=opencode-go/does-not-exist",
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "preferred model 'opencode-go/deepseek-v4.1-flash' for tier 'heavy'" in err
+    assert "preferred model 'opencode-go/does-not-exist' for tier 'light'" in err
+
+
 def test_cache_ttl_env_invalid(monkeypatch, capsys):
     from opencode_go_model_optimizer.cli import _env_cache_ttl
 
