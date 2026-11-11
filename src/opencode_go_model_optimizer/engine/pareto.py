@@ -58,6 +58,42 @@ def compute_quota_burn_pct(
     return (1000.0 / turns_per_mo) * 100.0
 
 
+BURN_BASES = ("auto", "tokens", "estimate")
+
+
+def resolve_burn_basis(
+    basis: str, profile: str = "general", token_mix: tuple[int, int, int] | None = None
+) -> str:
+    """Resolve ``auto`` to ``estimate`` (default mix) or ``tokens`` (custom mix or profile)."""
+    if basis not in BURN_BASES:
+        raise ValueError(f"unknown burn basis {basis!r}; choose from {', '.join(BURN_BASES)}")
+    if basis == "auto":
+        return "estimate" if token_mix is None and profile == "general" else "tokens"
+    return basis
+
+
+def compute_burn_pct(
+    m: NormalizedModel,
+    profile: str = "general",
+    token_mix: tuple[int, int, int] | None = None,
+    basis: str = "auto",
+) -> float:
+    """Monthly quota burn % per 1,000 requests; the single entry point for every consumer.
+
+    ``tokens`` synthesises it from a token mix. ``estimate`` uses the docs-published
+    requests per month for the active plan, scaled by the model's effective price
+    multiplier (published estimates are at list price); models without an estimate fall
+    back to ``tokens``.
+    """
+    if resolve_burn_basis(basis, profile, token_mix) == "estimate" and not m.is_zero_cost:
+        est = m.request_estimate
+        if est is not None and est.per_month > 0:
+            if math.isinf(est.per_month):
+                return 0.0
+            return 1000.0 / est.per_month * 100.0 * (m.price_multiplier or 1.0)
+    return compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
+
+
 def ssd(arr: Sequence[float]) -> float:
     """Sum of squared deviations from the mean."""
     if not arr:
@@ -162,6 +198,7 @@ def evaluate_pareto(
     skip_models: AbstractSet[str] | None = None,
     token_mix: tuple[int, int, int] | None = None,
     weights: tuple[float, float] | None = None,
+    burn_basis: str = "auto",
 ) -> list[NormalizedModel]:
     """Return copies of the models with Quota Burn and Bidirectional Pareto Efficiency (BPE) set.
 
@@ -174,7 +211,9 @@ def evaluate_pareto(
     for m in models:
         m.bpe = None
         m.is_pareto = None
-        m.composite_burn_pct = compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
+        m.composite_burn_pct = compute_burn_pct(
+            m, profile=profile, token_mix=token_mix, basis=burn_basis
+        )
 
     # Models with benchmark intelligence (excluding contributor promos, previews, and skipped models)
     benchmarked = [

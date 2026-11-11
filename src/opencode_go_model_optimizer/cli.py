@@ -238,6 +238,18 @@ _FILTER_PARENT = _parent(
         },
     ),
     (
+        ("--burn-basis",),
+        {
+            "choices": ["auto", "tokens", "estimate"],
+            "default": "auto",
+            "help": (
+                "Quota burn basis: tokens (synthetic token mix x price), estimate (docs "
+                "request estimates, scaled by price multipliers), auto (estimate unless "
+                "--tokens or a non-general --profile is given) (default: auto)"
+            ),
+        },
+    ),
+    (
         ("--weights",),
         {
             "type": _parse_weights,
@@ -503,6 +515,7 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         token_mix=args.tokens,
         weights=args.weights,
         price_basis=args.price_basis,
+        burn_basis=args.burn_basis,
         at=args.at or datetime.now(UTC),
     )
 

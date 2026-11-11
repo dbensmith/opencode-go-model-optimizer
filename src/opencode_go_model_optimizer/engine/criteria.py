@@ -33,6 +33,9 @@ class SelectionCriteria:
     weights: tuple[float, float] | None = None
     # Price multiplier basis: now | blended (7-day average) | worst (7-day max) | list (ignore).
     price_basis: str = "blended"
+    # Quota burn basis: tokens (synthetic mix) | estimate (docs request estimates) | auto
+    # (estimate unless --tokens or a non-general profile asks for the synthetic model).
+    burn_basis: str = "auto"
     at: datetime | None = None  # reference UTC time; None = current time
 
 

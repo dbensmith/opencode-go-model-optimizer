@@ -19,6 +19,9 @@ PRICING_FIELDS = (
     "cache_read_cost",
     "cache_write_cost",
     "multipliers",
+    "requests_per_5h",
+    "requests_per_week",
+    "requests_per_month",
 )
 
 CAPABILITY_FIELDS = ("context", "max_output", "aa_iq", "aa_coding", "speed_tps")
@@ -76,7 +79,8 @@ def _normalize_value(value: Any) -> Any:
 
 
 def _pricing(m: NormalizedModel) -> dict[str, Any]:
-    """Extract comparable pricing/allowance fields from a model."""
+    """Extract comparable pricing/allowance/request-estimate fields (active plan)."""
+    est = m.request_estimate
     return {
         "monthly_allowance": _normalize_value(m.monthly_allowance),
         "input_cost": m.cost.input,
@@ -84,6 +88,9 @@ def _pricing(m: NormalizedModel) -> dict[str, Any]:
         "cache_read_cost": m.cost.cache_read,
         "cache_write_cost": m.cost.cache_write,
         "multipliers": [mult.model_dump(mode="json") for mult in m.multipliers],
+        "requests_per_5h": _normalize_value(est.per_5h) if est else None,
+        "requests_per_week": _normalize_value(est.per_week) if est else None,
+        "requests_per_month": _normalize_value(est.per_month) if est else None,
     }
 
 

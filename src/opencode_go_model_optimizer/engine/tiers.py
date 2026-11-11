@@ -10,7 +10,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 )
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.pareto import (
-    compute_quota_burn_pct,
+    compute_burn_pct,
     effective_quality,
     evaluate_pareto,
     fisher_jenks_3_clusters,
@@ -46,7 +46,7 @@ def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[
         models = [
             m
             for m in models
-            if compute_quota_burn_pct(m, profile=c.profile, token_mix=c.token_mix) <= c.max_burn
+            if compute_burn_pct(m, c.profile, c.token_mix, c.burn_basis) <= c.max_burn
         ]
     return models
 
@@ -205,6 +205,7 @@ def _evaluate(models: list[NormalizedModel], c: SelectionCriteria) -> list[Norma
         skip_models=c.skip_models,
         token_mix=c.token_mix,
         weights=c.weights,
+        burn_basis=c.burn_basis,
     )
 
 

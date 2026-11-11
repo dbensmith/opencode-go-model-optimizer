@@ -187,6 +187,12 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--min-output <tokens>`**: Enforce a minimum output token limit threshold (default: 0).
 - **`--max-output-cost <usd>`**: Enforce a maximum output token cost cap in USD per 1M tokens (e.g. `--max-output-cost 15.0`).
 - **`--max-burn <pct>`**: Enforce a maximum monthly quota burn percentage per 1,000 standardized turns (e.g. `--max-burn 2.5`). Useful because raw token price does not account for each model's monthly allowance.
+- **`--burn-basis {auto,tokens,estimate}`**: Where quota burn (% of the monthly allowance per 1,000 requests) comes from; it drives `--max-burn`, Pareto/BPE scoring, `--explain` and `rank` (default: `auto`).
+  - `tokens`: synthesise it from a token mix (750 in / 60k cached / 250 out, or the `--profile`/`--tokens` mix) times model price, divided by the allowance.
+  - `estimate`: use the request estimates the Go docs publish per plan (`Estimated requests`: per 5 hours, week and month). Burn is `1000 / requests_per_month * 100`; unlimited models burn 0. Published estimates are at list price, so the value is scaled by the model's effective price multiplier (`--price-basis`). A model with no published estimate falls back to `tokens`.
+  - `auto`: `estimate` unless you pass `--tokens` or a non-`general` `--profile`; those imply you want your own synthetic workload, so `tokens` is used.
+
+  Why: the docs estimates reflect each model's real token profile (cache-heavy models differ a lot from the one-size synthetic mix). They also expose the 5-hour window (20% of monthly), which is the limit users usually hit first: `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column (only when estimates are present). Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`), old snapshots without them still load, and `diff` reports estimate changes under pricing changes.
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and Coding weights (e.g. `--weights 0.5,0.5`).
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
