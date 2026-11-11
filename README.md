@@ -52,7 +52,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ## Installation & Usage
 
-Requires Python 3.14+.
+Requires Python 3.15+.
 
 ### Via `pipx`
 ```bash
@@ -198,7 +198,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 
 ## Development
 
-Requires Python 3.14+ (see `.python-version`; `uv` will fetch it automatically).
+Requires Python 3.15+ (see `.python-version`; `uv` will fetch it automatically).
 
 ```bash
 # Clone repository
