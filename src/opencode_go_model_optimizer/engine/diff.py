@@ -18,6 +18,7 @@ PRICING_FIELDS = (
     "output_cost",
     "cache_read_cost",
     "cache_write_cost",
+    "multipliers",
 )
 
 CAPABILITY_FIELDS = ("context", "max_output", "aa_iq", "aa_coding", "speed_tps")
@@ -72,6 +73,7 @@ def _pricing(m: NormalizedModel) -> dict[str, Any]:
         "output_cost": m.cost.output,
         "cache_read_cost": m.cost.cache_read,
         "cache_write_cost": m.cost.cache_write,
+        "multipliers": [mult.model_dump(mode="json") for mult in m.multipliers],
     }
 
 
@@ -162,7 +164,7 @@ def diff_snapshots(
             note(model_id, change_type, {"status": (old_model.status, new_model.status)})
 
     resolved_mode = resolve_mode(mode, old_models + new_models)
-    criteria = SelectionCriteria(mode=resolved_mode, profile=profile)
+    criteria = SelectionCriteria(mode=resolved_mode, profile=profile, price_basis="list")
     old_tiers = select_tiers(old_models, criteria).primary
     new_tiers = select_tiers(new_models, criteria).primary
     tier_changes = {

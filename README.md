@@ -174,6 +174,14 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--snapshot <file>`**: Use a local snapshot JSON instead of fetching (see [Offline Usage](#offline-usage)).
 - **`-o, --output <file>`**: Write output to a file instead of stdout.
 - **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights AA Coding Index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).
+- **`--price-basis {now,blended,worst,list}`**: How catalogue price multipliers (peak-hour surcharges, expiring promos) are applied to input/output/cache prices before ranking, clustering, `--max-output-cost`, and burn calculations (default: `blended`).
+  - `now`: the multiplier in effect at `--at`.
+  - `blended`: the time-weighted average multiplier over the 7 days starting at `--at`. This is the default because a selection typically persists for days, and it accounts for imminent promo expiry (e.g. a 50%-off promo ending in 3 days counts as roughly 1.57x of the promo price).
+  - `worst`: the highest multiplier in effect at any point in the next 7 days.
+  - `list`: ignore multipliers and use the catalogue's base prices (the behaviour before time-aware pricing).
+
+  Models without multipliers are unaffected by every basis. Supported conditions are `utc_days`, `utc_hours`, `date` (`gte`/`gt`/`lte`/`lt`) and `all`/`any` combinators; a multiplier with unrecognised conditions is ignored and reported as a warning when the snapshot is built.
+- **`--at <ISO8601>`**: Reference time for `--price-basis` (UTC when no timezone is given; default: now). With `--explain`, each tier reports `price_multiplier` and `next_price_change` (time and new multiplier) when its model has multipliers; `rank` output includes the effective multiplier. `diff` compares list prices and multiplier definitions, so a newly added or removed promo is reported as a pricing change.
 - **`--skip <model_id>`**: Exclude specific model IDs from selection or ranking (can be specified multiple times).
 - **`--min-context <tokens>`**: Enforce a minimum context window threshold (default: 0).
 - **`--min-output <tokens>`**: Enforce a minimum output token limit threshold (default: 0).

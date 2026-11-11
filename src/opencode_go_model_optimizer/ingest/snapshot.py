@@ -233,6 +233,16 @@ def create_snapshot(
             "no rows parsed from the go-pricing table in the docs; "
             "the docs format may have changed and no pricing was applied"
         )
+    from opencode_go_model_optimizer.engine.pricing import validate_multiplier
+
+    for m in models:
+        for mult in m.multipliers:
+            reason = validate_multiplier(mult)
+            if reason:
+                all_warnings.append(
+                    f"ignoring unsupported price multiplier on {m.id} ({reason}); "
+                    "prices for it may be understated"
+                )
     merged_models = merge_docs_pricing(
         models,
         pricing,

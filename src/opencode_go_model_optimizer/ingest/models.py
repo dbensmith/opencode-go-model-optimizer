@@ -3,7 +3,7 @@
 import math
 from typing import Any
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
 
 
 class TokenCost(BaseModel):
@@ -13,6 +13,13 @@ class TokenCost(BaseModel):
     output: float = 0.0
     cache_read: float = 0.0
     cache_write: float = 0.0
+
+
+class PriceMultiplier(BaseModel):
+    """A conditional price multiplier from the catalogue (peak hours, promo expiry)."""
+
+    factor: float = 1.0
+    when: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelLimit(BaseModel):
@@ -35,6 +42,7 @@ class NormalizedModel(BaseModel):
     limit: ModelLimit = Field(default_factory=ModelLimit)
     monthly_allowance: float | None = None  # USD limit (e.g. 15.0, 60.0, float('inf'))
     plan_allowances: dict[str, float] = Field(default_factory=dict)
+    multipliers: list[PriceMultiplier] = Field(default_factory=list)
 
     # Benchmark metrics (used in pareto mode)
     aa_iq: float | None = None
@@ -54,6 +62,18 @@ class NormalizedModel(BaseModel):
     bpe: float | None = None
     is_pareto: bool | None = None
     composite_burn_pct: float | None = None
+
+    # Effective multiplier applied to ``cost`` for this run (not serialized).
+    _price_multiplier: float | None = PrivateAttr(default=None)
+
+    @property
+    def price_multiplier(self) -> float | None:
+        """Effective price multiplier applied to ``cost``, or None when none was applied."""
+        return self._price_multiplier
+
+    @price_multiplier.setter
+    def price_multiplier(self, value: float | None) -> None:
+        self._price_multiplier = value
 
     @field_validator("monthly_allowance", mode="before")
     @classmethod
