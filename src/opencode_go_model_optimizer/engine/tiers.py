@@ -13,13 +13,15 @@ from opencode_go_model_optimizer.engine.pareto import (
     compute_burn_pct,
     effective_quality,
     evaluate_pareto,
+    filter_benchmarked_models,
     fisher_jenks_3_clusters,
 )
 from opencode_go_model_optimizer.engine.pricing import apply_price_basis
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
-_PAID_TIERS = ("heavy", "balanced", "light")
+PAID_TIERS = ("heavy", "balanced", "light")
+_PAID_TIERS = PAID_TIERS
 
 
 def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
@@ -99,11 +101,9 @@ def _seed_selection(
             if hit:
                 _claim(selected, used, tier, hit)
     if "free" not in selected:
-        free_pick = next((m for m in free_ranked if _is_unused(m, used)), None)
+        free_pick = _pick_unused(free_ranked, used)
         if free_pick:
             _claim(selected, used, "free", free_pick)
-        elif free_ranked:
-            selected["free"] = free_ranked[0].full_id
     return selected, used
 
 
@@ -117,27 +117,12 @@ def _pick_paid_tiers(
                 _claim(selected, used, tier, m)
 
 
-def _benchmarked(models: list[NormalizedModel], skips: frozenset[str]) -> list[NormalizedModel]:
-    """Active, benchmarked, non-free, non-preview models eligible for Pareto clustering."""
-    return [
-        m
-        for m in models
-        if m.status == "active"
-        and (m.aa_iq is not None or m.aa_coding is not None)
-        and not m.is_zero_cost
-        and not m.is_contributor
-        and not m.is_preview
-        and m.id not in skips
-        and m.full_id not in skips
-    ]
-
-
 def _pareto_clusters(
     evaluated: list[NormalizedModel], c: SelectionCriteria
 ) -> dict[str, list[NormalizedModel]]:
     """Cluster the competitive benchmarked pool by quality into ranked per-tier lists."""
     empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
-    benchmarked = _benchmarked(evaluated, c.skip_models)
+    benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
     if not benchmarked:
         return empty
 
@@ -193,7 +178,7 @@ def _allocate_allowance(models: list[NormalizedModel], c: SelectionCriteria) -> 
             selected["free"] = free_pick.full_id if free_pick else ""
         else:
             fallback = next((m for m in paid_ranked if _is_unused(m, used)), None)
-            if eligible_paid and fallback:
+            if fallback:
                 _claim(selected, used, tier, fallback)
             else:
                 selected[tier] = ""
@@ -279,7 +264,7 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
     active_models = [
         m
         for m in _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
-        if m.status == "active" and m.id not in skips and m.full_id not in skips
+        if m.status == "active"
     ]
 
     if c.mode == "pareto":

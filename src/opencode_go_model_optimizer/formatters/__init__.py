@@ -2,6 +2,8 @@
 
 from opencode_go_model_optimizer.formatters.output import (
     explain_tiers,
+    format_diff_json,
+    format_diff_table,
     format_rank_json,
     format_rank_table,
     format_select_compact,
@@ -13,6 +15,8 @@ from opencode_go_model_optimizer.formatters.output import (
 
 __all__ = [
     "explain_tiers",
+    "format_diff_json",
+    "format_diff_table",
     "format_rank_json",
     "format_rank_table",
     "format_select_compact",

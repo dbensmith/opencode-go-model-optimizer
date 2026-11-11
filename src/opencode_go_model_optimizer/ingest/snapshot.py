@@ -25,18 +25,20 @@ from opencode_go_model_optimizer.ingest.docs import (
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import (
+    PLANS,
     NormalizedModel,
     Privacy,
     RequestEstimate,
     Snapshot,
     SnapshotMetadata,
+    normalize_plan,
 )
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_models_dev
 
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
     """Apply plan-specific monthly allowances to models."""
-    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
+    norm_plan = normalize_plan(plan)
     for m in models:
         if norm_plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[norm_plan]
@@ -48,7 +50,7 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
 
 def estimate_for(m: NormalizedModel, plan: str) -> RequestEstimate | None:
     """Return the docs request estimate for a model on a plan (None if unpublished)."""
-    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
+    norm_plan = normalize_plan(plan)
     return m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
 
 
@@ -392,7 +394,7 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     if ttl_seconds <= 0:
         return None
 
-    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
+    norm_plan = normalize_plan(plan)
     path = get_cache_snapshot_path(plan=plan)
     if path.exists():
         try:
@@ -402,7 +404,7 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
             pass
 
     # Check for another plan's fresh cached snapshot that can share plan allowances
-    other_plans = [p for p in ("go", "go-plus", "go-teams") if p != plan and p != norm_plan]
+    other_plans = [p for p in PLANS if p != plan and p != norm_plan]
     now = time.time()
     for other_p in other_plans:
         other_path = get_cache_snapshot_path(plan=other_p)
@@ -512,7 +514,7 @@ def _fetch_and_build(
         aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
     all_plan_pricing = {}
-    for p in ("go", "go-plus", "go-teams"):
+    for p in PLANS:
         parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
         if parsed:
             all_plan_pricing[p] = parsed

@@ -15,19 +15,23 @@ from typing import Any
 from opencode_go_model_optimizer.engine.allowance import is_eligible_free, rank_paid_models
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.tiers import (
+    PAID_TIERS,
     STANDARD_TIERS,
     _allowance_clusters,
     select_tiers,
 )
 from opencode_go_model_optimizer.formatters.output import explain_tiers
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
+from opencode_go_model_optimizer.ingest.models import (
+    PLANS,
+    NormalizedModel,
+    Snapshot,
+    serialize_inf_float,
+)
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
 
 SCHEMA_VERSION = 1
-PLANS = ("go", "go-plus", "go-teams")
 TOP_N = 3
-_PAID = ("heavy", "balanced", "light")
 # Explanation keys that derive from Artificial Analysis or are meaningless without it.
 _DROP_KEYS = {"aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto"}
 
@@ -57,9 +61,10 @@ HOW_DECIDED = [
 def _num(value: float | None) -> float | int | str | None:
     if value is None:
         return None
-    if math.isinf(value):
-        return "unlimited"
-    return int(value) if float(value).is_integer() else round(value, 6)
+    val = serialize_inf_float(value)
+    if isinstance(val, str):
+        return val
+    return int(val) if float(val).is_integer() else round(val, 6)
 
 
 def _strip_aa(value: Any) -> Any:
@@ -153,7 +158,7 @@ def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, A
         }
         candidates = [by_full[f] for f in selection.candidates[tier] if f in by_full]
         entry["candidates"] = [_candidate_row(m) for m in candidates]
-        if tier in _PAID:
+        if tier in PAID_TIERS:
             costs = [m.cost.output for m in clusters[tier]]
             entry["cluster"] = {
                 "size": len(costs),
