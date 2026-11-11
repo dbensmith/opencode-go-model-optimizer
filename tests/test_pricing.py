@@ -334,3 +334,49 @@ def test_cli_list_basis_reproduces_unadjusted_output(tmp_path, capsys):
 def test_cli_bad_at_is_usage_error(tmp_path):
     with pytest.raises(SystemExit):
         main(["select", "--snapshot", _snapshot_file(tmp_path), "--at", "yesterday-ish"])
+
+
+def test_pricing_cache_and_eval_helpers():
+    from opencode_go_model_optimizer.engine.pricing import (
+        _eval_multipliers,
+        _parse_date_str,
+        _parse_hhmm_str,
+        _segments,
+        _valid_multipliers,
+    )
+
+    # 1. Caching
+    _parse_hhmm_str.cache_clear()
+    _parse_date_str.cache_clear()
+
+    sec1 = _parse_hhmm_str("01:30")
+    sec2 = _parse_hhmm_str("01:30")
+    assert sec1 == 5400
+    assert sec2 == 5400
+    assert _parse_hhmm_str.cache_info().hits >= 1
+
+    d1 = _parse_date_str("2026-11-10")
+    d2 = _parse_date_str("2026-11-10")
+    assert d1 == d2
+    assert _parse_date_str.cache_info().hits >= 1
+
+    # 2. _valid_multipliers and _eval_multipliers
+    valid_mult = PriceMultiplier(factor=2.0, when={"utc_hours": {"gte": "01:00"}})
+    invalid_mult = PriceMultiplier(factor=-1.0, when={})
+    m = NormalizedModel(id="test", multipliers=[valid_mult, invalid_mult])
+    vm = _valid_multipliers(m)
+    assert len(vm) == 1
+    assert vm[0] is valid_mult
+
+    when_match = datetime(2026, 11, 10, 2, 0, tzinfo=UTC)
+    when_no_match = datetime(2026, 11, 10, 0, 30, tzinfo=UTC)
+    assert _eval_multipliers(vm, when_match) == 2.0
+    assert _eval_multipliers(vm, when_no_match) == 1.0
+
+    # 3. Model without valid multipliers yields single segment in O(1)
+    m_no_mult = NormalizedModel(id="plain")
+    start = datetime(2026, 11, 10, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
+    segs = list(_segments(m_no_mult, start, end))
+    assert len(segs) == 1
+    assert segs[0] == (start, end, 1.0)

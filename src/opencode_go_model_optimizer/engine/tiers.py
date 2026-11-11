@@ -1,7 +1,7 @@
 """Tier allocator mapping models to industry-standard capability tiers."""
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from opencode_go_model_optimizer.engine.allowance import (
     rank_free_models,
@@ -37,22 +37,23 @@ def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
 
 def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
     """Apply privacy/region, context, output, output-cost, and quota-burn constraints."""
-    if c.skip_models:
-        models = [m for m in models if m.id not in c.skip_models and m.full_id not in c.skip_models]
-    models = [m for m in models if passes_privacy(m, c)]
-    if c.min_context > 0:
-        models = [m for m in models if m.limit.context >= c.min_context]
-    if c.min_output > 0:
-        models = [m for m in models if m.limit.output >= c.min_output]
-    if c.max_output_cost is not None:
-        models = [m for m in models if m.is_zero_cost or m.cost.output <= c.max_output_cost]
-    if c.max_burn is not None:
-        models = [
-            m
-            for m in models
-            if compute_burn_pct(m, c.profile, c.token_mix, c.burn_basis) <= c.max_burn
-        ]
-    return models
+    skips = c.skip_models
+    min_ctx = c.min_context
+    min_out = c.min_output
+    max_cost = c.max_output_cost
+    max_burn = c.max_burn
+    prof, mix, basis = c.profile, c.token_mix, c.burn_basis
+
+    return [
+        m
+        for m in models
+        if (not skips or (m.id not in skips and m.full_id not in skips))
+        and passes_privacy(m, c)
+        and (min_ctx <= 0 or m.limit.context >= min_ctx)
+        and (min_out <= 0 or m.limit.output >= min_out)
+        and (max_cost is None or m.is_zero_cost or m.cost.output <= max_cost)
+        and (max_burn is None or compute_burn_pct(m, prof, mix, basis) <= max_burn)
+    ]
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class TierSelection:
     primary: dict[str, str]
     candidates: dict[str, list[str]]
     models: list[NormalizedModel]
+    clusters: dict[str, list[NormalizedModel]] = field(default_factory=dict)
 
 
 def _is_unused(m: NormalizedModel, used: set[str]) -> bool:
@@ -159,15 +161,30 @@ def _allowance_clusters(paid: list[NormalizedModel]) -> dict[str, list[Normalize
     return {tier: rank_paid_models(c) for tier, c in zip(_PAID_TIERS, clusters, strict=True)}
 
 
-def _allocate_allowance(models: list[NormalizedModel], c: SelectionCriteria) -> dict[str, str]:
+def _allocate_allowance(
+    models: list[NormalizedModel],
+    c: SelectionCriteria,
+    free_ranked: list[NormalizedModel] | None = None,
+    paid_ranked: list[NormalizedModel] | None = None,
+) -> tuple[
+    dict[str, str],
+    dict[str, list[NormalizedModel]],
+    list[NormalizedModel],
+    list[NormalizedModel],
+]:
     """Allowance allocation over already-filtered models."""
     skips = c.skip_models
-    free_ranked = rank_free_models(models, skip_models=skips, allow_contributor=c.allow_contributor)
-    paid_ranked = rank_paid_models(models, skip_models=skips)
+    if free_ranked is None:
+        free_ranked = rank_free_models(
+            models, skip_models=skips, allow_contributor=c.allow_contributor
+        )
+    if paid_ranked is None:
+        paid_ranked = rank_paid_models(models, skip_models=skips)
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
 
     eligible_paid = [m for m in paid_ranked if _is_unused(m, used)]
-    _pick_paid_tiers(selected, used, _allowance_clusters(eligible_paid))
+    clusters = _allowance_clusters(eligible_paid)
+    _pick_paid_tiers(selected, used, clusters)
 
     # Fallback to any remaining unused paid models
     for tier in STANDARD_TIERS:
@@ -182,7 +199,8 @@ def _allocate_allowance(models: list[NormalizedModel], c: SelectionCriteria) -> 
                 _claim(selected, used, tier, fallback)
             else:
                 selected[tier] = ""
-    return selected
+
+    return selected, clusters, free_ranked, paid_ranked
 
 
 def _evaluate(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
@@ -198,7 +216,7 @@ def _evaluate(models: list[NormalizedModel], c: SelectionCriteria) -> list[Norma
 
 def _allocate_pareto(
     models: list[NormalizedModel], c: SelectionCriteria, evaluated: list[NormalizedModel]
-) -> tuple[dict[str, str], dict[str, list[NormalizedModel]]]:
+) -> tuple[dict[str, str], dict[str, list[NormalizedModel]], list[NormalizedModel]]:
     """Pareto allocation over already-filtered, already-evaluated models."""
     free_ranked = rank_free_models(
         evaluated, skip_models=c.skip_models, allow_contributor=c.allow_contributor
@@ -209,35 +227,39 @@ def _allocate_pareto(
 
     # Fall back to allowance allocation if any tier is missing
     if len(selected) < len(STANDARD_TIERS):
-        picks = _allocate_allowance(
-            models, replace(c, preferred_tiers={**c.preferred_tiers, **selected})
+        picks, _, _, _ = _allocate_allowance(
+            models,
+            replace(c, preferred_tiers={**c.preferred_tiers, **selected}),
+            free_ranked=free_ranked,
         )
         for t in STANDARD_TIERS:
             selected.setdefault(t, picks.get(t, ""))
-    return selected, clusters
+    return selected, clusters, free_ranked
 
 
 def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSelection:
     """Pick one model per tier plus up to ``c.top_n`` ordered candidates, evaluating once."""
     filtered = _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
     skips = c.skip_models
-    clusters: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     if c.mode == "pareto":
         pool = _evaluate(filtered, c)
-        selected, clusters = _allocate_pareto(filtered, c, pool)
+        selected, clusters, free_ranked = _allocate_pareto(filtered, c, pool)
+        general_paid = None
     else:
         pool = filtered
-        selected = _allocate_allowance(filtered, c)
+        selected, clusters, free_ranked, general_paid = _allocate_allowance(filtered, c)
     primary = {k: selected.get(k, "") for k in STANDARD_TIERS}
 
     if c.top_n <= 1:
         return TierSelection(
-            primary, {t: ([primary[t]] if primary[t] else []) for t in STANDARD_TIERS}, pool
+            primary,
+            {t: ([primary[t]] if primary[t] else []) for t in STANDARD_TIERS},
+            pool,
+            clusters,
         )
 
-    general_paid = rank_paid_models(filtered, skip_models=skips)
-    if c.mode != "pareto":
-        clusters = _allowance_clusters(general_paid)
+    if general_paid is None:
+        general_paid = rank_paid_models(filtered, skip_models=skips)
 
     def fill(tier: str, pools: list[list[NormalizedModel]]) -> list[str]:
         candidates = [primary[tier]] if primary[tier] else []
@@ -249,18 +271,14 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
                     candidates.append(m.full_id)
         return candidates
 
-    free_ranked = rank_free_models(
-        filtered, skip_models=skips, allow_contributor=c.allow_contributor
-    )
     fallbacks = {"free": fill("free", [free_ranked])}
     for tier in _PAID_TIERS:
         fallbacks[tier] = fill(tier, [clusters[tier], general_paid])
-    return TierSelection(primary, {t: fallbacks[t] for t in STANDARD_TIERS}, pool)
+    return TierSelection(primary, {t: fallbacks[t] for t in STANDARD_TIERS}, pool, clusters)
 
 
 def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models as copies carrying rank, tier and metrics."""
-    skips = c.skip_models
     active_models = [
         m
         for m in _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
@@ -279,19 +297,15 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
                 tie_break_key(m),
             ),
         )
-        tiers_map, _ = _allocate_pareto(evaluated, c, evaluated)
+        tiers_map, _, _ = _allocate_pareto(evaluated, c, evaluated)
     else:
-        paid = rank_paid_models(active_models, skip_models=skips)
-        free = rank_free_models(
-            active_models, skip_models=skips, allow_contributor=c.allow_contributor
-        )
+        tiers_map, _, free, paid = _allocate_allowance(active_models, c)
         seen = {m.full_id for m in paid} | {m.full_id for m in free}
         remaining = sorted(
             [m for m in active_models if m.full_id not in seen],
             key=lambda m: m.id,
         )
         ranked = paid + free + remaining
-        tiers_map = _allocate_allowance(active_models, c)
     tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
 
     return [

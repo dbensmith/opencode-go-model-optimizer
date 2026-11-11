@@ -32,6 +32,17 @@ def client_scope(client: httpx.Client | None) -> Iterator[httpx.Client]:
         yield owned
 
 
+def _default_file_mode() -> int:
+    """Return 0o666 masked by the process umask without mutating process state when possible."""
+    with contextlib.suppress(OSError, ValueError):
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("Umask:"):
+                return 0o666 & ~int(line.split()[1], 8)
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write text to a temp file in the same directory, then atomically replace the target."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -41,9 +52,7 @@ def atomic_write_text(path: Path, content: str) -> None:
         try:
             mode = os.stat(path).st_mode & 0o777
         except FileNotFoundError:
-            umask = os.umask(0)
-            os.umask(umask)
-            mode = 0o666 & ~umask
+            mode = _default_file_mode()
         os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:

@@ -1,6 +1,7 @@
 """Time-aware pricing: evaluate catalogue price multipliers (peak hours, promo expiry)."""
 
 import contextlib
+import functools
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, time, timedelta
 from math import gcd
@@ -26,13 +27,18 @@ def _utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
-def _hhmm(value: Any) -> int:
-    """Parse "HH:MM" into seconds since midnight."""
+@functools.lru_cache(maxsize=256)
+def _parse_hhmm_str(value: str) -> int:
     try:
-        t = time.fromisoformat(str(value))
+        t = time.fromisoformat(value)
     except ValueError as exc:
         raise UnsupportedConditionError(f"bad time {value!r}") from exc
     return t.hour * 3600 + t.minute * 60 + t.second
+
+
+def _hhmm(value: Any) -> int:
+    """Parse "HH:MM" into seconds since midnight."""
+    return _parse_hhmm_str(str(value))
 
 
 def _compare(spec: Any, actual: Any, parse: Callable[[Any], Any]) -> bool:
@@ -46,11 +52,16 @@ def _compare(spec: Any, actual: Any, parse: Callable[[Any], Any]) -> bool:
     return all(results)
 
 
-def _parse_date(value: Any) -> Any:
+@functools.lru_cache(maxsize=256)
+def _parse_date_str(value: str) -> Any:
     try:
-        return datetime.fromisoformat(str(value)).date()
+        return datetime.fromisoformat(value).date()
     except ValueError as exc:
         raise UnsupportedConditionError(f"bad date {value!r}") from exc
+
+
+def _parse_date(value: Any) -> Any:
+    return _parse_date_str(str(value))
 
 
 def _eval(cond: Any, dt: datetime) -> bool:
@@ -95,14 +106,23 @@ def validate_multiplier(m: PriceMultiplier) -> str | None:
     return None
 
 
-def multiplier_at(m: NormalizedModel, dt: datetime) -> float:
-    """Product of the factors of all (valid) multipliers matching at UTC datetime ``dt``."""
-    dt = _utc(dt)
+def _valid_multipliers(m: NormalizedModel) -> list[PriceMultiplier]:
+    """Return multipliers on ``m`` that pass validation."""
+    return [mult for mult in m.multipliers if validate_multiplier(mult) is None]
+
+
+def _eval_multipliers(valid_mults: list[PriceMultiplier], dt: datetime) -> float:
+    """Product of factors of pre-validated multipliers matching at UTC ``dt``."""
     result = 1.0
-    for mult in m.multipliers:
-        if validate_multiplier(mult) is None and _eval(mult.when, dt):
+    for mult in valid_mults:
+        if _eval(mult.when, dt):
             result *= mult.factor
     return result
+
+
+def multiplier_at(m: NormalizedModel, dt: datetime) -> float:
+    """Product of the factors of all (valid) multipliers matching at UTC datetime ``dt``."""
+    return _eval_multipliers(_valid_multipliers(m), _utc(dt))
 
 
 def _minutes(cond: Any, out: set[int]) -> None:
@@ -118,10 +138,10 @@ def _minutes(cond: Any, out: set[int]) -> None:
                     _minutes(sub, out)
 
 
-def _step_minutes(m: NormalizedModel) -> int:
+def _step_minutes(multipliers: list[PriceMultiplier]) -> int:
     """Grid step (minutes) aligned to every boundary: gcd of 60 and all boundary minutes."""
     minutes: set[int] = set()
-    for mult in m.multipliers:
+    for mult in multipliers:
         _minutes(mult.when, minutes)
     step = 60
     for minute in minutes:
@@ -137,13 +157,17 @@ def _segments(
     Conditions only change on the UTC grid of ``_step_minutes``, so each grid-aligned
     segment has a constant value, sampled at its midpoint.
     """
-    step = timedelta(minutes=_step_minutes(m))
+    valid_mults = _valid_multipliers(m)
+    if not valid_mults:
+        yield start, end, 1.0
+        return
+    step = timedelta(minutes=_step_minutes(valid_mults))
     midnight = start.replace(hour=0, minute=0, second=0, microsecond=0)
     cursor = start
     nxt = midnight + step * ((start - midnight) // step + 1)
     while cursor < end:
         seg_end = min(nxt, end)
-        yield cursor, seg_end, multiplier_at(m, cursor + (seg_end - cursor) / 2)
+        yield cursor, seg_end, _eval_multipliers(valid_mults, cursor + (seg_end - cursor) / 2)
         cursor, nxt = seg_end, nxt + step
 
 

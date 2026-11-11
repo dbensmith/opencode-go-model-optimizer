@@ -1365,3 +1365,41 @@ def test_token_mix_and_weights_flow_through_pareto():
     assert [m.id for m in ranked] == ["low-burn"]
     assert ranked[0].bpe is not None
     assert ranked[0].composite_burn_pct is not None
+
+
+def test_tier_selection_clusters_and_allocate_efficiency():
+    from opencode_go_model_optimizer.engine.tiers import (
+        SelectionCriteria,
+        TierSelection,
+        _allocate_allowance,
+        select_tiers,
+    )
+
+    # 1. TierSelection default field
+    ts = TierSelection(primary={"free": "f"}, candidates={"free": ["f"]}, models=[])
+    assert ts.clusters == {}
+
+    # 2. select_tiers returns clusters populated
+    m1 = NormalizedModel(id="p1", cost=TokenCost(output=10.0), monthly_allowance=100.0)
+    m2 = NormalizedModel(id="p2", cost=TokenCost(output=5.0), monthly_allowance=50.0)
+    m3 = NormalizedModel(id="p3", cost=TokenCost(output=1.0), monthly_allowance=20.0)
+    m_free = NormalizedModel(id="free1", is_zero_cost=True)
+    pool = [m1, m2, m3, m_free]
+    sel = select_tiers(pool, SelectionCriteria(mode="allowance"))
+    assert "heavy" in sel.clusters
+    assert "balanced" in sel.clusters
+    assert "light" in sel.clusters
+
+    # 3. _allocate_allowance with precomputed ranked models
+    free_ranked = [m_free]
+    paid_ranked = [m1, m2, m3]
+    selected, full_clusters, ret_free, ret_paid = _allocate_allowance(
+        pool,
+        SelectionCriteria(mode="allowance"),
+        free_ranked=free_ranked,
+        paid_ranked=paid_ranked,
+    )
+    assert "heavy" in full_clusters
+    assert ret_free is free_ranked
+    assert ret_paid is paid_ranked
+    assert selected["free"] == m_free.full_id

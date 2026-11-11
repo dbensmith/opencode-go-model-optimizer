@@ -1056,3 +1056,57 @@ def _umask() -> int:
     mask = os.umask(0)
     os.umask(mask)
     return mask
+
+
+def test_build_endpoint_index_and_lookup_pricing():
+    from opencode_go_model_optimizer.ingest.snapshot import (
+        _build_endpoint_index,
+        _lookup_pricing,
+    )
+
+    assert _build_endpoint_index(None) == {}
+    assert _build_endpoint_index({}) == {}
+
+    endpoints = {
+        "Super Model 1.0 (50% off)": "super-1",
+        "Super Model 1.0 (Deprecated)": "super-1",
+        "Other Model": "other-2",
+    }
+    index = _build_endpoint_index(endpoints)
+    assert "super-1" in index
+    assert "other-2" in index
+    assert norm_name("Super Model 1.0 (50% off)") in index["super-1"]
+
+    m1 = NormalizedModel(id="super-1", name="Custom Name")
+    pricing_map = {
+        norm_name("Super Model 1.0 (50% off)"): {"allowance": 100.0, "output_cost": 5.0},
+    }
+    found = _lookup_pricing(m1, pricing_map, index)
+    assert found is not None
+    assert found[1]["allowance"] == 100.0
+
+    # Model not in endpoints falls back to fuzzy name matching
+    m2 = NormalizedModel(id="fuzzy-model", name="Fuzzy Display")
+    pricing_fuzzy = {
+        norm_name("Fuzzy Display"): {"allowance": 50.0, "output_cost": 2.0},
+    }
+    found_fuzzy = _lookup_pricing(m2, pricing_fuzzy, index)
+    assert found_fuzzy is not None
+    assert found_fuzzy[1]["allowance"] == 50.0
+
+    # Model in endpoints but key not in pricing map returns None (no fuzzy fallback)
+    m3 = NormalizedModel(id="other-2", name="Fuzzy Display")
+    assert _lookup_pricing(m3, pricing_fuzzy, index) is None
+
+
+def test_default_file_mode_and_atomic_write(tmp_path):
+    from opencode_go_model_optimizer.ingest.http import _default_file_mode, atomic_write_text
+
+    mode = _default_file_mode()
+    assert isinstance(mode, int)
+    assert (mode & ~0o777) == 0
+    # Write new file to verify default mode applies on FileNotFoundError
+    target = tmp_path / "test_file.txt"
+    atomic_write_text(target, "hello world")
+    assert target.read_text(encoding="utf-8") == "hello world"
+    assert (target.stat().st_mode & 0o777) == mode
