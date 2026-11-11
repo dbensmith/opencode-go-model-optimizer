@@ -1,10 +1,8 @@
 """Formatters for CLI output in JSON, table, and compact formats."""
 
-from __future__ import annotations
-
 import json
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from opencode_go_model_optimizer.engine.diff import SnapshotDiff
@@ -24,7 +22,7 @@ def format_select_json(
     snapshot_info: dict[str, Any] | None = None,
 ) -> str:
     """Format tier selection as standard JSON."""
-    ts = evaluated_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ts = evaluated_at or datetime.now(UTC).isoformat(timespec="seconds")
     payload: dict[str, Any] = {
         "plan": plan,
         "tiers": tiers,

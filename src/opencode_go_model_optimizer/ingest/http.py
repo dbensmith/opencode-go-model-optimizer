@@ -1,7 +1,5 @@
 """Shared HTTP client helpers for ingest modules."""
 
-from __future__ import annotations
-
 import contextlib
 import os
 import tempfile

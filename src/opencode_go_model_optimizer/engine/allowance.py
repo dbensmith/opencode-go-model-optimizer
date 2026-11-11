@@ -1,7 +1,5 @@
 """Allowance ranking engine using deterministic allowance and cost heuristics."""
 
-from __future__ import annotations
-
 import functools
 import math
 

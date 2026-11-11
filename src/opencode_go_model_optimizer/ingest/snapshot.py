@@ -1,14 +1,12 @@
 """Snapshot generator and persistence for OpenCode Go models."""
 
-from __future__ import annotations
-
 import concurrent.futures
 import functools
 import json
 import math
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -39,7 +37,7 @@ def _to_float(value: Any) -> float | None:
         return None
     try:
         result = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return result if math.isfinite(result) else None
 
@@ -91,7 +89,7 @@ def fetch_aa_benchmarks(
                     if item.get("name") and norm_name(str(item["name"])):
                         benchmarks[norm_name(str(item["name"]))] = entry
             return benchmarks
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         return {}
 
 
@@ -180,7 +178,7 @@ def create_snapshot(
         all_plan_pricing=all_plan_pricing,
         models_dev_metadata=models_dev_metadata,
     )
-    now_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_utc = datetime.now(UTC).isoformat(timespec="seconds")
 
     return Snapshot(
         schema_version=1,
@@ -232,7 +230,7 @@ def load_reference_snapshot() -> Snapshot | None:
             stat = p.stat()
             snap = _load_reference_snapshot_cached(str(p), stat.st_mtime_ns)
             return snap.model_copy(deep=True)
-        except (json.JSONDecodeError, OSError, ValueError):
+        except json.JSONDecodeError, OSError, ValueError:
             return None
     return None
 
@@ -254,7 +252,7 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: int = 3600) -> Snapshot 
         try:
             if time.time() - path.stat().st_mtime <= ttl_seconds:
                 return load_snapshot(path)
-        except (OSError, ValueError, json.JSONDecodeError):
+        except OSError, ValueError, json.JSONDecodeError:
             pass
 
     # Check for another plan's fresh cached snapshot that can share plan allowances
@@ -273,7 +271,7 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: int = 3600) -> Snapshot 
                         apply_plan(snap.models, norm_plan)
                         snap.plan = norm_plan
                         return snap
-            except (OSError, ValueError, json.JSONDecodeError):
+            except OSError, ValueError, json.JSONDecodeError:
                 continue
 
     return None

@@ -1,7 +1,5 @@
 """Pareto efficiency and Fisher-Jenks natural breaks ranking engine."""
 
-from __future__ import annotations
-
 import bisect
 import math
 from collections.abc import Callable, Sequence

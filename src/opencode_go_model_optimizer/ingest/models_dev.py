@@ -1,7 +1,5 @@
 """Optional metadata enrichment from models.dev."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import httpx
@@ -73,5 +71,5 @@ def fetch_models_dev(
             response = http.get(url)
             response.raise_for_status()
             return parse_models_dev(response.json())
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         return {}

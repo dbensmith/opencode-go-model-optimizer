@@ -1,7 +1,5 @@
 """Command line interface for opencode-go-model-optimizer."""
 
-from __future__ import annotations
-
 import argparse
 import os
 import sys

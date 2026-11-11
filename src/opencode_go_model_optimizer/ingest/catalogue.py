@@ -1,7 +1,5 @@
 """Ingestor for the OpenCode Go model catalogue."""
 
-from __future__ import annotations
-
 import json
 import re
 import shutil
@@ -31,12 +29,12 @@ def _safe_float(val: Any) -> float:
             if isinstance(v, (int, float, str)):
                 try:
                     return float(v)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     continue
         return 0.0
     try:
         return float(val)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return 0.0
 
 
@@ -135,7 +133,7 @@ def parse_catalogue_cli(text: str) -> list[NormalizedModel]:
             data = json.loads(body)
             if isinstance(data, dict):
                 models.append(model_from_dict(data))
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except json.JSONDecodeError, ValueError, KeyError:
             pass
 
     for line in lines:
@@ -180,7 +178,7 @@ def fetch_catalogue(
                 models = parse_catalogue_cli(proc.stdout)
                 if models:
                     return models
-        except (subprocess.SubprocessError, OSError):
+        except subprocess.SubprocessError, OSError:
             pass
 
     # 2. Fallback to direct HTTP
