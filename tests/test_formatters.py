@@ -7,6 +7,8 @@ from opencode_go_model_optimizer.formatters.output import (
     format_rank_json,
     format_rank_table,
     format_select_compact,
+    format_select_env,
+    format_select_github_output,
     format_select_json,
     format_select_table,
 )
@@ -37,6 +39,50 @@ def test_format_select_compact():
     assert len(lines) == 2
     assert "heavy opencode-go/qwen" in lines
     assert "free opencode-go/iceman" in lines
+
+
+def test_format_select_env():
+    tiers = {
+        "heavy": "opencode-go/kimi-k3.1-pro",
+        "balanced": "opencode-go/deepseek-v4.1-flash",
+        "light": "opencode-go/mimo-v2.6-flash",
+        "free": "opencode-go/gemini-4-flash",
+    }
+    env_str = format_select_env(tiers)
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/kimi-k3.1-pro"' in env_str
+    assert 'OPENCODE_MODEL_BALANCED="opencode-go/deepseek-v4.1-flash"' in env_str
+    assert 'OPENCODE_MODEL_LIGHT="opencode-go/mimo-v2.6-flash"' in env_str
+    assert 'OPENCODE_MODEL_FREE="opencode-go/gemini-4-flash"' in env_str
+
+    # Missing tier defaults to empty string
+    partial = {"heavy": "opencode-go/kimi"}
+    partial_env = format_select_env(partial)
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/kimi"' in partial_env
+    assert 'OPENCODE_MODEL_BALANCED=""' in partial_env
+    assert 'OPENCODE_MODEL_LIGHT=""' in partial_env
+    assert 'OPENCODE_MODEL_FREE=""' in partial_env
+
+
+def test_format_select_github_output():
+    tiers = {
+        "heavy": "opencode-go/kimi-k3.1-pro",
+        "balanced": "opencode-go/deepseek-v4.1-flash",
+        "light": "opencode-go/mimo-v2.6-flash",
+        "free": "opencode-go/gemini-4-flash",
+    }
+    gh_str = format_select_github_output(tiers)
+    assert "heavy=opencode-go/kimi-k3.1-pro" in gh_str
+    assert "balanced=opencode-go/deepseek-v4.1-flash" in gh_str
+    assert "light=opencode-go/mimo-v2.6-flash" in gh_str
+    assert "free=opencode-go/gemini-4-flash" in gh_str
+
+    # Missing tier defaults to empty string
+    partial = {"heavy": "opencode-go/kimi"}
+    partial_gh = format_select_github_output(partial)
+    assert "heavy=opencode-go/kimi" in partial_gh
+    assert "balanced=" in partial_gh
+    assert "light=" in partial_gh
+    assert "free=" in partial_gh
 
 
 def test_format_select_table_with_missing_and_varied_models():
@@ -82,6 +128,7 @@ def test_format_rank_table_pareto():
     m1 = NormalizedModel(
         id="pareto-m1",
         rank=1,
+        tier="heavy",
         bpe=0.952,
         aa_iq=75.5,
         composite_burn_pct=2.5,
@@ -92,6 +139,7 @@ def test_format_rank_table_pareto():
     m2 = NormalizedModel(
         id="pareto-m2",
         rank=None,
+        tier=None,
         bpe=None,
         aa_iq=None,
         composite_burn_pct=None,
@@ -105,6 +153,8 @@ def test_format_rank_table_pareto():
         cost=TokenCost(output=0.0),
     )
     table = format_rank_table([m1, m2, m3], mode="pareto")
+    assert "Tier" in table
+    assert "heavy" in table
     assert "BPE" in table
     assert "IQ" in table
     assert "Burn %" in table
@@ -120,6 +170,7 @@ def test_format_rank_table_allowance():
     m1 = NormalizedModel(
         id="allow-m1",
         rank=1,
+        tier="balanced",
         monthly_allowance=50.0,
         cost=TokenCost(output=1.5),
         release_date="2026-08-01",
@@ -129,6 +180,7 @@ def test_format_rank_table_allowance():
     m2 = NormalizedModel(
         id="allow-m2",
         rank=None,
+        tier=None,
         monthly_allowance=float("inf"),
         is_zero_cost=True,
         release_date="",
@@ -136,6 +188,8 @@ def test_format_rank_table_allowance():
         status="deprecated",
     )
     table = format_rank_table([m1, m2], mode="allowance")
+    assert "Tier" in table
+    assert "balanced" in table
     assert "Context" in table
     assert "Status" in table
     assert "500,000" in table

@@ -10,6 +10,7 @@ import pytest
 
 from opencode_go_model_optimizer.cli import (
     _load_or_fetch_models,
+    _parse_preferred_tiers,
     _resolve_mode,
     main,
     parse_args,
@@ -38,17 +39,75 @@ def _create_temp_snapshot(tmp_path: Path) -> Path:
 
 
 def test_parse_args_select():
-    args = parse_args(["select", "--format", "json", "--mode", "allowance", "--cache-ttl", "300"])
+    args = parse_args(
+        [
+            "select",
+            "--format",
+            "env",
+            "--mode",
+            "allowance",
+            "--cache-ttl",
+            "300",
+            "--skip",
+            "model-a",
+            "--skip",
+            "model-b",
+            "--prefer",
+            "heavy=kimi-k3.1-pro",
+            "--min-context",
+            "128000",
+            "--no-contributor",
+        ]
+    )
     assert args.command == "select"
-    assert args.format == "json"
+    assert args.format == "env"
     assert args.mode == "allowance"
     assert args.cache_ttl == 300
+    assert args.skip == ["model-a", "model-b"]
+    assert args.prefer == ["heavy=kimi-k3.1-pro"]
+    assert args.min_context == 128000
+    assert args.no_contributor is True
 
 
 def test_parse_args_rank():
-    args = parse_args(["rank", "--format", "json", "--cache-ttl", "600"])
+    args = parse_args(
+        [
+            "rank",
+            "--format",
+            "json",
+            "--cache-ttl",
+            "600",
+            "--skip",
+            "model-c",
+            "--min-context",
+            "200000",
+            "--no-contributor",
+        ]
+    )
     assert args.command == "rank"
     assert args.cache_ttl == 600
+    assert args.skip == ["model-c"]
+    assert args.min_context == 200000
+    assert args.no_contributor is True
+
+
+def test_parse_preferred_tiers_helper():
+    assert _parse_preferred_tiers(None) == {}
+    assert _parse_preferred_tiers([]) == {}
+
+    parsed = _parse_preferred_tiers(
+        [
+            "heavy=kimi-k3.1-pro",
+            "balanced = deepseek-v4.1-flash ",
+            "invalid_format",
+            "=no_key",
+            "no_val=",
+        ]
+    )
+    assert parsed == {
+        "heavy": "kimi-k3.1-pro",
+        "balanced": "deepseek-v4.1-flash",
+    }
 
 
 def test_main_no_args(capsys):
@@ -81,6 +140,76 @@ def test_cli_select_table(tmp_path, capsys):
     assert "Tier" in captured.out
     assert "heavy" in captured.out
     assert "opencode-go/qwen3.8-max" in captured.out
+
+
+def test_cli_select_env_and_github_output(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    # --format env
+    rc = main(["select", "--format", "env", "--snapshot", str(snap_path)])
+    assert rc == 0
+    env_out = capsys.readouterr().out
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/qwen3.8-max"' in env_out
+    assert 'OPENCODE_MODEL_FREE="opencode-go/iceman-contributor-free"' in env_out
+
+    # --format github-output
+    rc = main(["select", "--format", "github-output", "--snapshot", str(snap_path)])
+    assert rc == 0
+    gh_out = capsys.readouterr().out
+    assert "heavy=opencode-go/qwen3.8-max" in gh_out
+    assert "free=opencode-go/iceman-contributor-free" in gh_out
+
+
+def test_cli_select_filters_and_overrides(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    # Test --skip, --prefer, --no-contributor, --min-context
+    rc = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--skip",
+            "opencode-go/qwen3.8-max",
+            "--prefer",
+            "heavy=opencode-go/glm-5.3-flash",
+            "--no-contributor",
+            "--min-context",
+            "200000",
+        ]
+    )
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["tiers"]["heavy"] == "opencode-go/glm-5.3-flash"
+    assert data["tiers"]["free"] == "opencode-go/beam-free"
+
+
+def test_cli_rank_filters(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+
+    rc = main(
+        [
+            "rank",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--skip",
+            "qwen3.8-max",
+            "--min-context",
+            "500000",
+            "--no-contributor",
+        ]
+    )
+    assert rc == 0
+    models = json.loads(capsys.readouterr().out)
+    assert all(m["id"] != "qwen3.8-max" for m in models)
+    assert all(m["limit"]["context"] >= 500000 for m in models)
+    free_models = [m for m in models if m.get("tier") == "free"]
+    assert len(free_models) == 1
+    assert not free_models[0].get("is_contributor", False)
 
 
 def test_cli_select_plan_switch(tmp_path):

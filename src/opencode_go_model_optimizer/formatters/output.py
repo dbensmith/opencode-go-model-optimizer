@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
@@ -28,6 +29,18 @@ def format_select_json(
 def format_select_compact(tiers: dict[str, str]) -> str:
     """Format tier selection as compact space-delimited lines."""
     lines = [f"{tier} {model_id}" for tier, model_id in tiers.items() if model_id]
+    return "\n".join(lines)
+
+
+def format_select_env(tiers: dict[str, str]) -> str:
+    """Format tier selection as shell environment variable assignments."""
+    lines = [f'OPENCODE_MODEL_{tier.upper()}="{tiers.get(tier, "")}"' for tier in STANDARD_TIERS]
+    return "\n".join(lines)
+
+
+def format_select_github_output(tiers: dict[str, str]) -> str:
+    """Format tier selection as GitHub Actions key=value output lines."""
+    lines = [f"{tier}={tiers.get(tier, '')}" for tier in STANDARD_TIERS]
     return "\n".join(lines)
 
 
@@ -68,7 +81,17 @@ def format_rank_table(
 ) -> str:
     """Format full catalog ranking as an ASCII table."""
     if mode == "pareto":
-        headers = ["Rank", "Model ID", "BPE", "IQ", "Burn %", "Allowance", "Output Cost", "Release"]
+        headers = [
+            "Rank",
+            "Model ID",
+            "Tier",
+            "BPE",
+            "IQ",
+            "Burn %",
+            "Allowance",
+            "Output Cost",
+            "Release",
+        ]
         rows: list[list[str]] = []
         for m in ranked_models:
             bpe_str = f"{m.bpe:.3f}" if m.bpe is not None else "-"
@@ -86,6 +109,7 @@ def format_rank_table(
                 [
                     str(m.rank or "-"),
                     m.id,
+                    m.tier or "-",
                     bpe_str,
                     iq_str,
                     burn_str,
@@ -98,6 +122,7 @@ def format_rank_table(
         headers = [
             "Rank",
             "Model ID",
+            "Tier",
             "Allowance",
             "Output Cost",
             "Release Date",
@@ -119,6 +144,7 @@ def format_rank_table(
                 [
                     str(m.rank or "-"),
                     m.id,
+                    m.tier or "-",
                     allow_str,
                     cost_str,
                     m.release_date or "-",
