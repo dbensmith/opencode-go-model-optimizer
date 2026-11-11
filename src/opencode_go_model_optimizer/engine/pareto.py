@@ -6,6 +6,7 @@ import bisect
 import math
 from collections.abc import Callable, Sequence
 
+from opencode_go_model_optimizer.engine.allowance import tie_break_key
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 # Uniform agentic turn token mix: 750 in / 60,000 cached read / 250 out
@@ -81,7 +82,7 @@ def fisher_jenks_3_clusters(
 ) -> tuple[list[NormalizedModel], list[NormalizedModel], list[NormalizedModel]]:
     """1D Fisher-Jenks Natural Breaks into 3 clusters (WCSS minimization)."""
     val_fn = key or effective_quality
-    sorted_m = sorted(models, key=val_fn, reverse=True)
+    sorted_m = sorted(models, key=lambda m: (-val_fn(m), tie_break_key(m)))
     qs = [val_fn(x) for x in sorted_m]
     n = len(qs)
 
@@ -135,13 +136,18 @@ def fisher_jenks_3_clusters(
 def evaluate_pareto(
     models: list[NormalizedModel],
     profile: str = "general",
+    skip_models: set[str] | None = None,
 ) -> list[NormalizedModel]:
     """Compute Quota Burn and Bidirectional Pareto Efficiency (BPE) for all models."""
-    # 1. Compute burn for each model
+    skips = set(skip_models or set())
+
+    # 1. Clear stale metrics and compute burn for each model
     for m in models:
+        m.bpe = None
+        m.is_pareto = None
         m.composite_burn_pct = compute_quota_burn_pct(m, profile=profile)
 
-    # Models with benchmark intelligence (excluding contributor promos and previews)
+    # Models with benchmark intelligence (excluding contributor promos, previews, and skipped models)
     benchmarked = [
         m
         for m in models
@@ -150,6 +156,8 @@ def evaluate_pareto(
         and not m.is_zero_cost
         and not m.is_contributor
         and not m.is_preview
+        and m.id not in skips
+        and m.full_id not in skips
     ]
     if not benchmarked:
         return models

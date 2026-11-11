@@ -330,6 +330,22 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
     table_out = capsys.readouterr().out
     assert "$250.00" in table_out
 
+    # JSON format should report effective plan 'go-plus'
+    rc_json = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--plan",
+            "go-plus",
+        ]
+    )
+    assert rc_json == 0
+    json_out = json.loads(capsys.readouterr().out)
+    assert json_out["plan"] == "go-plus"
+
 
 def test_cli_select_output_file(tmp_path):
     snap_path = _create_temp_snapshot(tmp_path)
@@ -465,6 +481,40 @@ def test_load_or_fetch_models(tmp_path):
         models, plan = _load_or_fetch_models(plan="go-plus", cache_ttl=3600)
         assert len(models) == 1
         mock_save.assert_called_once_with(dummy_snap)
+
+    # Snapshot provided with plan_allowances for requested plan
+    snap_multi = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[NormalizedModel(id="m1", plan_allowances={"go-plus": 60.0})],
+        metadata=SnapshotMetadata(),
+    )
+    multi_path = tmp_path / "snap_multi.json"
+    save_snapshot(snap_multi, multi_path)
+    models, plan = _load_or_fetch_models(str(multi_path), plan="go-plus")
+    assert plan == "go-plus"
+
+    # Live fetch fails with network error, falls back to reference snapshot with plan_allowances
+    ref_snap_with_allowances = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="reference",
+        models=[NormalizedModel(id="ref1", plan_allowances={"go-plus": 100.0})],
+        metadata=SnapshotMetadata(),
+    )
+    with (
+        patch(
+            "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
+            side_effect=httpx.ConnectError("Connection failed"),
+        ),
+        patch(
+            "opencode_go_model_optimizer.cli.load_reference_snapshot",
+            return_value=ref_snap_with_allowances,
+        ),
+    ):
+        models, plan = _load_or_fetch_models(plan="go-plus")
+        assert plan == "go-plus"
 
     # Live fetch fails with network error, falls back to reference snapshot
     ref_snap = Snapshot(

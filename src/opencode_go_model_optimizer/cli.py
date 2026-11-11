@@ -210,6 +210,14 @@ def _resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
     return "allowance"
 
 
+def _effective_plan(snap_plan: str, requested_plan: str, models: list[NormalizedModel]) -> str:
+    """Return requested plan if available in allowances, else retain snapshot plan."""
+    norm_plan = requested_plan if requested_plan.startswith("go") else f"go-{requested_plan}"
+    if any(norm_plan in m.plan_allowances or requested_plan in m.plan_allowances for m in models):
+        return norm_plan
+    return snap_plan
+
+
 def _load_or_fetch_models(
     snapshot_path: str | None = None,
     plan: str = "go",
@@ -218,22 +226,26 @@ def _load_or_fetch_models(
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
     if snapshot_path:
         snap = load_snapshot(snapshot_path)
-        return apply_plan(snap.models, plan), snap.plan
+        return apply_plan(snap.models, plan), _effective_plan(snap.plan, plan, snap.models)
 
     if cache_ttl > 0:
         cached = load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)
         if cached:
-            return apply_plan(cached.models, plan), cached.plan
+            return apply_plan(cached.models, plan), _effective_plan(
+                cached.plan, plan, cached.models
+            )
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
         if cache_ttl > 0:
             save_cached_snapshot(snap)
-        return snap.models, snap.plan
+        return snap.models, _effective_plan(snap.plan, plan, snap.models)
     except (httpx.HTTPError, OSError, ValueError):
         ref_snap = load_reference_snapshot()
         if ref_snap:
-            return apply_plan(ref_snap.models, plan), ref_snap.plan
+            return apply_plan(ref_snap.models, plan), _effective_plan(
+                ref_snap.plan, plan, ref_snap.models
+            )
         raise
 
 
