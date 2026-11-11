@@ -387,6 +387,9 @@ def test_format_diff_value():
     assert _format_diff_value(1.0) == "1"
     assert _format_diff_value(2.5) == "2.5"
     assert _format_diff_value("unlimited") == "unlimited"
+    assert _format_diff_value([]) == "none"
+    mult_list = [{"factor": 2.0, "when": {"date": {"gte": "2026-12-01"}}}]
+    assert _format_diff_value(mult_list) == 'x2 when {"date": {"gte": "2026-12-01"}}'
 
 
 def test_format_diff_table_infinite_allowance():
@@ -398,3 +401,43 @@ def test_format_diff_table_infinite_allowance():
     table = format_diff_table(diff)
     assert "None" in table
     assert "unlimited" in table
+
+
+def test_format_rank_table_none_requests_and_privacy():
+    from opencode_go_model_optimizer.ingest.models import Privacy, RequestEstimate
+
+    m1 = NormalizedModel(
+        id="m1",
+        rank=1,
+        privacy=Privacy(zdr=True),
+    )
+    m1.request_estimate = RequestEstimate(per_5h=100.0, per_week=500.0, per_month=2000.0)
+    m2 = NormalizedModel(
+        id="m2",
+        rank=2,
+        privacy=None,
+    )
+    m2.request_estimate = None
+    table = format_rank_table([m1, m2])
+    assert "Req/month" in table
+    assert "Privacy" in table
+    assert "2,000" in table
+    assert "ZDR" in table
+    assert "-" in table
+
+
+def test_explain_tiers_next_change_none():
+    from datetime import UTC, datetime
+
+    from opencode_go_model_optimizer.ingest.models import PriceMultiplier
+
+    past_mult = PriceMultiplier(factor=1.5, when={"date": {"lt": "2020-01-01"}})
+    m = NormalizedModel(
+        id="m1",
+        tier="heavy",
+        multipliers=[past_mult],
+    )
+    m.price_multiplier = 1.0
+    criteria = SelectionCriteria(at=datetime(2026, 11, 10, tzinfo=UTC))
+    expl = explain_tiers({"heavy": "m1"}, [m], criteria=criteria)
+    assert "next_price_change" not in expl["heavy"]

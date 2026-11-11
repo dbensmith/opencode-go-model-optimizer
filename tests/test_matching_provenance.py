@@ -3,7 +3,6 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -27,10 +26,9 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     load_snapshot,
     merge_docs_pricing,
 )
-
-FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
+from tests.conftest import CATALOGUE_HTTP_DATA as OC
+from tests.conftest import FIXTURES_DIR as FIX
+from tests.conftest import MDX_TEXT as MDX
 
 
 def _row(allowance=15.0, out=1.0):

@@ -25,32 +25,18 @@ from opencode_go_model_optimizer.cli import (
 )
 from opencode_go_model_optimizer.engine.tiers import resolve_mode
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
-from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
     SnapshotMetadata,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
-    create_snapshot,
     get_cache_snapshot_path,
     load_snapshot,
     save_cached_snapshot,
     save_snapshot,
 )
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-
-def _create_temp_snapshot(tmp_path: Path) -> Path:
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
-    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
-    models = parse_catalogue_cli(cli_text)
-    pricing = parse_go_pricing(mdx_text)
-    snap = create_snapshot(models, pricing)
-    snap_path = tmp_path / "snapshot.json"
-    save_snapshot(snap, snap_path)
-    return snap_path
+from tests.conftest import FIXTURES_DIR, create_temp_snapshot
 
 
 def test_parse_args_select():
@@ -141,7 +127,7 @@ def test_main_no_args(capsys):
 
 
 def test_cli_select_json(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["select", "--format", "json", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
@@ -156,7 +142,7 @@ def test_cli_select_json(tmp_path, capsys):
 
 
 def test_cli_select_table(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["select", "--format", "table", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
@@ -166,7 +152,7 @@ def test_cli_select_table(tmp_path, capsys):
 
 
 def test_cli_select_env_and_github_output(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     # --format env
     rc = main(["select", "--format", "env", "--snapshot", str(snap_path)])
@@ -184,7 +170,7 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
 
 
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     # Test --skip, --prefer, --no-contributor, --min-context
     rc = main(
@@ -210,7 +196,7 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
 
 
 def test_cli_rank_filters(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     rc = main(
         [
@@ -266,7 +252,7 @@ def test_cli_select_plan_switch(tmp_path):
 
 
 def test_cli_select_compact(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["select", "--format", "compact", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
@@ -277,7 +263,7 @@ def test_cli_select_compact(tmp_path, capsys):
 
 
 def test_cli_select_profile_and_explain(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     # --explain with JSON format
     rc = main(
@@ -319,7 +305,7 @@ def test_cli_select_profile_and_explain(tmp_path, capsys):
 
 
 def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     snap = Snapshot.model_validate_json(snap_path.read_text(encoding="utf-8"))
 
     # Add plan_allowances to Gamma
@@ -364,7 +350,7 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
 
 
 def test_cli_select_output_file(tmp_path):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     out_file = tmp_path / "selected.json"
     rc = main(["select", "--format", "json", "--snapshot", str(snap_path), "-o", str(out_file)])
     assert rc == 0
@@ -374,7 +360,7 @@ def test_cli_select_output_file(tmp_path):
 
 
 def test_cli_rank_table(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["rank", "--table", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
@@ -383,7 +369,7 @@ def test_cli_rank_table(tmp_path, capsys):
 
 
 def test_cli_rank_json(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["rank", "--format", "json", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
@@ -440,7 +426,7 @@ def testresolve_mode():
 
 def test_load_or_fetch_models(tmp_path):
     # Snapshot provided
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     models, plan = _load_or_fetch_models(str(snap_path))
     assert len(models) == 14
     assert plan == "go"
@@ -530,7 +516,7 @@ def test_load_or_fetch_models(tmp_path):
 
 
 def test_handle_rank_modes_and_formats(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     # --table flag overrides format
     rc = main(["rank", "--table", "--snapshot", str(snap_path)])
@@ -614,7 +600,7 @@ def test_main_module_execution():
 
 
 def test_cli_top_n_and_output_guardrails(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     # select with --top-n 3 --format json
     rc = main(
@@ -744,7 +730,7 @@ def test_parse_helpers_reject_invalid_values():
 
 
 def test_cli_custom_tokens_weights_and_max_burn(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
 
     rc_json = main(
         [
@@ -812,7 +798,7 @@ def test_cli_custom_tokens_weights_and_max_burn(tmp_path, capsys):
 
 
 def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
-    old_path = _create_temp_snapshot(tmp_path)
+    old_path = create_temp_snapshot(tmp_path)
     old_snap = load_snapshot(old_path)
     new_snap = old_snap.model_copy(deep=True)
     new_snap.fetched_at = "2026-02-01T00:00:00Z"
@@ -869,7 +855,7 @@ def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
 
 
 def test_cli_diff_default_new_and_required_old(tmp_path, capsys):
-    old_path = _create_temp_snapshot(tmp_path)
+    old_path = create_temp_snapshot(tmp_path)
     new_snap = load_snapshot(old_path)
     new_snap.fetched_at = "2026-03-01T00:00:00Z"
 
@@ -911,7 +897,7 @@ def test_prefer_validation_errors(capsys):
 
 
 def test_prefer_unknown_model_warns(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=does-not-exist"])
     assert rc == 0
     cap = capsys.readouterr()
@@ -923,7 +909,7 @@ def test_prefer_unknown_model_warns(tmp_path, capsys):
 
 
 def test_prefer_full_id_is_honored_without_warning(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(
         [
             "select",
@@ -940,7 +926,7 @@ def test_prefer_full_id_is_honored_without_warning(tmp_path, capsys):
 
 
 def test_prefer_bare_id_is_honored_without_warning(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=beta-flash"])
     assert rc == 0
     cap = capsys.readouterr()
@@ -949,7 +935,7 @@ def test_prefer_bare_id_is_honored_without_warning(tmp_path, capsys):
 
 
 def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(
         [
             "select",
@@ -972,7 +958,7 @@ def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
 
 
 def test_prefer_pin_excluded_by_cost_or_deprecated_warns(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     rc = main(
         [
             "select",
@@ -1018,7 +1004,7 @@ def _offline(monkeypatch):
 
 
 def test_live_fetch_failure_warns_and_uses_consumer_cache(tmp_path, monkeypatch, capsys):
-    save_cached_snapshot(load_snapshot(_create_temp_snapshot(tmp_path)))
+    save_cached_snapshot(load_snapshot(create_temp_snapshot(tmp_path)))
     _offline(monkeypatch)
     rc = main(["select"])  # no --cache-ttl: the cache is used regardless of age
     cap = capsys.readouterr()
@@ -1039,7 +1025,7 @@ def test_live_fetch_failure_without_cache_suggests_snapshot(monkeypatch, capsys)
 
 
 def test_successful_live_fetch_populates_consumer_cache(tmp_path, monkeypatch):
-    snap = load_snapshot(_create_temp_snapshot(tmp_path))
+    snap = load_snapshot(create_temp_snapshot(tmp_path))
     monkeypatch.setattr(
         "opencode_go_model_optimizer.cli.fetch_and_build_snapshot", lambda **k: snap
     )
@@ -1084,7 +1070,7 @@ def test_main_error_handling(tmp_path, capsys, monkeypatch):
 
 def test_invalid_cache_ttl_env_warns_once(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "abc")
-    ref = str(_create_temp_snapshot(tmp_path))
+    ref = str(create_temp_snapshot(tmp_path))
     assert main(["select", "--snapshot", ref, "--format", "compact"]) == 0
     assert capsys.readouterr().err.count("invalid OPENCODE_GO_CACHE_TTL") == 1
 
@@ -1095,7 +1081,7 @@ def test_select_evaluates_pareto_once(tmp_path, monkeypatch, capsys):
     calls = []
     real = tiers.evaluate_pareto
     monkeypatch.setattr(tiers, "evaluate_pareto", lambda *a, **k: calls.append(1) or real(*a, **k))
-    snap = load_snapshot(_create_temp_snapshot(tmp_path))
+    snap = load_snapshot(create_temp_snapshot(tmp_path))
     for idx, m in enumerate(snap.models):
         m.aa_iq = 40.0 + idx
     ref = tmp_path / "bench.json"
@@ -1143,7 +1129,7 @@ def test_help_epilog_lists_exit_codes(capsys):
 
 
 def test_snapshot_source_tracking(tmp_path):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     assert _load_or_fetch_snapshot(str(snap_path)).source == "file"
 
     dummy = Snapshot(
@@ -1168,7 +1154,7 @@ def test_snapshot_source_tracking(tmp_path):
 
 
 def test_select_json_snapshot_provenance(tmp_path, capsys):
-    snap_path = _create_temp_snapshot(tmp_path)
+    snap_path = create_temp_snapshot(tmp_path)
     assert main(["select", "--snapshot", str(snap_path), "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert list(data)[:5] == ["plan", "tiers", "evaluated_at", "mode", "snapshot"]

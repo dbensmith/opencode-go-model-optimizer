@@ -2,7 +2,6 @@
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -26,8 +25,8 @@ from opencode_go_model_optimizer.ingest.models import (
     Snapshot,
     TokenCost,
 )
+from tests.conftest import CATALOGUE_HTTP_DATA
 
-FIX = Path(__file__).parent / "fixtures"
 PEAK = {
     "utc_days": {"in": ["mon", "tue", "wed", "thu", "fri"]},
     "any": [
@@ -166,9 +165,7 @@ def test_apply_price_basis_scales_all_costs_and_leaves_plain_models_alone():
 
 
 def test_parse_multipliers_from_fixture():
-    models = {
-        m.id: m for m in parse_catalogue_http(json.loads((FIX / "catalogue_http.json").read_text()))
-    }
+    models = {m.id: m for m in parse_catalogue_http(CATALOGUE_HTTP_DATA)}
     for mid in ("beta-flash", "beta-pro"):
         (mult,) = models[mid].multipliers
         assert mult.factor == 2 and mult.when == PEAK
@@ -380,3 +377,63 @@ def test_pricing_cache_and_eval_helpers():
     segs = list(_segments(m_no_mult, start, end))
     assert len(segs) == 1
     assert segs[0] == (start, end, 1.0)
+
+
+def test_pricing_uncovered_branches():
+    from opencode_go_model_optimizer.engine.pricing import (
+        UnsupportedConditionError,
+        _compare,
+        effective_multiplier,
+    )
+
+    # Line 46: _compare with non-dict or empty dict spec
+    with pytest.raises(UnsupportedConditionError, match="bad comparison"):
+        _compare([], 100, int)
+    with pytest.raises(UnsupportedConditionError, match="bad comparison"):
+        _compare({}, 100, int)
+    assert "bad comparison" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"utc_hours": {}})) or ""
+    )
+    assert "bad comparison" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"utc_hours": "bad"})) or ""
+    )
+
+    # Lines 59-60: _parse_date_str with invalid date string
+    assert "bad date 'not-a-date'" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"date": {"gte": "not-a-date"}})) or ""
+    )
+
+    # Line 70: _eval with non-dict cond
+    from opencode_go_model_optimizer.engine.pricing import _eval
+
+    with pytest.raises(UnsupportedConditionError, match="condition must be an object"):
+        _eval("not-a-dict", datetime(2026, 11, 10, tzinfo=UTC))
+    assert "condition must be an object" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"all": ["not-a-dict"]})) or ""
+    )
+
+    # Line 76: _eval with invalid utc_days
+    assert "bad utc_days" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"utc_days": {"in": ["notaday"]}}))
+        or ""
+    )
+    assert "bad utc_days" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"utc_days": "bad"})) or ""
+    )
+
+    # Line 85: _eval with "all" or "any" where value is not a list
+    assert "all needs a list" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"all": "not-a-list"})) or ""
+    )
+    assert "any needs a list" in (
+        validate_multiplier(PriceMultiplier(factor=2.0, when={"any": "not-a-list"})) or ""
+    )
+
+    # Lines 205, 212: effective_multiplier
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    m_with = model("m1", whens=[(2.0, PROMO)])
+    m_without = model("m2")
+    assert effective_multiplier(m_with, "list", now) == 1.0
+    assert effective_multiplier(m_without, "now", now) == 1.0
+    with pytest.raises(ValueError, match="unknown price basis 'bogus'"):
+        effective_multiplier(m_with, "bogus", now)
