@@ -931,3 +931,79 @@ def test_cli_diff_defaults_and_missing_reference(tmp_path, capsys):
         rc_missing = main(["diff", "--new", str(old_path)])
     assert rc_missing == 1
     assert "no reference snapshot available" in capsys.readouterr().err
+
+
+def test_prefer_validation_errors(capsys):
+    for bad in ("nope", "bogus=x", "heavy="):
+        with pytest.raises(SystemExit) as exc:
+            main(["select", "--prefer", bad])
+        assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "TIER=MODEL_ID" in err
+    assert "unknown tier" in err
+    assert "missing a model id" in err
+
+
+def test_prefer_unknown_model_warns(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    rc = main(["select", "--snapshot", str(snap_path), "--prefer", "heavy=does-not-exist"])
+    assert rc == 0
+    cap = capsys.readouterr()
+    assert (
+        "opencode-go-model-optimizer: warning: preferred model 'does-not-exist' "
+        "for tier 'heavy' not found; ignoring"
+    ) in cap.err
+    json.loads(cap.out)
+
+
+def test_cache_ttl_env_invalid(monkeypatch, capsys):
+    from opencode_go_model_optimizer.cli import _env_cache_ttl
+
+    monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "abc")
+    assert _env_cache_ttl() == 0
+    assert "invalid OPENCODE_GO_CACHE_TTL" in capsys.readouterr().err
+    monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "-5")
+    assert _env_cache_ttl() == 0
+    assert "invalid" in capsys.readouterr().err
+    monkeypatch.setenv("OPENCODE_GO_CACHE_TTL", "60")
+    assert _env_cache_ttl() == 60
+    assert capsys.readouterr().err == ""
+
+
+def test_live_fetch_failure_warns_and_uses_reference(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", boom)
+    rc = main(["select"])
+    cap = capsys.readouterr()
+    assert rc == 0
+    assert "warning: live fetch failed (ConnectError: offline); using bundled reference" in cap.err
+    json.loads(cap.out)
+
+
+def test_main_error_handling(tmp_path, capsys, monkeypatch):
+    rc = main(["select", "--snapshot", str(tmp_path / "missing.json")])
+    assert rc == 1
+    assert "opencode-go-model-optimizer: error: FileNotFoundError" in capsys.readouterr().err
+
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    rc = main(["rank", "--snapshot", str(bad)])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert err.startswith("opencode-go-model-optimizer: error:")
+    assert err.count("\n") == 1
+
+    def http_boom(args):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr("opencode_go_model_optimizer.cli.handle_fetch", http_boom)
+    assert main(["fetch"]) == 1
+    assert "ConnectError: down" in capsys.readouterr().err
+
+    def interrupt(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("opencode_go_model_optimizer.cli.handle_fetch", interrupt)
+    assert main(["fetch"]) == 130

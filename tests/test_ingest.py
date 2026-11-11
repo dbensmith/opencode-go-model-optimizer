@@ -39,6 +39,7 @@ from opencode_go_model_optimizer.ingest.models_dev import (
     parse_models_dev,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
+    _to_float,
     apply_plan,
     create_snapshot,
     fetch_aa_benchmarks,
@@ -1076,3 +1077,81 @@ def test_merge_docs_pricing_models_dev_backfill():
     assert existing.release_date == "2025-01-01"
     assert existing.limit.context == 1000
     assert existing.limit.output == 2000
+
+
+def test_fetch_aa_benchmarks_robust_parsing():
+    api_response = {
+        "data": [
+            {"slug": "null-evals", "evaluations": None, "median_output_tokens_per_second": 10},
+            {"slug": "list-evals", "evaluations": ["x"]},
+            {
+                "slug": "bad-number",
+                "evaluations": {
+                    "artificial_analysis_intelligence_index": "n/a",
+                    "artificial_analysis_coding_index": "42.5",
+                },
+                "median_output_tokens_per_second": True,
+            },
+        ]
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=api_response))
+    )
+    bench = fetch_aa_benchmarks("k", client=client)
+    assert bench["null-evals"] == {"iq": None, "coding": None, "tps": 10.0}
+    assert bench["list-evals"]["iq"] is None
+    assert bench["bad-number"] == {"iq": None, "coding": 42.5, "tps": None}
+    assert _to_float(float("inf")) is None
+    assert _to_float(float("nan")) is None
+
+
+def _patched_build(docs_text, aa_return, ref_snap, env):
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[NormalizedModel(id="snap-m", name="Snap Model")],
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=docs_text),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
+            return_value=aa_return,
+        ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
+            return_value=ref_snap,
+        ),
+    ):
+        return fetch_and_build_snapshot(plan="go")
+
+
+def test_fetch_and_build_falls_back_to_reference_when_aa_key_set_but_fetch_empty():
+    ref = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[NormalizedModel(id="snap-m", name="Snap Model", aa_iq=77.0)],
+        metadata=SnapshotMetadata(),
+    )
+    snap = _patched_build("", {}, ref, {"AA_API_KEY": "k"})
+    assert snap.models[0].aa_iq == 77.0
+
+
+def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
+    mdx = (Path(__file__).parent / "fixtures" / "go_docs.mdx").read_text(encoding="utf-8")
+    assert parse_go_pricing(mdx, plan="go-teams", fallback_to_go=False) == {}
+    assert parse_go_pricing(mdx, plan="go-teams")  # default keeps go fallback
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[NormalizedModel(id="m", name="Qwen3.8 Max")],
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+        patch.dict(os.environ, {}, clear=True),
+    ):
+        snap = fetch_and_build_snapshot(plan="go-teams", use_reference_benchmarks=False)
+    for m in snap.models:
+        assert "go-teams" not in m.plan_allowances
+    assert any(m.monthly_allowance is not None for m in snap.models)

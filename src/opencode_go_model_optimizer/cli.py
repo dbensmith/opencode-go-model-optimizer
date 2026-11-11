@@ -39,6 +39,9 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     update_reference_snapshot,
 )
 
+_PROG = "opencode-go-model-optimizer"
+_TIERS = ("heavy", "balanced", "light", "free")
+
 
 def _parse_token_mix(value: str) -> tuple[int, int, int]:
     """Parse an IN,CACHE,OUT token mix argument."""
@@ -66,6 +69,38 @@ def _parse_weights(value: str) -> tuple[float, float]:
     if len(parts) != 2:
         raise argparse.ArgumentTypeError("--weights must be two comma-separated numbers: IQ,CODING")
     return (parts[0], parts[1])
+
+
+def _env_cache_ttl() -> int:
+    """Read OPENCODE_GO_CACHE_TTL, returning 0 (with a warning) on invalid values."""
+    raw = os.environ.get("OPENCODE_GO_CACHE_TTL", "0")
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        print(
+            f"{_PROG}: warning: invalid OPENCODE_GO_CACHE_TTL={raw!r}; using 0",
+            file=sys.stderr,
+        )
+        return 0
+    return value
+
+
+def _prefer_arg(value: str) -> str:
+    """Validate a TIER=MODEL_ID --prefer argument."""
+    tier, sep, model_id = value.partition("=")
+    if not sep:
+        raise argparse.ArgumentTypeError(
+            f"--prefer must be TIER=MODEL_ID (e.g. heavy=kimi-k3.1-pro), got {value!r}"
+        )
+    if tier.strip() not in _TIERS:
+        raise argparse.ArgumentTypeError(
+            f"--prefer unknown tier {tier.strip()!r}; choose from {', '.join(_TIERS)}"
+        )
+    if not model_id.strip():
+        raise argparse.ArgumentTypeError(f"--prefer is missing a model id in {value!r}")
+    return value
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -110,7 +145,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     select_parser.add_argument(
         "--cache-ttl",
         type=int,
-        default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
+        default=_env_cache_ttl(),
         help="Cache TTL in seconds for live snapshot fetches (default: 0)",
     )
     select_parser.add_argument(
@@ -122,6 +157,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     select_parser.add_argument(
         "--prefer",
         action="append",
+        type=_prefer_arg,
         default=[],
         help="Pin a model to a tier, e.g. --prefer heavy=kimi-k3.1-pro (can be specified multiple times)",
     )
@@ -222,7 +258,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rank_parser.add_argument(
         "--cache-ttl",
         type=int,
-        default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
+        default=_env_cache_ttl(),
         help="Cache TTL in seconds for live snapshot fetches (default: 0)",
     )
     rank_parser.add_argument(
@@ -319,7 +355,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     diff_parser.add_argument(
         "--cache-ttl",
         type=int,
-        default=int(os.environ.get("OPENCODE_GO_CACHE_TTL", "0")),
+        default=_env_cache_ttl(),
         help="Cache TTL in seconds for live snapshot fetches (default: 0)",
     )
     diff_parser.add_argument(
@@ -395,9 +431,14 @@ def _load_or_fetch_snapshot(
         if cache_ttl > 0:
             save_cached_snapshot(snap)
         return snap
-    except (httpx.HTTPError, OSError, ValueError):
+    except (httpx.HTTPError, OSError, ValueError) as exc:
         ref_snap = load_reference_snapshot()
         if ref_snap:
+            print(
+                f"{_PROG}: warning: live fetch failed ({type(exc).__name__}: {exc}); "
+                f"using bundled reference snapshot from {ref_snap.fetched_at}",
+                file=sys.stderr,
+            )
             return ref_snap
         raise
 
@@ -449,6 +490,20 @@ def handle_select(args: argparse.Namespace) -> int:
     preferred_tiers = _parse_preferred_tiers(getattr(args, "prefer", []))
     min_context = getattr(args, "min_context", 0) or 0
     min_output = getattr(args, "min_output", 0) or 0
+    candidate_ids = {
+        m.id
+        for m in models
+        if m.id not in skip_models
+        and m.limit.context >= min_context
+        and m.limit.output >= min_output
+    }
+    for tier, model_id in preferred_tiers.items():
+        if model_id not in candidate_ids:
+            print(
+                f"{_PROG}: warning: preferred model '{model_id}' for tier '{tier}' "
+                "not found; ignoring",
+                file=sys.stderr,
+            )
     max_output_cost = getattr(args, "max_output_cost", None)
     max_burn = getattr(args, "max_burn", None)
     token_mix = getattr(args, "tokens", None)
@@ -634,14 +689,22 @@ def main(argv: list[str] | None = None) -> int:
         print("opencode-go-model-optimizer: use --help for usage information", file=sys.stderr)
         return 0
 
-    if args.command == "select":
-        return handle_select(args)
-    if args.command == "rank":
-        return handle_rank(args)
-    if args.command == "diff":
-        return handle_diff(args)
-    if args.command == "fetch":
-        return handle_fetch(args)
+    try:
+        if args.command == "select":
+            return handle_select(args)
+        if args.command == "rank":
+            return handle_rank(args)
+        if args.command == "diff":
+            return handle_diff(args)
+        if args.command == "fetch":
+            return handle_fetch(args)
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, httpx.HTTPError) as exc:
+        # ValueError covers pydantic ValidationError and JSON decode errors.
+        message = " ".join(f"{type(exc).__name__}: {exc}".split())
+        print(f"{_PROG}: error: {message}", file=sys.stderr)
+        return 1
 
     return 0
 
