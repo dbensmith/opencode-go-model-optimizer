@@ -559,12 +559,18 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     )
     m_free = NormalizedModel(id="free-m", is_zero_cost=True)
 
-    with patch(
-        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
-        return_value=(
-            [m_pareto, m_non_pareto],
-            [m_lower_burn, m_higher_burn],
-            [m_faster, m_slower],
+    with (
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+            side_effect=lambda models, **kwargs: models,
+        ),
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+            return_value=(
+                [m_pareto, m_non_pareto],
+                [m_lower_burn, m_higher_burn],
+                [m_faster, m_slower],
+            ),
         ),
     ):
         res = allocate_tiers_pareto(
@@ -575,9 +581,15 @@ def test_allocate_tiers_pareto_pick_best_sorting():
         assert res["light"] == "opencode-go/m_faster"
 
     # Test release date tie breaker
-    with patch(
-        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
-        return_value=([m_pareto], [m_lower_burn], [m_newer, m_older]),
+    with (
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+            side_effect=lambda models, **kwargs: models,
+        ),
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+            return_value=([m_pareto], [m_lower_burn], [m_newer, m_older]),
+        ),
     ):
         res2 = allocate_tiers_pareto([m_pareto, m_lower_burn, m_newer, m_older, m_free])
         assert res2["light"] == "opencode-go/m_newer"
@@ -791,3 +803,250 @@ def test_workload_profiles():
 
     ranked_fast = rank_catalog(models, mode="pareto", profile="fast")
     assert len(ranked_fast) > 0
+
+
+def test_fisher_jenks_tie_breaking_deterministic():
+    # 4 models with identical quality / val_fn
+    m_base = NormalizedModel(
+        id="mod-a",
+        aa_iq=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=500000),
+    )
+    m_newer = NormalizedModel(
+        id="mod-b",
+        aa_iq=50.0,
+        release_date="2026-09-02",  # Newer release date -> 1st
+        limit=ModelLimit(context=100000),
+    )
+    m_larger_ctx = NormalizedModel(
+        id="mod-c",
+        aa_iq=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=1000000),  # Larger context -> 2nd
+    )
+    m_tied_id = NormalizedModel(
+        id="mod-z",
+        aa_iq=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=500000),  # Same as mod-a, but id 'mod-z' > 'mod-a' -> 4th
+    )
+
+    c1, c2, c3 = fisher_jenks_3_clusters([m_base, m_tied_id, m_larger_ctx, m_newer])
+    all_clustered = [m.id for m in c1 + c2 + c3]
+    assert all_clustered == ["mod-b", "mod-c", "mod-a", "mod-z"]
+
+
+def test_pick_best_tie_breaking_deterministic():
+    # Models tied on pareto, bpe, burn, speed -> break ties via tie_break_key
+    m1 = NormalizedModel(
+        id="model-ctx-low",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=5.0,
+        speed_tps=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=128000),
+    )
+    m2 = NormalizedModel(
+        id="model-ctx-high",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=5.0,
+        speed_tps=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=256000),  # Higher context should win
+    )
+    m3 = NormalizedModel(
+        id="model-ctx-high-b",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=5.0,
+        speed_tps=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(
+            context=256000
+        ),  # Same context as m2, but 'model-ctx-high' < 'model-ctx-high-b'
+    )
+    m_no_burn = NormalizedModel(
+        id="model-no-burn",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+        is_pareto=True,
+        bpe=0.8,
+        composite_burn_pct=None,  # None burn should be treated as inf (lose to valid burn)
+        speed_tps=50.0,
+        release_date="2026-09-01",
+        limit=ModelLimit(context=500000),
+    )
+    m_free = NormalizedModel(id="free-tier-mod", is_zero_cost=True)
+
+    with (
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+            side_effect=lambda models, **kwargs: models,
+        ),
+        patch(
+            "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
+            return_value=([m1, m3, m_no_burn, m2], [], []),
+        ),
+    ):
+        res = allocate_tiers_pareto([m1, m3, m_no_burn, m2, m_free])
+        # Higher context wins (m2 beats m1), id ASC wins (m2 beats m3), burn 5.0 beats inf (m2 beats m_no_burn)
+        assert res["heavy"] == "opencode-go/model-ctx-high"
+
+
+def test_rank_catalog_pareto_deterministic_tie_breaking():
+    m_burn_none = NormalizedModel(
+        id="mod-burn-none",
+        aa_iq=80.0,
+        bpe=0.5,
+        composite_burn_pct=None,
+    )
+    m_burn_valid = NormalizedModel(
+        id="mod-burn-valid",
+        aa_iq=80.0,
+        bpe=0.5,
+        composite_burn_pct=10.0,
+    )
+    m_tied_burn_a = NormalizedModel(
+        id="mod-tied-a",
+        aa_iq=80.0,
+        bpe=0.5,
+        composite_burn_pct=10.0,
+        limit=ModelLimit(context=500000),
+    )
+    m_tied_burn_b = NormalizedModel(
+        id="mod-tied-b",
+        aa_iq=80.0,
+        bpe=0.5,
+        composite_burn_pct=10.0,
+        limit=ModelLimit(context=1000000),  # Larger context beats mod-tied-a
+    )
+
+    models = [m_burn_none, m_burn_valid, m_tied_burn_a, m_tied_burn_b]
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        ranked = rank_catalog(models, mode="pareto")
+
+    ids = [m.id for m in ranked]
+    # mod-tied-b (burn 10.0, 1M ctx) > mod-burn-valid/mod-tied-a (burn 10.0, 500k ctx / 0 ctx) > mod-burn-none (burn inf)
+    assert ids[0] == "mod-tied-b"
+    assert ids[-1] == "mod-burn-none"
+
+
+def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
+    m1 = NormalizedModel(
+        id="mod-1",
+        aa_iq=90.0,
+        cost=TokenCost(output=10.0),
+        monthly_allowance=100.0,
+        bpe=0.99,
+        is_pareto=True,
+    )
+    m2_unbenchmarked = NormalizedModel(
+        id="mod-2",
+        aa_iq=None,
+        aa_coding=None,
+        cost=TokenCost(output=5.0),
+        monthly_allowance=100.0,
+        bpe=0.88,
+        is_pareto=True,
+    )
+    m3_skipped = NormalizedModel(
+        id="mod-3",
+        aa_iq=95.0,
+        cost=TokenCost(output=1.0),
+        monthly_allowance=100.0,
+        bpe=0.95,
+        is_pareto=True,
+    )
+
+    evaluate_pareto([m1, m2_unbenchmarked, m3_skipped], skip_models={"mod-3"})
+
+    # m1 was benchmarked and evaluated
+    assert m1.bpe is not None
+    assert m1.is_pareto is True
+
+    # m2 was unbenchmarked: stale bpe and is_pareto must be cleared
+    assert m2_unbenchmarked.bpe is None
+    assert m2_unbenchmarked.is_pareto is None
+
+    # m3 was skipped: burn was computed, but stale bpe and is_pareto cleared
+    assert m3_skipped.composite_burn_pct is not None
+    assert m3_skipped.bpe is None
+    assert m3_skipped.is_pareto is None
+
+
+def test_evaluate_pareto_skipped_model_does_not_dominate():
+    # m_dom has higher quality and lower burn: if included, it would dominate m_sub
+    m_dom = NormalizedModel(
+        id="dominant-model",
+        aa_iq=95.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=1.0),
+    )
+    m_sub = NormalizedModel(
+        id="sub-model",
+        aa_iq=80.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=10.0),
+    )
+
+    # Without skip: m_sub BPE is penalized by m_dom
+    evaluate_pareto([m_dom, m_sub])
+    bpe_with_dom = m_sub.bpe
+    assert bpe_with_dom is not None and bpe_with_dom < 1.0
+
+    # With m_dom in skip_models: m_sub becomes the sole benchmarked model (BPE 1.0, is_pareto=True)
+    evaluate_pareto([m_dom, m_sub], skip_models={"dominant-model"})
+    assert m_sub.bpe == 1.0
+    assert m_sub.is_pareto is True
+    assert m_dom.bpe is None
+    assert m_dom.is_pareto is None
+
+
+def test_allocate_tiers_pareto_fallback_respects_already_selected():
+    # Only 1 benchmarked paid model, 2 other active paid models without benchmarks, and 1 free model
+    m_heavy = NormalizedModel(
+        id="m-heavy",
+        aa_iq=90.0,
+        monthly_allowance=100.0,
+        cost=TokenCost(output=50.0),
+    )
+    m_paid_other1 = NormalizedModel(
+        id="m-paid-other1",
+        monthly_allowance=80.0,
+        cost=TokenCost(output=20.0),
+    )
+    m_paid_other2 = NormalizedModel(
+        id="m-paid-other2",
+        monthly_allowance=60.0,
+        cost=TokenCost(output=10.0),
+    )
+    m_free = NormalizedModel(
+        id="m-free",
+        is_zero_cost=True,
+    )
+
+    tiers = allocate_tiers_pareto([m_heavy, m_paid_other1, m_paid_other2, m_free])
+    assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
+
+    # All 4 tiers must be assigned distinct models without reusing m_heavy
+    assigned = [v for v in tiers.values() if v]
+    assert len(assigned) == 4
+    assert len(set(assigned)) == 4
+    assert tiers["heavy"] == "opencode-go/m-heavy"
+    assert "opencode-go/m-heavy" not in (tiers["balanced"], tiers["light"], tiers["free"])

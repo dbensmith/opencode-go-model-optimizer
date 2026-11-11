@@ -20,8 +20,11 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot,
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
     """Apply plan-specific monthly allowances to models."""
+    norm_plan = plan if plan.startswith("go") else f"go-{plan}"
     for m in models:
-        if plan in m.plan_allowances:
+        if norm_plan in m.plan_allowances:
+            m.monthly_allowance = m.plan_allowances[norm_plan]
+        elif plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[plan]
     return models
 
@@ -263,15 +266,23 @@ def fetch_and_build_snapshot(
         if not aa_benchmarks and not aa_key and use_reference_benchmarks:
             ref_snap = load_reference_snapshot()
             if ref_snap:
-                aa_benchmarks = {
-                    m.id: {
-                        "iq": m.aa_iq,
-                        "coding": m.aa_coding,
-                        "tps": m.speed_tps,
-                    }
-                    for m in ref_snap.models
-                    if m.aa_iq is not None
-                }
+                aa_benchmarks = {}
+                for m in ref_snap.models:
+                    if m.aa_iq is not None or m.aa_coding is not None or m.speed_tps is not None:
+                        entry = {
+                            "iq": m.aa_iq,
+                            "coding": m.aa_coding,
+                            "tps": m.speed_tps,
+                        }
+                        if m.id:
+                            aa_benchmarks[m.id] = entry
+                            norm_id = norm_name(m.id)
+                            if norm_id:
+                                aa_benchmarks[norm_id] = entry
+                        if m.name:
+                            norm_n = norm_name(m.name)
+                            if norm_n:
+                                aa_benchmarks[norm_n] = entry
 
         return create_snapshot(
             models,

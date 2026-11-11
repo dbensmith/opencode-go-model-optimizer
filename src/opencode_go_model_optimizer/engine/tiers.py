@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import math
 
-from opencode_go_model_optimizer.engine.allowance import rank_free_models, rank_paid_models
+from opencode_go_model_optimizer.engine.allowance import (
+    rank_free_models,
+    rank_paid_models,
+    tie_break_key,
+)
 from opencode_go_model_optimizer.engine.pareto import (
     effective_quality,
     evaluate_pareto,
@@ -157,7 +161,7 @@ def allocate_tiers_pareto(
         models = [m for m in models if m.limit.context >= min_context]
 
     # 1. Evaluate BPE on models
-    evaluated = evaluate_pareto(models, profile=profile)
+    evaluated = evaluate_pareto(models, profile=profile, skip_models=skips)
 
     # Free tier
     free_ranked = rank_free_models(
@@ -229,13 +233,12 @@ def allocate_tiers_pareto(
             ranked = sorted(
                 cluster,
                 key=lambda m: (
-                    bool(m.is_pareto),
-                    m.bpe or 0.0,
-                    -(m.composite_burn_pct or 0.0),
-                    m.speed_tps or 0.0,
-                    m.release_date or "",
+                    not bool(m.is_pareto),
+                    -(m.bpe or 0.0),
+                    m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
+                    -(m.speed_tps or 0.0),
+                    tie_break_key(m),
                 ),
-                reverse=True,
             )
             for m in ranked:
                 if m.id not in used_model_ids and m.full_id not in used_model_ids:
@@ -267,7 +270,7 @@ def allocate_tiers_pareto(
     if len(selected) < len(STANDARD_TIERS):
         allowance_picks = allocate_tiers_allowance(
             models,
-            preferred_tiers=preferred,
+            preferred_tiers={**preferred, **selected},
             skip_models=skips,
             allow_contributor=allow_contributor,
             min_context=min_context,
@@ -328,16 +331,16 @@ def rank_catalog(
     ]
 
     if mode == "pareto":
-        evaluated = evaluate_pareto(active_models, profile=profile)
-        # Sort by BPE desc, effective_quality desc, composite_burn asc
+        evaluated = evaluate_pareto(active_models, profile=profile, skip_models=skips)
+        # Sort by BPE desc, effective_quality desc, composite_burn asc, tie_break_key
         ranked = sorted(
             evaluated,
             key=lambda m: (
-                m.bpe or 0.0,
-                effective_quality(m, profile=profile),
-                -(m.composite_burn_pct or 0.0),
+                -(m.bpe or 0.0),
+                -effective_quality(m, profile=profile),
+                m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
+                tie_break_key(m),
             ),
-            reverse=True,
         )
     else:
         paid = rank_paid_models(active_models, skip_models=skips)

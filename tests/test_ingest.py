@@ -817,3 +817,76 @@ def test_merge_docs_pricing_multi_plan():
         },
     )
     assert m2.plan_allowances.get("go") == 25.0
+
+
+def test_apply_plan_aliases_and_normalization():
+    m = NormalizedModel(
+        id="mod-plan",
+        plan_allowances={
+            "go": 15.0,
+            "go-plus": 60.0,
+            "go-teams": float("inf"),
+            "custom-tier": 120.0,
+        },
+    )
+
+    # Aliases without 'go-' prefix
+    apply_plan([m], "plus")
+    assert m.monthly_allowance == 60.0
+
+    apply_plan([m], "teams")
+    assert m.monthly_allowance == float("inf")
+
+    # Custom plan without 'go-' prefix matching directly
+    apply_plan([m], "custom-tier")
+    assert m.monthly_allowance == 120.0
+
+
+def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
+    # Model 1 has aa_coding and speed_tps, but aa_iq=None
+    m_coding_only = NormalizedModel(
+        id="m_coding",
+        name="Coding Only Model",
+        aa_iq=None,
+        aa_coding=85.0,
+        speed_tps=110.0,
+    )
+    # Model 2 has aa_iq only, and name matching
+    m_named = NormalizedModel(
+        id="org/pretty-model-v1",
+        name="Pretty Model v1",
+        aa_iq=92.0,
+    )
+    ref_snap = Snapshot(
+        schema_version=1,
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="reference",
+        models=[m_coding_only, m_named],
+        metadata=SnapshotMetadata(),
+    )
+
+    # Target catalog models: one matching m_coding by id, one matching m_named by name
+    target_mod1 = NormalizedModel(id="m_coding", name="Target 1")
+    target_mod2 = NormalizedModel(id="unmatched-id", name="Pretty Model v1")
+
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[target_mod1, target_mod2],
+        ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx",
+            return_value="""# Pricing\n| Model | Monthly Allowance | Input | Output | Context |\n| --- | --- | --- | --- | --- |\n| Target 1 | $15.00 | $1.00 | $2.00 | 128K |\n| Pretty Model v1 | $15.00 | $1.00 | $2.00 | 128K |\n""",
+        ),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
+            return_value=ref_snap,
+        ),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        snap = fetch_and_build_snapshot(plan="go", use_reference_benchmarks=True)
+        by_id = {m.id: m for m in snap.models}
+
+        assert by_id["m_coding"].aa_coding == 85.0
+        assert by_id["m_coding"].speed_tps == 110.0
+        assert by_id["unmatched-id"].aa_iq == 92.0
