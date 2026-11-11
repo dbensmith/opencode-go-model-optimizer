@@ -245,7 +245,7 @@ def parse_privacy(mdx: str) -> dict[str, dict[str, Any]]:
 
     Table columns are `Model | Model training | Data retention`. Bullet notes of the form
     `- **Name / Other:** text` attach to every row whose name equals or starts with a
-    note key (so "DeepSeek" covers all DeepSeek rows). Returns {} when the section is missing.
+    note key (so "Beta" covers all Beta rows). Returns {} when the section is missing.
     """
     section = _privacy_section(mdx)
     result: dict[str, dict[str, Any]] = {}

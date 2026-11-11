@@ -45,3 +45,8 @@ ignore = [
     # Long comments and string literals cannot be wrapped by the formatter.
     "E501",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: contract tests against the real OpenCode/models.dev sources (run with OCGO_LIVE=1)",
+]

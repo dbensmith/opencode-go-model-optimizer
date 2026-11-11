@@ -23,10 +23,7 @@ from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
 from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
-from opencode_go_model_optimizer.ingest.snapshot import (
-    load_reference_snapshot,
-    merge_docs_pricing,
-)
+from opencode_go_model_optimizer.ingest.snapshot import merge_docs_pricing
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -67,26 +64,22 @@ def test_allowance_paid_ranking():
 
     # Preview and deprecated models must be excluded
     ids = [m.id for m in ranked]
-    assert "step-5-preview" not in ids
+    assert "omega-preview" not in ids
     assert "deprecated-old-model" not in ids
-    assert "iceman-contributor-free" not in ids
-    assert "beam-free" not in ids
+    assert "delta-contributor" not in ids
+    assert "epsilon-free" not in ids
 
-    # DeepSeek ($100 cap) should rank above GLM ($60 cap) and Qwen ($15 cap)
-    assert ids[0] == "deepseek-v4.1-flash"
-    assert ids[1] == "glm-5.3-flash"
-    assert ids[2] == "qwen3.8-max"
+    # Allowance descending: beta-flash ($80), gamma-flash ($50), beta-pro ($40)
+    assert ids[:3] == ["beta-flash", "gamma-flash", "beta-pro"]
+    assert ids[-1] == "theta-pro"
 
 
 def test_allowance_free_ranking():
     models = _get_fixture_models()
     ranked = rank_free_models(models)
 
-    # Iceman (release_date: 2026-09-12) vs Beam (release_date: 2026-09-01)
-    # Iceman should rank first due to release recency
-    assert len(ranked) >= 2
-    assert ranked[0].id == "iceman-contributor-free"
-    assert ranked[1].id == "beam-free"
+    # Newest release first: delta (2026-10-01), epsilon (2026-09-20), kappa (2026-08-25)
+    assert [m.id for m in ranked] == ["delta-contributor", "epsilon-free", "kappa-free"]
 
 
 def test_deterministic_tie_breaking():
@@ -165,19 +158,19 @@ def test_fisher_jenks_clustering():
 
 def test_pareto_evaluation():
     models = _get_fixture_models()
-    qwen = next(m for m in models if m.id == "qwen3.8-max")
-    deepseek = next(m for m in models if m.id == "deepseek-v4.1-flash")
-    qwen.aa_iq = 45.0
-    deepseek.aa_iq = 45.0
+    alpha = next(m for m in models if m.id == "alpha-max")
+    beta = next(m for m in models if m.id == "beta-flash")
+    alpha.aa_iq = 45.0
+    beta.aa_iq = 45.0
     evaluated = evaluate_pareto(models)
     assert len(evaluated) == len(models)
 
     by_id = {m.id: m for m in evaluated}
-    assert by_id["qwen3.8-max"].composite_burn_pct is not None
-    assert by_id["deepseek-v4.1-flash"].composite_burn_pct is not None
-    assert by_id["deepseek-v4.1-flash"].bpe is not None
+    assert by_id["alpha-max"].composite_burn_pct is not None
+    assert by_id["beta-flash"].composite_burn_pct is not None
+    assert by_id["beta-flash"].bpe is not None
     # Inputs are never mutated
-    assert qwen.composite_burn_pct is None and deepseek.bpe is None
+    assert alpha.composite_burn_pct is None and beta.bpe is None
 
 
 def test_allocate_tiers_allowance():
@@ -185,23 +178,23 @@ def test_allocate_tiers_allowance():
     tiers = _tiers(models)
 
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
-    assert tiers["heavy"] == "opencode-go/qwen3.8-max"
-    assert tiers["balanced"] == "opencode-go/deepseek-v4.1-flash"
-    assert tiers["light"] == "opencode-go/glm-5.3-flash"
-    assert tiers["free"] == "opencode-go/iceman-contributor-free"
+    assert tiers["heavy"] == "opencode-go/alpha-max"
+    assert tiers["balanced"] == "opencode-go/beta-pro"
+    assert tiers["light"] == "opencode-go/beta-flash"
+    assert tiers["free"] == "opencode-go/delta-contributor"
 
 
 def test_allocate_tiers_with_preferences_and_skips():
     models = _get_fixture_models()
     # Pin preferred model for light
-    prefs = {"light": "opencode-go/qwen3.8-max"}
+    prefs = {"light": "opencode-go/alpha-max"}
     tiers = _tiers(models, preferred_tiers=prefs)
-    assert tiers["light"] == "opencode-go/qwen3.8-max"
+    assert tiers["light"] == "opencode-go/alpha-max"
 
-    # Skip deepseek
-    skips = {"deepseek-v4.1-flash"}
+    # Skip beta
+    skips = {"beta-flash"}
     tiers_skipped = _tiers(models, skip_models=skips)
-    assert tiers_skipped["balanced"] != "opencode-go/deepseek-v4.1-flash"
+    assert tiers_skipped["balanced"] != "opencode-go/beta-flash"
 
 
 def test_allocate_tiers_pareto():
@@ -384,8 +377,8 @@ def test_allocate_tiers_pareto_comprehensive():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
-    tiers_pref = _tiers_pareto(models, preferred_tiers={"heavy": "opencode-go/deepseek-v4.1-flash"})
-    assert tiers_pref["heavy"] == "opencode-go/deepseek-v4.1-flash"
+    tiers_pref = _tiers_pareto(models, preferred_tiers={"heavy": "opencode-go/beta-flash"})
+    assert tiers_pref["heavy"] == "opencode-go/beta-flash"
 
     # 2. At least 3 frontier models triggering cutoff calculation:
     m1 = NormalizedModel(
@@ -627,16 +620,6 @@ def test_allocate_tiers_pareto_competitive_fallback():
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
 
 
-def test_allocate_tiers_pareto_reference_snapshot():
-    snap = load_reference_snapshot()
-    assert snap is not None
-    tiers = _tiers_pareto(snap.models)
-    assert tiers["heavy"] in ("opencode-go/gemini-4-argon", "opencode-go/kimi-k3.1-pro")
-    assert tiers["balanced"] in ("opencode-go/deepseek-v4.1-flash", "opencode-go/mimo-v2.6-pro")
-    assert tiers["light"] == "opencode-go/mimo-v2.6-flash"
-    assert tiers["free"] == "opencode-go/longcat-2.5-free"
-
-
 def test_rank_catalog_both_modes():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
@@ -649,21 +632,21 @@ def test_rank_catalog_both_modes():
     assert any(m.tier is None for m in ranked_pareto_all)
 
     # Test pareto mode with skip_models
-    ranked_pareto = _rank(models, mode="pareto", skip_models={"deepseek-v4.1-flash"})
-    assert all(m.id != "deepseek-v4.1-flash" for m in ranked_pareto)
+    ranked_pareto = _rank(models, mode="pareto", skip_models={"beta-flash"})
+    assert all(m.id != "beta-flash" for m in ranked_pareto)
     assert all(m.rank is not None for m in ranked_pareto)
     assert [m.rank for m in ranked_pareto] == list(range(1, len(ranked_pareto) + 1))
 
     # Test allowance mode with skips
-    ranked_allowance = _rank(models, mode="allowance", skip_models={"qwen3.8-max"})
-    assert all(m.id != "qwen3.8-max" for m in ranked_allowance)
+    ranked_allowance = _rank(models, mode="allowance", skip_models={"alpha-max"})
+    assert all(m.id != "alpha-max" for m in ranked_allowance)
     assert all(m.rank is not None for m in ranked_allowance)
     assert [m.rank for m in ranked_allowance] == list(range(1, len(ranked_allowance) + 1))
     allowance_tiers = {m.tier for m in ranked_allowance if m.tier is not None}
     assert "free" in allowance_tiers
     assert any(m.tier is None for m in ranked_allowance)
     # Remaining active models (e.g. preview) must be included and sorted by id
-    assert any(m.id == "step-5-preview" for m in ranked_allowance)
+    assert any(m.id == "omega-preview" for m in ranked_allowance)
 
 
 def test_allocate_tiers_unified():
@@ -720,11 +703,11 @@ def test_min_context_and_allow_contributor():
 
     # Test allow_contributor=False in allowance mode
     tiers_no_contrib = _tiers(models, allow_contributor=False)
-    assert tiers_no_contrib["free"] == "opencode-go/beam-free"
+    assert tiers_no_contrib["free"] == "opencode-go/epsilon-free"
 
     # Test allow_contributor=False in pareto mode
     tiers_pareto_no_contrib = _tiers_pareto(models, allow_contributor=False)
-    assert tiers_pareto_no_contrib["free"] != "opencode-go/iceman-contributor-free"
+    assert tiers_pareto_no_contrib["free"] != "opencode-go/delta-contributor"
 
     # Test min_context filter in allowance mode
     tiers_min_ctx = _tiers(models, min_context=500000)
@@ -747,9 +730,9 @@ def test_min_context_and_allow_contributor():
 
     # Test allocate_tiers unified with min_context and allow_contributor
     unified_p = _tiers(models, mode="pareto", min_context=100000, allow_contributor=False)
-    assert unified_p["free"] != "opencode-go/iceman-contributor-free"
+    assert unified_p["free"] != "opencode-go/delta-contributor"
     unified_a = _tiers(models, mode="allowance", min_context=100000, allow_contributor=False)
-    assert unified_a["free"] == "opencode-go/beam-free"
+    assert unified_a["free"] == "opencode-go/epsilon-free"
 
 
 def test_workload_profiles():

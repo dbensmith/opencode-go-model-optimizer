@@ -22,7 +22,7 @@ from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedMode
 
 
 def test_format_select_json():
-    tiers = {"heavy": "opencode-go/qwen", "free": "opencode-go/iceman"}
+    tiers = {"heavy": "opencode-go/alpha", "free": "opencode-go/delta"}
     res = format_select_json(
         tiers, mode="pareto", plan="go-plus", evaluated_at="2026-11-10T00:00:00Z"
     )
@@ -38,7 +38,7 @@ def test_format_select_json():
     assert "evaluated_at" in data2
 
     # With profile and explanations
-    expl = {"heavy": {"model_id": "opencode-go/qwen", "turn_cost_usd": 0.005}}
+    expl = {"heavy": {"model_id": "opencode-go/alpha", "turn_cost_usd": 0.005}}
     res3 = format_select_json(
         tiers,
         mode="pareto",
@@ -51,31 +51,31 @@ def test_format_select_json():
 
 
 def test_format_select_compact():
-    tiers = {"heavy": "opencode-go/qwen", "balanced": "", "free": "opencode-go/iceman"}
+    tiers = {"heavy": "opencode-go/alpha", "balanced": "", "free": "opencode-go/delta"}
     compact = format_select_compact(tiers)
     lines = compact.splitlines()
     assert len(lines) == 2
-    assert "heavy opencode-go/qwen" in lines
-    assert "free opencode-go/iceman" in lines
+    assert "heavy opencode-go/alpha" in lines
+    assert "free opencode-go/delta" in lines
 
 
 def test_format_select_env():
     tiers = {
-        "heavy": "opencode-go/kimi-k3.1-pro",
-        "balanced": "opencode-go/deepseek-v4.1-flash",
-        "light": "opencode-go/mimo-v2.6-flash",
-        "free": "opencode-go/gemini-4-flash",
+        "heavy": "opencode-go/zeta-pro",
+        "balanced": "opencode-go/beta-flash",
+        "light": "opencode-go/eta-flash",
+        "free": "opencode-go/theta-flash",
     }
     env_str = format_select_env(tiers)
-    assert 'OPENCODE_MODEL_HEAVY="opencode-go/kimi-k3.1-pro"' in env_str
-    assert 'OPENCODE_MODEL_BALANCED="opencode-go/deepseek-v4.1-flash"' in env_str
-    assert 'OPENCODE_MODEL_LIGHT="opencode-go/mimo-v2.6-flash"' in env_str
-    assert 'OPENCODE_MODEL_FREE="opencode-go/gemini-4-flash"' in env_str
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/zeta-pro"' in env_str
+    assert 'OPENCODE_MODEL_BALANCED="opencode-go/beta-flash"' in env_str
+    assert 'OPENCODE_MODEL_LIGHT="opencode-go/eta-flash"' in env_str
+    assert 'OPENCODE_MODEL_FREE="opencode-go/theta-flash"' in env_str
 
     # Missing tier defaults to empty string
-    partial = {"heavy": "opencode-go/kimi"}
+    partial = {"heavy": "opencode-go/zeta"}
     partial_env = format_select_env(partial)
-    assert 'OPENCODE_MODEL_HEAVY="opencode-go/kimi"' in partial_env
+    assert 'OPENCODE_MODEL_HEAVY="opencode-go/zeta"' in partial_env
     assert 'OPENCODE_MODEL_BALANCED=""' in partial_env
     assert 'OPENCODE_MODEL_LIGHT=""' in partial_env
     assert 'OPENCODE_MODEL_FREE=""' in partial_env
@@ -83,21 +83,21 @@ def test_format_select_env():
 
 def test_format_select_github_output():
     tiers = {
-        "heavy": "opencode-go/kimi-k3.1-pro",
-        "balanced": "opencode-go/deepseek-v4.1-flash",
-        "light": "opencode-go/mimo-v2.6-flash",
-        "free": "opencode-go/gemini-4-flash",
+        "heavy": "opencode-go/zeta-pro",
+        "balanced": "opencode-go/beta-flash",
+        "light": "opencode-go/eta-flash",
+        "free": "opencode-go/theta-flash",
     }
     gh_str = format_select_github_output(tiers)
-    assert "heavy=opencode-go/kimi-k3.1-pro" in gh_str
-    assert "balanced=opencode-go/deepseek-v4.1-flash" in gh_str
-    assert "light=opencode-go/mimo-v2.6-flash" in gh_str
-    assert "free=opencode-go/gemini-4-flash" in gh_str
+    assert "heavy=opencode-go/zeta-pro" in gh_str
+    assert "balanced=opencode-go/beta-flash" in gh_str
+    assert "light=opencode-go/eta-flash" in gh_str
+    assert "free=opencode-go/theta-flash" in gh_str
 
     # Missing tier defaults to empty string
-    partial = {"heavy": "opencode-go/kimi"}
+    partial = {"heavy": "opencode-go/zeta"}
     partial_gh = format_select_github_output(partial)
-    assert "heavy=opencode-go/kimi" in partial_gh
+    assert "heavy=opencode-go/zeta" in partial_gh
     assert "balanced=" in partial_gh
     assert "light=" in partial_gh
     assert "free=" in partial_gh

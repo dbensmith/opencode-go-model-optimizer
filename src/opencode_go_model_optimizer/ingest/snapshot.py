@@ -1,20 +1,21 @@
 """Snapshot generator and persistence for OpenCode Go models."""
 
 import concurrent.futures
-import functools
+import hashlib
 import json
 import math
 import os
+import threading
 import time
 from datetime import UTC, datetime
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from opencode_go_model_optimizer.ingest.catalogue import fetch_catalogue
+from opencode_go_model_optimizer.ingest.catalogue import DEFAULT_MODELS_HTTP_URL, fetch_catalogue
 from opencode_go_model_optimizer.ingest.docs import (
+    DOCS_URLS,
     fetch_docs_mdx,
     norm_name,
     parse_endpoints_table,
@@ -30,7 +31,7 @@ from opencode_go_model_optimizer.ingest.models import (
     Snapshot,
     SnapshotMetadata,
 )
-from opencode_go_model_optimizer.ingest.models_dev import fetch_models_dev
+from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_models_dev
 
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
@@ -60,19 +61,6 @@ def _to_float(value: Any) -> float | None:
     except TypeError, ValueError:
         return None
     return result if math.isfinite(result) else None
-
-
-def _benchmarks_from_snapshot(snap: Snapshot) -> dict[str, dict[str, Any]]:
-    """Build a benchmark index (by id, normalized id and normalized name) from a snapshot."""
-    benchmarks: dict[str, dict[str, Any]] = {}
-    for m in snap.models:
-        if m.aa_iq is None and m.aa_coding is None and m.speed_tps is None:
-            continue
-        entry = {"iq": m.aa_iq, "coding": m.aa_coding, "tps": m.speed_tps}
-        for key in (m.id, norm_name(m.id) if m.id else "", norm_name(m.name) if m.name else ""):
-            if key:
-                benchmarks[key] = entry
-    return benchmarks
 
 
 def fetch_aa_benchmarks(
@@ -311,6 +299,7 @@ def create_snapshot(
     warnings: list[str] | None = None,
     privacy: dict[str, dict[str, Any]] | None = None,
     request_estimates: dict[str, dict[str, dict[str, float]]] | None = None,
+    sources: dict[str, dict[str, Any]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
     all_warnings = list(warnings or [])
@@ -368,6 +357,7 @@ def create_snapshot(
             catalogue_count=len(models),
             docs_pricing_count=len(pricing),
             benchmark_source=benchmark_source,
+            sources=dict(sources or {}),
         ),
         warnings=all_warnings,
     )
@@ -386,42 +376,17 @@ def load_snapshot(path: str | Path) -> Snapshot:
     return Snapshot.model_validate_json(p.read_bytes())
 
 
-def get_reference_snapshot_path() -> Path:
-    """Return path to bundled reference snapshot JSON file."""
-    ref = files("opencode_go_model_optimizer").joinpath("data", "reference_snapshot.json")
-    p = Path(str(ref))
-    if p.exists():
-        return p
-    return Path(__file__).resolve().parent.parent / "data" / "reference_snapshot.json"
-
-
-@functools.lru_cache(maxsize=1)
-def _load_reference_snapshot_cached(path_str: str, mtime_ns: int) -> Snapshot:
-    """Internal cached loader for reference snapshot."""
-    return load_snapshot(path_str)
-
-
-def load_reference_snapshot() -> Snapshot | None:
-    """Load bundled reference snapshot if present."""
-    p = get_reference_snapshot_path()
-    if p.exists():
-        try:
-            stat = p.stat()
-            snap = _load_reference_snapshot_cached(str(p), stat.st_mtime_ns)
-            return snap.model_copy(deep=True)
-        except json.JSONDecodeError, OSError, ValueError:
-            return None
-    return None
-
-
 def get_cache_snapshot_path(plan: str = "go") -> Path:
     """Return filesystem path for the local cached snapshot."""
     base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
     return base / "opencode-go-model-optimizer" / f"snapshot-{plan}.json"
 
 
-def load_cached_snapshot(plan: str = "go", ttl_seconds: int = 3600) -> Snapshot | None:
-    """Load cached snapshot if within TTL, else return None."""
+def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapshot | None:
+    """Load cached snapshot if within TTL, else return None.
+
+    Pass ``math.inf`` as the TTL to accept a cache file of any age.
+    """
     if ttl_seconds <= 0:
         return None
 
@@ -466,71 +431,109 @@ def save_cached_snapshot(snapshot: Snapshot) -> Path | None:
         return None
 
 
+_SOURCE_LABELS: dict[str, str] = {
+    DEFAULT_MODELS_HTTP_URL: "catalogue",
+    **dict.fromkeys(DOCS_URLS, "docs"),
+    MODELS_DEV_URL: "models_dev",
+}
+
+
+class _SourceRecorder:
+    """httpx response hook recording URL, status, time, sha256 and size per source.
+
+    Only the OpenCode/models.dev sources are recorded (never Artificial Analysis), and
+    only digests and sizes are kept, never bodies.
+    """
+
+    def __init__(self) -> None:
+        self.sources: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def __call__(self, response: httpx.Response) -> None:
+        label = _SOURCE_LABELS.get(str(response.request.url))
+        if label is None:
+            return
+        body = response.read()
+        entry = {
+            "url": str(response.request.url),
+            "status": response.status_code,
+            "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "bytes": len(body),
+        }
+        with self._lock:
+            previous = self.sources.get(label)
+            # Keep a successful fetch over a later failed mirror attempt.
+            if previous is None or previous["status"] != 200 or response.status_code == 200:
+                self.sources[label] = entry
+
+
 def fetch_and_build_snapshot(
     plan: str = "go",
     client: httpx.Client | None = None,
-    use_reference_benchmarks: bool = True,
+    use_aa: bool = True,
 ) -> Snapshot:
-    """Fetch live data from catalogue and docs and build a Snapshot."""
+    """Fetch live data from catalogue and docs and build a Snapshot.
+
+    Benchmarks come only from a live Artificial Analysis fetch (needs ``AA_API_KEY`` and
+    ``use_aa``); otherwise ``benchmark_source`` is ``"none"``.
+    """
+    recorder = _SourceRecorder()
     with client_scope(client) as active_client:
-        aa_key = os.environ.get("AA_API_KEY")
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            fut_cat = executor.submit(fetch_catalogue, client=active_client)
-            fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
-            fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
-            fut_aa = (
-                executor.submit(fetch_aa_benchmarks, aa_key, client=active_client)
-                if aa_key
-                else None
-            )
+        hooks = active_client.event_hooks
+        original_hooks = list(hooks.get("response", []))
+        hooks["response"] = [*original_hooks, recorder]
+        active_client.event_hooks = hooks
+        try:
+            return _fetch_and_build(plan, active_client, use_aa, recorder)
+        finally:
+            hooks = active_client.event_hooks
+            hooks["response"] = original_hooks
+            active_client.event_hooks = hooks
 
-            models = fut_cat.result()
-            docs_text = fut_docs.result()
-            models_dev_metadata = fut_models_dev.result()
-            aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
-        all_plan_pricing = {}
-        for p in ("go", "go-plus", "go-teams"):
-            parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
-            if parsed:
-                all_plan_pricing[p] = parsed
-        pricing = all_plan_pricing.get(plan) or parse_go_pricing(docs_text, plan=plan)
-
-        warnings: list[str] = []
-        benchmark_source = "aa_live" if aa_benchmarks else "none"
-        if not aa_benchmarks and use_reference_benchmarks:
-            ref_snap = load_reference_snapshot()
-            if ref_snap:
-                aa_benchmarks = _benchmarks_from_snapshot(ref_snap)
-                if aa_benchmarks:
-                    benchmark_source = f"reference:{ref_snap.fetched_at}"
-                    warnings.append(
-                        "benchmarks (aa_iq/aa_coding/speed_tps) come from the bundled reference "
-                        f"snapshot ({ref_snap.fetched_at}), not live Artificial Analysis data; "
-                        "set AA_API_KEY for live values"
-                    )
-
-        return create_snapshot(
-            models,
-            pricing,
-            plan=plan,
-            aa_benchmarks=aa_benchmarks,
-            all_plan_pricing=all_plan_pricing,
-            models_dev_metadata=models_dev_metadata,
-            endpoints=parse_endpoints_table(docs_text),
-            privacy=parse_privacy(docs_text),
-            request_estimates=parse_request_estimates(docs_text),
-            benchmark_source=benchmark_source,
-            warnings=warnings,
+def _fetch_and_build(
+    plan: str, active_client: httpx.Client, use_aa: bool, recorder: _SourceRecorder
+) -> Snapshot:
+    aa_key = os.environ.get("AA_API_KEY") if use_aa else None
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        fut_cat = executor.submit(fetch_catalogue, client=active_client)
+        fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
+        fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
+        fut_aa = (
+            executor.submit(fetch_aa_benchmarks, aa_key, client=active_client) if aa_key else None
         )
 
+        models = fut_cat.result()
+        docs_text = fut_docs.result()
+        models_dev_metadata = fut_models_dev.result()
+        aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
-def update_reference_snapshot(
-    plan: str = "go",
-    client: httpx.Client | None = None,
-) -> Path:
-    """Fetch live data and update the repository reference snapshot file."""
-    snap = fetch_and_build_snapshot(plan=plan, client=client, use_reference_benchmarks=True)
-    target_path = get_reference_snapshot_path()
-    save_snapshot(snap, target_path)
-    return target_path
+    all_plan_pricing = {}
+    for p in ("go", "go-plus", "go-teams"):
+        parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
+        if parsed:
+            all_plan_pricing[p] = parsed
+    pricing = all_plan_pricing.get(plan) or parse_go_pricing(docs_text, plan=plan)
+
+    warnings: list[str] = []
+    if aa_key and not aa_benchmarks:
+        warnings.append(
+            "AA_API_KEY is set but no Artificial Analysis benchmarks could be fetched; "
+            "falling back to allowance ranking"
+        )
+
+    return create_snapshot(
+        models,
+        pricing,
+        plan=plan,
+        aa_benchmarks=aa_benchmarks,
+        all_plan_pricing=all_plan_pricing,
+        models_dev_metadata=models_dev_metadata,
+        endpoints=parse_endpoints_table(docs_text),
+        privacy=parse_privacy(docs_text),
+        request_estimates=parse_request_estimates(docs_text),
+        benchmark_source="aa_live" if aa_benchmarks else "none",
+        warnings=warnings,
+        sources=recorder.sources,
+    )

@@ -45,26 +45,23 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     fetch_aa_benchmarks,
     fetch_and_build_snapshot,
     get_cache_snapshot_path,
-    get_reference_snapshot_path,
     load_cached_snapshot,
-    load_reference_snapshot,
     load_snapshot,
     merge_docs_pricing,
     save_cached_snapshot,
     save_snapshot,
-    update_reference_snapshot,
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_norm_name():
-    assert norm_name("DeepSeek V4.1 Flash (Off-Peak)") == "deepseekv41flash"
-    assert norm_name("Gemini 4 Argon (50% off)") == "gemini4argon"
-    assert norm_name("Qwen3.7 Plus (≤ 256K tokens)") == "qwen37plus"
-    assert norm_name("GLM-5.3-Flash") == "glm53flash"
-    assert norm_name("<b>Kimi K3.1 Pro</b>") == "kimik31pro"
-    assert norm_name("Iceman Contributor Free") == "icemancontributorfree"
+    assert norm_name("Beta Flash (Off-Peak)") == "betaflash"
+    assert norm_name("Theta Pro (50% off)") == "thetapro"
+    assert norm_name("Alpha Plus (≤ 256K tokens)") == "alphaplus"
+    assert norm_name("Gamma-Flash") == "gammaflash"
+    assert norm_name("<b>Zeta Pro</b>") == "zetapro"
+    assert norm_name("Delta Contributor") == "deltacontributor"
 
 
 def test_parse_price_value():
@@ -91,41 +88,46 @@ def test_parse_go_pricing():
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
     pricing = parse_go_pricing(mdx_text)
 
-    # GLM-5.3-Flash should have $60 allowance, not go-plus $200
-    assert "glm53flash" in pricing
-    assert pricing["glm53flash"]["allowance"] == 60.0
-    assert pricing["glm53flash"]["output_cost"] == 0.50
+    # Gamma-Flash has two context-tier rows with the same allowance: the cheaper one wins
+    assert pricing["gammaflash"]["allowance"] == 50.0
+    assert pricing["gammaflash"]["output_cost"] == 0.4
+    assert pricing["gammaflash"]["raw_name"] == "Gamma-Flash (≤ 256K tokens)"
 
-    # DeepSeek should have $100 allowance
-    assert "deepseekv41flash" in pricing
-    assert pricing["deepseekv41flash"]["allowance"] == 100.0
+    # Off-Peak and Peak rows share the allowance: the cheaper (off-peak) row wins
+    assert pricing["betaflash"]["allowance"] == 80.0
+    assert pricing["betaflash"]["output_cost"] == 0.7
 
-    # Iceman should have infinite allowance (unlimited)
-    assert "icemancontributorfree" in pricing
-    assert pricing["icemancontributorfree"]["allowance"] == float("inf")
+    # A struck-through promo price is ignored in favour of the current price
+    assert pricing["alphamax"]["input_cost"] == 3.0
+    assert pricing["alphamax"]["allowance"] == 12.0
+    assert parse_go_pricing(mdx_text, plan="go-plus")["alphamax"]["allowance"] == 120.0
+
+    # Delta should have infinite allowance (unlimited)
+    assert "deltacontributor" in pricing
+    assert pricing["deltacontributor"]["allowance"] == float("inf")
 
 
 def test_parse_catalogue_cli():
     cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     models = parse_catalogue_cli(cli_text)
 
-    assert len(models) == 7
+    assert len(models) == 14
     ids = {m.id for m in models}
-    assert "qwen3.8-max" in ids
-    assert "deepseek-v4.1-flash" in ids
-    assert "iceman-contributor-free" in ids
+    assert "alpha-max" in ids
+    assert "beta-flash" in ids
+    assert "delta-contributor" in ids
     assert "deprecated-old-model" in ids
 
-    qwen = next(m for m in models if m.id == "qwen3.8-max")
-    assert qwen.cost.input == 2.0
-    assert qwen.cost.output == 6.0
-    assert qwen.cost.cache_read == 0.25
-    assert qwen.cost.cache_write == 2.5
-    assert qwen.limit.context == 1000000
+    alpha = next(m for m in models if m.id == "alpha-max")
+    assert alpha.cost.input == 3.0
+    assert alpha.cost.output == 9.0
+    assert alpha.cost.cache_read == 0.4
+    assert alpha.cost.cache_write == 3.5
+    assert alpha.limit.context == 512000
 
-    iceman = next(m for m in models if m.id == "iceman-contributor-free")
-    assert iceman.is_zero_cost is True
-    assert iceman.is_contributor is True
+    delta = next(m for m in models if m.id == "delta-contributor")
+    assert delta.is_zero_cost is True
+    assert delta.is_contributor is True
 
 
 def test_parse_catalogue_http():
@@ -134,18 +136,28 @@ def test_parse_catalogue_http():
     data = json.loads(http_text)
     models = parse_catalogue_http(data)
 
-    assert len(models) == 2
-    qwen = models[0]
-    assert qwen.id == "qwen3.8-max"
-    assert qwen.cost.input == 2.0
-    assert qwen.cost.output == 6.0
-    assert qwen.cost.cache_read == 0.25
+    assert len(models) == 14
+    alpha = models[0]
+    assert alpha.id == "alpha-max"
+    assert alpha.provider_id == "opencode-go"  # owned_by ("opencode") is not a provider
+    assert alpha.cost.input == 3.0
+    assert alpha.cost.output == 9.0
+    assert alpha.cost.cache_read == 0.4
+    assert alpha.cost.cache_write == 3.5
+    assert alpha.multipliers == []
+    beta = next(m for m in models if m.id == "beta-flash")
+    assert beta.name == "Beta Flash 1101"
+    (peak,) = beta.multipliers
+    assert peak.factor == 2 and set(peak.when) == {"utc_days", "any"}
+    theta = next(m for m in models if m.id == "theta-pro")
+    assert theta.multipliers[0].when == {"date": {"gte": "2026-12-01"}}
+    assert next(m for m in models if m.id == "deprecated-old-model").status == "deprecated"
 
 
 def test_parse_catalogue_http_uses_opencode_go_provider_not_owned_by():
     # Live endpoint sets owned_by to the vendor ("opencode") and no providerID.
     live_item = {
-        "id": "gemini-4-argon",
+        "id": "theta-pro",
         "object": "model",
         "owned_by": "opencode",
         "status": "active",
@@ -154,7 +166,7 @@ def test_parse_catalogue_http_uses_opencode_go_provider_not_owned_by():
 
     assert len(models) == 1
     assert models[0].provider_id == "opencode-go"
-    assert models[0].full_id == "opencode-go/gemini-4-argon"
+    assert models[0].full_id == "opencode-go/theta-pro"
 
 
 def test_snapshot_lifecycle(tmp_path):
@@ -167,10 +179,10 @@ def test_snapshot_lifecycle(tmp_path):
     snap = create_snapshot(models, pricing)
     assert snap.schema_version == 1
     assert snap.plan == "go"
-    assert len(snap.models) == 7
+    assert len(snap.models) == 14
 
-    deepseek = next(m for m in snap.models if m.id == "deepseek-v4.1-flash")
-    assert deepseek.monthly_allowance == 100.0
+    beta = next(m for m in snap.models if m.id == "beta-flash")
+    assert beta.monthly_allowance == 80.0
 
     out_file = tmp_path / "test_snapshot.json"
     save_snapshot(snap, out_file)
@@ -180,18 +192,6 @@ def test_snapshot_lifecycle(tmp_path):
     assert loaded.schema_version == snap.schema_version
     assert len(loaded.models) == len(snap.models)
     assert loaded.models[0].id == snap.models[0].id
-
-
-def test_reference_snapshot_loading():
-    ref_path = get_reference_snapshot_path()
-    assert ref_path.exists()
-    snap = load_reference_snapshot()
-    assert snap is not None
-    assert snap.schema_version == 1
-    assert len(snap.models) > 0
-    # Confirm AA intelligence index is present on benchmarked models
-    benchmarked = [m for m in snap.models if m.aa_iq is not None]
-    assert len(benchmarked) > 0
 
 
 def test_extract_token_cost_and_model_limit_edge_cases():
@@ -579,36 +579,7 @@ def test_merge_docs_pricing_and_benchmarks():
     assert merged2[0].aa_coding == 85.0
 
 
-def test_reference_snapshot_paths_and_corrupt_fallback(tmp_path):
-    # 1. get_reference_snapshot_path fallback branch (line 143)
-    with patch("opencode_go_model_optimizer.ingest.snapshot.files") as mock_files:
-        mock_p = MagicMock()
-        mock_p.exists.return_value = False
-        mock_files.return_value.joinpath.return_value = mock_p
-        fallback_p = get_reference_snapshot_path()
-        assert "reference_snapshot.json" in str(fallback_p)
-
-    # 2. load_reference_snapshot returns None when corrupt JSON
-    corrupt_file = tmp_path / "corrupt_reference.json"
-    corrupt_file.write_text("{ corrupt json", encoding="utf-8")
-    with patch(
-        "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
-        return_value=corrupt_file,
-    ):
-        snap = load_reference_snapshot()
-        assert snap is None
-
-    # 3. load_reference_snapshot returns None when file does not exist
-    missing_file = tmp_path / "nonexistent.json"
-    with patch(
-        "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
-        return_value=missing_file,
-    ):
-        snap_missing = load_reference_snapshot()
-        assert snap_missing is None
-
-
-def test_fetch_and_build_and_update_reference(tmp_path):
+def test_fetch_and_build_with_aa_key():
     # Test fetch_and_build_snapshot with AA_API_KEY env set
     dummy_model = NormalizedModel(id="snap-m", name="Snap Model")
     pricing = {
@@ -655,66 +626,6 @@ def test_fetch_and_build_and_update_reference(tmp_path):
         assert snap.models[0].release_date == "2026-02-01"
         assert snap.models[0].limit.context == 256000
         assert snap.models[0].limit.output == 32000
-
-    # Test fetch_and_build_snapshot without AA_API_KEY and use_reference_benchmarks=True (lines 171-182)
-    dummy_model2 = NormalizedModel(id="snap-m", name="Snap Model")
-    ref_with_bench = Snapshot(
-        schema_version=1,
-        fetched_at="2026-01-01T00:00:00Z",
-        plan="go",
-        models=[
-            NormalizedModel(
-                id="snap-m",
-                name="Snap Model",
-                aa_iq=88.0,
-                aa_coding=80.0,
-                speed_tps=40.0,
-            )
-        ],
-        metadata=SnapshotMetadata(),
-    )
-    with (
-        patch.dict(os.environ, {}, clear=True),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=[dummy_model2],
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx",
-            return_value="",
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.parse_go_pricing",
-            return_value=pricing,
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
-            return_value=ref_with_bench,
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
-            return_value={},
-        ),
-    ):
-        snap_ref = fetch_and_build_snapshot(plan="go", use_reference_benchmarks=True)
-        assert len(snap_ref.models) == 1
-        assert snap_ref.models[0].aa_iq == 88.0
-
-    # Test update_reference_snapshot
-    ref_target = tmp_path / "updated_ref.json"
-    with (
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_and_build_snapshot",
-            return_value=snap,
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
-            return_value=ref_target,
-        ),
-    ):
-        ret_path = update_reference_snapshot(plan="go")
-        assert ret_path == ref_target
-        assert ref_target.exists()
 
 
 def test_cache_snapshot_paths_and_operations(tmp_path):
@@ -893,30 +804,12 @@ def test_apply_plan_aliases_and_normalization():
     assert m.monthly_allowance == 120.0
 
 
-def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
-    # Model 1 has aa_coding and speed_tps, but aa_iq=None
-    m_coding_only = NormalizedModel(
-        id="m_coding",
-        name="Coding Only Model",
-        aa_iq=None,
-        aa_coding=85.0,
-        speed_tps=110.0,
-    )
-    # Model 2 has aa_iq only, and name matching
-    m_named = NormalizedModel(
-        id="org/pretty-model-v1",
-        name="Pretty Model v1",
-        aa_iq=92.0,
-    )
-    ref_snap = Snapshot(
-        schema_version=1,
-        fetched_at="2026-01-01T00:00:00Z",
-        plan="reference",
-        models=[m_coding_only, m_named],
-        metadata=SnapshotMetadata(),
-    )
-
-    # Target catalog models: one matching m_coding by id, one matching m_named by name
+def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
+    # Benchmarks may match a model by its id or by its normalized display name
+    aa = {
+        "m_coding": {"iq": None, "coding": 85.0, "tps": 110.0},
+        "prettymodelv1": {"iq": 92.0, "coding": None, "tps": None},
+    }
     target_mod1 = NormalizedModel(id="m_coding", name="Target 1")
     target_mod2 = NormalizedModel(id="unmatched-id", name="Pretty Model v1")
 
@@ -930,16 +823,16 @@ def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
             return_value="""# Pricing\n| Model | Monthly Allowance | Input | Output | Context |\n| --- | --- | --- | --- | --- |\n| Target 1 | $15.00 | $1.00 | $2.00 | 128K |\n| Pretty Model v1 | $15.00 | $1.00 | $2.00 | 128K |\n""",
         ),
         patch(
-            "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
-            return_value=ref_snap,
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
+            return_value=aa,
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
             return_value={},
         ),
-        patch.dict("os.environ", {}, clear=True),
+        patch.dict("os.environ", {"AA_API_KEY": "k"}, clear=True),
     ):
-        snap = fetch_and_build_snapshot(plan="go", use_reference_benchmarks=True)
+        snap = fetch_and_build_snapshot(plan="go")
         by_id = {m.id: m for m in snap.models}
 
         assert by_id["m_coding"].aa_coding == 85.0
@@ -949,25 +842,11 @@ def test_fetch_and_build_snapshot_reference_benchmarks_extended_matching():
 
 def test_norm_name_lru_cache():
     norm_name.cache_clear()
-    n1 = norm_name("DeepSeek V4.1 Flash")
-    n2 = norm_name("DeepSeek V4.1 Flash")
+    n1 = norm_name("Beta Flash")
+    n2 = norm_name("Beta Flash")
     assert n1 == n2
     info = norm_name.cache_info()
     assert info.hits >= 1
-
-
-def test_reference_snapshot_caching_and_deep_copy():
-    snap1 = load_reference_snapshot()
-    assert snap1 is not None
-
-    # Load again: should be fast cached load
-    snap2 = load_reference_snapshot()
-    assert snap2 is not None
-
-    # Mutate snap1 and verify deep copy isolation on snap2
-    orig_allowance = snap2.models[0].monthly_allowance
-    snap1.models[0].monthly_allowance = 999999.0
-    assert snap2.models[0].monthly_allowance == orig_allowance
 
 
 def test_cross_plan_cache_sharing(tmp_path):
@@ -1129,53 +1008,21 @@ def test_fetch_aa_benchmarks_robust_parsing():
     assert _to_float(float("nan")) is None
 
 
-def _patched_build(docs_text, aa_return, ref_snap, env):
-    with (
-        patch.dict(os.environ, env, clear=True),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=[NormalizedModel(id="snap-m", name="Snap Model")],
-        ),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=docs_text),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
-            return_value=aa_return,
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.load_reference_snapshot",
-            return_value=ref_snap,
-        ),
-    ):
-        return fetch_and_build_snapshot(plan="go")
-
-
-def test_fetch_and_build_falls_back_to_reference_when_aa_key_set_but_fetch_empty():
-    ref = Snapshot(
-        schema_version=1,
-        fetched_at="2026-01-01T00:00:00Z",
-        plan="go",
-        models=[NormalizedModel(id="snap-m", name="Snap Model", aa_iq=77.0)],
-        metadata=SnapshotMetadata(),
-    )
-    snap = _patched_build("", {}, ref, {"AA_API_KEY": "k"})
-    assert snap.models[0].aa_iq == 77.0
-
-
 def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
     mdx = (Path(__file__).parent / "fixtures" / "go_docs.mdx").read_text(encoding="utf-8")
+    mdx = mdx.replace('slot="go-teams"', 'slot="unused"')  # fixture without a teams table
     assert parse_go_pricing(mdx, plan="go-teams", fallback_to_go=False) == {}
     assert parse_go_pricing(mdx, plan="go-teams")  # default keeps go fallback
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=[NormalizedModel(id="m", name="Qwen3.8 Max")],
+            return_value=[NormalizedModel(id="m", name="Alpha Max")],
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
         patch.dict(os.environ, {}, clear=True),
     ):
-        snap = fetch_and_build_snapshot(plan="go-teams", use_reference_benchmarks=False)
+        snap = fetch_and_build_snapshot(plan="go-teams")
     for m in snap.models:
         assert "go-teams" not in m.plan_allowances
     assert any(m.monthly_allowance is not None for m in snap.models)

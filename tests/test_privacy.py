@@ -28,26 +28,26 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 
 FIX = Path(__file__).parent / "fixtures"
-MDX = (FIX / "live_go_docs.mdx").read_text(encoding="utf-8")
-OC = json.loads((FIX / "live_oc_models.json").read_text(encoding="utf-8"))
+MDX = (FIX / "go_docs.mdx").read_text(encoding="utf-8")
+OC = json.loads((FIX / "catalogue_http.json").read_text(encoding="utf-8"))
 
 
-def test_parse_privacy_live_fixture():
+def test_parse_privacy_fixture():
     p = parse_privacy(MDX)
-    assert p["LongCat 2.5 Free"]["requires_global_region"] is True
-    assert p["LongCat-2.0"]["requires_global_region"] is False
-    assert p["Muse Spark 1.3 Contributor"]["trains_on_data"] is True
-    assert p["Muse Spark 1.3 Contributor"]["retention_days"] is None
-    assert p["Muse Spark 1.3 Contributor"]["zdr"] is False
-    assert p["Grok 4.7"]["retention_days"] == 30
-    assert p["Grok 4.7"]["zdr"] is False
-    assert p["GLM-5.3"]["zdr"] is True and p["GLM-5.3"]["trains_on_data"] is False
-    for name in ("DeepSeek V4.1 Flash", "DeepSeek V4 Pro"):
+    assert p["Kappa Free"]["requires_global_region"] is True
+    assert p["Alpha Max"]["requires_global_region"] is False
+    assert p["Lambda Contributor"]["trains_on_data"] is True
+    assert p["Lambda Contributor"]["retention_days"] is None
+    assert p["Lambda Contributor"]["zdr"] is False
+    assert p["Zeta Pro"]["retention_days"] == 30
+    assert p["Zeta Pro"]["zdr"] is False
+    assert p["Gamma Prime"]["zdr"] is True and p["Gamma Prime"]["trains_on_data"] is False
+    for name in ("Beta Flash", "Beta Pro"):
         assert p[name]["agreement_valid_until"] == "2026-11-30"
         assert p[name]["retention_days"] == 0  # "0 days\*"
-    assert p["GLM-5.3"]["agreement_valid_until"] is None
+    assert p["Gamma Prime"]["agreement_valid_until"] is None
     # slash-separated note keys apply to each named row
-    assert "30 days" in (p["GPT 5.6 Luna"]["note"] or "")
+    assert "30 days" in (p["Eta Flash"]["note"] or "")
     assert parse_privacy("no privacy here") == {}
 
 
@@ -57,7 +57,7 @@ def test_global_region_note_tolerates_markers_and_case():
     assert parse_privacy(mdx)["Foo"]["requires_global_region"] is True
 
 
-def test_merge_privacy_live_catalogue_and_warnings():
+def test_merge_privacy_catalogue_and_warnings():
     models = parse_catalogue_http(OC)
     warnings: list[str] = []
     merge_privacy(
@@ -68,8 +68,8 @@ def test_merge_privacy_live_catalogue_and_warnings():
         now=datetime(2026, 12, 15, tzinfo=UTC),
     )
     by_id = {m.id: m for m in models}
-    assert by_id["longcat-2.5-free"].privacy.requires_global_region is True
-    assert by_id["deepseek-v4-pro"].privacy.agreement_valid_until == "2026-11-30"
+    assert by_id["kappa-free"].privacy.requires_global_region is True
+    assert by_id["beta-pro"].privacy.agreement_valid_until == "2026-11-30"
     assert [m.id for m in models if m.status == "active" and m.privacy is None] == []
     assert any("2026-11-30 is in the past" in w for w in warnings)
     assert not any("no docs privacy row" in w for w in warnings)

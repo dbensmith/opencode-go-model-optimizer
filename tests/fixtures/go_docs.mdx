@@ -1,26 +1,191 @@
-# OpenCode Go Pricing and Limits
+# Synthetic Go Pricing and Limits (test fixture, fictional data)
+
+## Usage limits
 
 <PlanTabs id="go-pricing" label="Go plan" syncKey="go-plan">
   <div slot="go">
 
-    | Model                            | Input           | Output            | Cached Read     | Cached Write | Monthly limit                                  |
-    | -------------------------------- | --------------- | ----------------- | --------------- | ------------ | ---------------------------------------------- |
-    | GLM-5.3-Flash                    | $0.15           | $0.50             | $0.03           | -            | **$60**                                        |
-    | Qwen3.8 Max                      | $2.00           | $6.00             | $0.25           | $2.50        | **$15**                                        |
-    | DeepSeek V4.1 Flash (Off-Peak)   | $0.15           | $0.60             | $0.003          | -            | **$100**                                       |
-    | DeepSeek V4.1 Flash (Peak)       | $0.30           | $1.20             | $0.006          | -            | **$100**                                       |
-    | Iceman Contributor Free          | Free            | Free              | Free            | -            | **Unlimited**<br /><small>limited time</small> |
-    | Beam Free                        | Free            | Free              | Free            | -            | **Unlimited**<br /><small>limited time</small> |
-    | Step 5 Preview                   | $1.00           | $2.70             | $0.10           | -            | **$15**                                        |
-    | Deprecated Old Model             | $1.00           | $1.00             | $0.10           | -            | **$15**                                        |
+    | Model                       | Input     | Output | Cached Read | Cached Write | Monthly limit                                  |
+    | --------------------------- | --------- | ------ | ----------- | ------------ | ---------------------------------------------- |
+    | Alpha Max                   | ~~$4~~ $3 | $9     | $0.4        | $3.5         | **$12**                                        |
+    | Theta Pro                   | $6        | $18    | $0.6        | -            | **$9**                                         |
+    | Zeta Pro                    | $4.5      | $13    | $0.5        | -            | **$11**                                        |
+    | Beta Flash (Off-Peak)       | $0.2      | $0.7   | $0.004      | -            | **$80**                                        |
+    | Beta Flash (Peak)           | $0.4      | $1.4   | $0.008      | -            | **$80**                                        |
+    | Beta Pro                    | $0.7      | $2.1   | $0.02       | -            | **$40**                                        |
+    | Gamma-Flash (≤ 256K tokens) | $0.1      | $0.4   | $0.02       | -            | **$50**                                        |
+    | Gamma-Flash (> 256K tokens) | $0.2      | $0.8   | $0.04       | -            | **$50**                                        |
+    | Gamma Prime                 | $1        | $4     | $0.1        | -            | **$20**                                        |
+    | Eta Flash                   | $0.3      | $1.2   | $0.05       | -            | **$30**                                        |
+    | Lambda Contributor          | $0.5      | $1     | $0.05       | -            | **$40**                                        |
+    | Omega Preview               | $1.2      | $3     | $0.12       | -            | **$12**                                        |
+    | Deprecated Old Model        | $1        | $1     | $0.1        | -            | **$15**                                        |
+    | Delta Contributor           | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Epsilon Free                | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Kappa Free                  | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
 
   </div>
   <div slot="go-plus">
 
-    | Model                            | Input           | Output            | Cached Read     | Cached Write | Monthly limit                                  |
-    | -------------------------------- | --------------- | ----------------- | --------------- | ------------ | ---------------------------------------------- |
-    | GLM-5.3-Flash                    | $0.15           | $0.50             | $0.03           | -            | **$200**                                       |
-    | Qwen3.8 Max                      | $2.00           | $6.00             | $0.25           | $2.50        | **$200**                                       |
+    | Model                       | Input     | Output | Cached Read | Cached Write | Monthly limit                                  |
+    | --------------------------- | --------- | ------ | ----------- | ------------ | ---------------------------------------------- |
+    | Alpha Max                   | ~~$4~~ $3 | $9     | $0.4        | $3.5         | **$120**                                       |
+    | Theta Pro                   | $6        | $18    | $0.6        | -            | **$90**                                        |
+    | Zeta Pro                    | $4.5      | $13    | $0.5        | -            | **$110**                                       |
+    | Beta Flash (Off-Peak)       | $0.2      | $0.7   | $0.004      | -            | **$800**                                       |
+    | Beta Flash (Peak)           | $0.4      | $1.4   | $0.008      | -            | **$800**                                       |
+    | Beta Pro                    | $0.7      | $2.1   | $0.02       | -            | **$400**                                       |
+    | Gamma-Flash (≤ 256K tokens) | $0.1      | $0.4   | $0.02       | -            | **$180**                                       |
+    | Gamma-Flash (> 256K tokens) | $0.2      | $0.8   | $0.04       | -            | **$180**                                       |
+    | Gamma Prime                 | $1        | $4     | $0.1        | -            | **$70**                                        |
+    | Eta Flash                   | $0.3      | $1.2   | $0.05       | -            | **$100**                                       |
+    | Lambda Contributor          | $0.5      | $1     | $0.05       | -            | **$140**                                       |
+    | Omega Preview               | $1.2      | $3     | $0.12       | -            | **$40**                                        |
+    | Deprecated Old Model        | $1        | $1     | $0.1        | -            | **$50**                                        |
+    | Delta Contributor           | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Epsilon Free                | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Kappa Free                  | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+
+  </div>
+  <div slot="go-teams">
+
+    | Model                       | Input     | Output | Cached Read | Cached Write | Monthly limit                                  |
+    | --------------------------- | --------- | ------ | ----------- | ------------ | ---------------------------------------------- |
+    | Alpha Max                   | ~~$4~~ $3 | $9     | $0.4        | $3.5         | **$24**                                        |
+    | Theta Pro                   | $6        | $18    | $0.6        | -            | **$18**                                        |
+    | Zeta Pro                    | $4.5      | $13    | $0.5        | -            | **$22**                                        |
+    | Beta Flash (Off-Peak)       | $0.2      | $0.7   | $0.004      | -            | **$160**                                       |
+    | Beta Flash (Peak)           | $0.4      | $1.4   | $0.008      | -            | **$160**                                       |
+    | Beta Pro                    | $0.7      | $2.1   | $0.02       | -            | **$80**                                        |
+    | Gamma-Flash (≤ 256K tokens) | $0.1      | $0.4   | $0.02       | -            | **$90**                                        |
+    | Gamma-Flash (> 256K tokens) | $0.2      | $0.8   | $0.04       | -            | **$90**                                        |
+    | Gamma Prime                 | $1        | $4     | $0.1        | -            | **$35**                                        |
+    | Eta Flash                   | $0.3      | $1.2   | $0.05       | -            | **$60**                                        |
+    | Lambda Contributor          | $0.5      | $1     | $0.05       | -            | **$70**                                        |
+    | Omega Preview               | $1.2      | $3     | $0.12       | -            | **$24**                                        |
+    | Deprecated Old Model        | $1        | $1     | $0.1        | -            | **$30**                                        |
+    | Delta Contributor           | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Epsilon Free                | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
+    | Kappa Free                  | Free      | Free   | Free        | -            | **Unlimited**<br /><small>limited time</small> |
 
   </div>
 </PlanTabs>
+
+Some prose between the tables.
+
+<PlanTabs id="go-requests" label="Go plan" syncKey="go-plan">
+  <div slot="go">
+
+    | Model                | Requests per 5 hours | Requests per week | Requests per month |
+    | -------------------- | -------------------- | ----------------- | ------------------ |
+    | Alpha Max            | 331                  | 827               | 1,655              |
+    | Theta Pro            | 248                  | 622               | 1,244              |
+    | Zeta Pro             | 303                  | 759               | 1,518              |
+    | Beta Flash           | 2,194                | 5,485             | 10,971             |
+    | Beta Pro             | 1,098                | 2,745             | 5,491              |
+    | Gamma-Flash          | 1,372                | 3,430             | 6,861              |
+    | Gamma Prime          | 550                  | 1,375             | 2,751              |
+    | Eta Flash            | 824                  | 2,060             | 4,121              |
+    | Lambda Contributor   | 1,098                | 2,745             | 5,491              |
+    | Omega Preview        | 331                  | 827               | 1,655              |
+    | Deprecated Old Model | 413                  | 1,033             | 2,066              |
+    | Delta Contributor    | Unlimited            | Unlimited         | Unlimited          |
+    | Epsilon Free         | Unlimited            | Unlimited         | Unlimited          |
+    | Kappa Free           | Unlimited            | Unlimited         | Unlimited          |
+
+  </div>
+  <div slot="go-plus">
+
+    | Model                | Requests per 5 hours | Requests per week | Requests per month |
+    | -------------------- | -------------------- | ----------------- | ------------------ |
+    | Alpha Max            | 3,290                | 8,225             | 16,451             |
+    | Theta Pro            | 2,468                | 6,170             | 12,341             |
+    | Zeta Pro             | 3,016                | 7,540             | 15,081             |
+    | Beta Flash           | 21,922               | 54,805            | 109,611            |
+    | Beta Pro             | 10,962               | 27,405            | 54,811             |
+    | Gamma-Flash          | 4,934                | 12,335            | 24,671             |
+    | Gamma Prime          | 1,920                | 4,800             | 9,601              |
+    | Eta Flash            | 2,742                | 6,855             | 13,711             |
+    | Lambda Contributor   | 3,838                | 9,595             | 19,191             |
+    | Omega Preview        | 1,098                | 2,745             | 5,491              |
+    | Deprecated Old Model | 1,372                | 3,430             | 6,861              |
+    | Delta Contributor    | Unlimited            | Unlimited         | Unlimited          |
+    | Epsilon Free         | Unlimited            | Unlimited         | Unlimited          |
+    | Kappa Free           | Unlimited            | Unlimited         | Unlimited          |
+
+  </div>
+  <div slot="go-teams">
+
+    | Model                | Requests per 5 hours | Requests per week | Requests per month |
+    | -------------------- | -------------------- | ----------------- | ------------------ |
+    | Alpha Max            | 659                  | 1,649             | 3,299              |
+    | Theta Pro            | 495                  | 1,238             | 2,477              |
+    | Zeta Pro             | 605                  | 1,512             | 3,025              |
+    | Beta Flash           | 4,386                | 10,965            | 21,931             |
+    | Beta Pro             | 2,194                | 5,485             | 10,971             |
+    | Gamma-Flash          | 2,468                | 6,170             | 12,341             |
+    | Gamma Prime          | 961                  | 2,403             | 4,806              |
+    | Eta Flash            | 1,646                | 4,115             | 8,231              |
+    | Lambda Contributor   | 1,920                | 4,800             | 9,601              |
+    | Omega Preview        | 659                  | 1,649             | 3,299              |
+    | Deprecated Old Model | 824                  | 2,060             | 4,121              |
+    | Delta Contributor    | Unlimited            | Unlimited         | Unlimited          |
+    | Epsilon Free         | Unlimited            | Unlimited         | Unlimited          |
+    | Kappa Free           | Unlimited            | Unlimited         | Unlimited          |
+
+  </div>
+</PlanTabs>
+
+## Endpoints
+
+Synthetic endpoints table.
+
+<div class="docs-table-scroll" role="region" tabIndex={0}>
+
+| Model                | Model ID             | Endpoint                                         | AI SDK Package              |
+| -------------------- | -------------------- | ------------------------------------------------ | --------------------------- |
+| Alpha Max            | alpha-max            | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Theta Pro            | theta-pro            | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Zeta Pro             | zeta-pro             | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Beta Flash           | beta-flash           | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Beta Pro             | beta-pro             | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Gamma-Flash          | gamma-flash          | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Gamma Prime          | gamma-prime          | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Eta Flash            | eta-flash            | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Lambda Contributor   | lambda-contributor   | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Omega Preview        | omega-preview        | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Deprecated Old Model | deprecated-old-model | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Delta Contributor    | delta-contributor    | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Epsilon Free         | epsilon-free         | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+| Kappa Free           | kappa-free           | `https://example.invalid/go/v1/chat/completions` | `@ai-sdk/openai-compatible` |
+
+</div>
+
+## Privacy
+
+| Model                | Model training | Data retention |
+| -------------------- | -------------- | -------------- |
+| Alpha Max            | Not used       | 0 days         |
+| Theta Pro            | Not used       | 0 days         |
+| Zeta Pro             | Not used       | 30 days        |
+| Beta Flash           | Not used       | 0 days\*       |
+| Beta Pro             | Not used       | 0 days\*       |
+| Gamma-Flash          | Not used       | 0 days         |
+| Gamma Prime          | Not used       | 0 days         |
+| Eta Flash            | Not used       | 30 days        |
+| Lambda Contributor   | Yes            | Not ZDR        |
+| Omega Preview        | Not used       | 0 days         |
+| Deprecated Old Model | Not used       | 30 days        |
+| Delta Contributor    | Yes            | Not ZDR        |
+| Epsilon Free         | Not used       | 30 days        |
+| Kappa Free           | Not used       | 0 days         |
+
+- **Zeta Pro / Eta Flash:** Requests are retained for 30 days under the provider's policy. [Learn more](https://example.invalid/policy).
+- **Lambda Contributor:** Discounted token pricing in exchange for permission to use your prompts for training.
+- **Delta Contributor:** Free for a limited time in exchange for permission to use your prompts.
+- **Kappa Free:** Hosted in a distant region. Requires **Global** regions in your workspace privacy settings.
+- **Beta:** ZDR agreement is renewed monthly. The current agreement is valid through November 30, 2026.
+
+## Background
+
+Trailing prose.

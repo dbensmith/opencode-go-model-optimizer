@@ -1,34 +1,74 @@
-opencode-go/qwen3.8-max
+opencode-go/alpha-max
 {
-  "id": "qwen3.8-max",
+  "id": "alpha-max",
   "providerID": "opencode-go",
-  "name": "Qwen3.8 Max",
+  "name": "Alpha Max",
   "status": "active",
   "cost": {
-    "input": 2.0,
-    "output": 6.0,
+    "input": 3.0,
+    "output": 9.0,
     "cache": {
-      "read": 0.25,
-      "write": 2.5
+      "read": 0.4,
+      "write": 3.5
+    }
+  },
+  "limit": {
+    "context": 512000,
+    "output": 40000
+  },
+  "release_date": "2026-08-20"
+}
+opencode-go/theta-pro
+{
+  "id": "theta-pro",
+  "providerID": "opencode-go",
+  "name": "Theta Pro",
+  "status": "active",
+  "cost": {
+    "input": 6.0,
+    "output": 18.0,
+    "cache": {
+      "read": 0.6,
+      "write": 0
     }
   },
   "limit": {
     "context": 1000000,
-    "output": 32768
+    "output": 65000
   },
-  "release_date": "2026-09-15"
+  "release_date": "2026-09-12"
 }
-opencode-go/deepseek-v4.1-flash
+opencode-go/zeta-pro
 {
-  "id": "deepseek-v4.1-flash",
+  "id": "zeta-pro",
   "providerID": "opencode-go",
-  "name": "DeepSeek V4.1 Flash",
+  "name": "Zeta Pro",
   "status": "active",
   "cost": {
-    "input": 0.15,
-    "output": 0.6,
+    "input": 4.5,
+    "output": 13.0,
     "cache": {
-      "read": 0.003,
+      "read": 0.5,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 300000,
+    "output": 32000
+  },
+  "release_date": "2026-07-30"
+}
+opencode-go/beta-flash
+{
+  "id": "beta-flash",
+  "providerID": "opencode-go",
+  "name": "Beta Flash",
+  "status": "active",
+  "cost": {
+    "input": 0.2,
+    "output": 0.7,
+    "cache": {
+      "read": 0.004,
       "write": 0
     }
   },
@@ -36,87 +76,127 @@ opencode-go/deepseek-v4.1-flash
     "context": 1000000,
     "output": 384000
   },
-  "release_date": "2026-09-10"
+  "release_date": "2026-10-17"
 }
-opencode-go/glm-5.3-flash
+opencode-go/beta-pro
 {
-  "id": "glm-5.3-flash",
+  "id": "beta-pro",
   "providerID": "opencode-go",
-  "name": "GLM-5.3-Flash",
+  "name": "Beta Pro",
   "status": "active",
   "cost": {
-    "input": 0.15,
-    "output": 0.5,
+    "input": 0.7,
+    "output": 2.1,
     "cache": {
-      "read": 0.03,
+      "read": 0.02,
       "write": 0
     }
   },
   "limit": {
     "context": 1000000,
-    "output": 32768
+    "output": 384000
   },
-  "release_date": "2026-09-08"
+  "release_date": "2026-10-10"
 }
-opencode-go/iceman-contributor-free
+opencode-go/gamma-flash
 {
-  "id": "iceman-contributor-free",
+  "id": "gamma-flash",
   "providerID": "opencode-go",
-  "name": "Iceman Contributor Free",
+  "name": "Gamma-Flash",
   "status": "active",
   "cost": {
-    "input": 0,
-    "output": 0,
+    "input": 0.1,
+    "output": 0.4,
     "cache": {
-      "read": 0,
+      "read": 0.02,
       "write": 0
     }
   },
   "limit": {
-    "context": 1000000,
-    "output": 32768
-  },
-  "release_date": "2026-09-12"
-}
-opencode-go/beam-free
-{
-  "id": "beam-free",
-  "providerID": "opencode-go",
-  "name": "Beam Free",
-  "status": "active",
-  "cost": {
-    "input": 0,
-    "output": 0,
-    "cache": {
-      "read": 0,
-      "write": 0
-    }
-  },
-  "limit": {
-    "context": 1048576,
-    "output": 131072
+    "context": 256000,
+    "output": 32000
   },
   "release_date": "2026-09-01"
 }
-opencode-go/step-5-preview
+opencode-go/gamma-prime
 {
-  "id": "step-5-preview",
+  "id": "gamma-prime",
   "providerID": "opencode-go",
-  "name": "Step 5 Preview",
+  "name": "Gamma Prime",
   "status": "active",
   "cost": {
     "input": 1.0,
-    "output": 2.7,
+    "output": 4.0,
     "cache": {
       "read": 0.1,
       "write": 0
     }
   },
   "limit": {
-    "context": 1000000,
+    "context": 200000,
+    "output": 64000
+  },
+  "release_date": "2026-08-01"
+}
+opencode-go/eta-flash
+{
+  "id": "eta-flash",
+  "providerID": "opencode-go",
+  "name": "Eta Flash",
+  "status": "active",
+  "cost": {
+    "input": 0.3,
+    "output": 1.2,
+    "cache": {
+      "read": 0.05,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 128000,
+    "output": 16000
+  },
+  "release_date": "2026-06-15"
+}
+opencode-go/lambda-contributor
+{
+  "id": "lambda-contributor",
+  "providerID": "opencode-go",
+  "name": "Lambda Contributor",
+  "status": "active",
+  "cost": {
+    "input": 0.5,
+    "output": 1.0,
+    "cache": {
+      "read": 0.05,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 262144,
     "output": 32768
   },
-  "release_date": "2026-09-18"
+  "release_date": "2026-10-25"
+}
+opencode-go/omega-preview
+{
+  "id": "omega-preview",
+  "providerID": "opencode-go",
+  "name": "Omega Preview",
+  "status": "active",
+  "cost": {
+    "input": 1.2,
+    "output": 3.0,
+    "cache": {
+      "read": 0.12,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 200000,
+    "output": 16000
+  },
+  "release_date": "2026-11-01"
 }
 opencode-go/deprecated-old-model
 {
@@ -134,7 +214,67 @@ opencode-go/deprecated-old-model
   },
   "limit": {
     "context": 100000,
-    "output": 4096
+    "output": 8000
   },
-  "release_date": "2025-01-01"
+  "release_date": "2025-12-01"
+}
+opencode-go/delta-contributor
+{
+  "id": "delta-contributor",
+  "providerID": "opencode-go",
+  "name": "Delta Contributor",
+  "status": "active",
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 262144,
+    "output": 32768
+  },
+  "release_date": "2026-10-01"
+}
+opencode-go/epsilon-free
+{
+  "id": "epsilon-free",
+  "providerID": "opencode-go",
+  "name": "Epsilon Free",
+  "status": "active",
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 128000,
+    "output": 16000
+  },
+  "release_date": "2026-09-20"
+}
+opencode-go/kappa-free
+{
+  "id": "kappa-free",
+  "providerID": "opencode-go",
+  "name": "Kappa Free",
+  "status": "active",
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cache": {
+      "read": 0,
+      "write": 0
+    }
+  },
+  "limit": {
+    "context": 200000,
+    "output": 16000
+  },
+  "release_date": "2026-08-25"
 }
