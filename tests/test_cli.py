@@ -241,6 +241,7 @@ def test_cli_select_plan_switch(tmp_path):
             return_value=parse_catalogue_cli(cli_text),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
     ):
         main(["fetch", "--plan", "go", "--out", str(out_snap_go)])
         main(["fetch", "--plan", "go-plus", "--out", str(out_snap_plus)])
@@ -396,6 +397,7 @@ def test_cli_fetch(tmp_path):
             return_value=parse_catalogue_cli(cli_text),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
     ):
         rc = main(["fetch", "--out", str(out_snap)])
         assert rc == 0
@@ -416,6 +418,7 @@ def test_cli_fetch_update_reference(tmp_path):
             return_value=parse_catalogue_cli(cli_text),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.get_reference_snapshot_path",
             return_value=fake_ref_path,

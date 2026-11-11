@@ -2,6 +2,7 @@
 
 import json
 
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import ModelChange, SnapshotDiff
 from opencode_go_model_optimizer.formatters.output import (
     _format_diff_value,
@@ -302,7 +303,7 @@ def test_explain_tiers_and_table():
     }
 
     # Test explain_tiers
-    expl = explain_tiers(tiers, models, profile="coding")
+    expl = explain_tiers(tiers, models, SelectionCriteria(profile="coding"))
     assert "heavy" in expl
     assert expl["heavy"]["model_id"] == "opencode-go/mod-1"
     assert expl["heavy"]["monthly_allowance"] == 60.0
@@ -320,7 +321,9 @@ def test_explain_tiers_and_table():
     assert expl["light"]["model_id"] == "opencode-go/mod-missing"
 
     # Test format_select_table with explain=True
-    tbl_explain = format_select_table(tiers, models, plan="go", explain=True, profile="coding")
+    tbl_explain = format_select_table(
+        tiers, models, plan="go", explain=True, criteria=SelectionCriteria(profile="coding")
+    )
     assert "IQ" in tbl_explain
     assert "BPE" in tbl_explain
     assert "Burn %" in tbl_explain

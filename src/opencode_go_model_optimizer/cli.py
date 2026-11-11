@@ -8,12 +8,9 @@ from typing import Any, NamedTuple
 
 import httpx
 
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
-from opencode_go_model_optimizer.engine.tiers import (
-    allocate_tiers_with_fallbacks,
-    rank_catalog,
-    resolve_mode,
-)
+from opencode_go_model_optimizer.engine.tiers import rank_catalog, resolve_mode, select_tiers
 from opencode_go_model_optimizer.formatters.output import (
     explain_tiers,
     format_diff_json,
@@ -422,6 +419,24 @@ def _parse_preferred_tiers(prefer_list: list[str] | None) -> dict[str, str]:
     return preferred
 
 
+def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteria:
+    """Build selection criteria from parsed select/rank arguments and the resolved mode."""
+    return SelectionCriteria(
+        mode=mode,
+        top_n=getattr(args, "top_n", None) or 1,
+        preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
+        skip_models=frozenset(args.skip),
+        allow_contributor=not args.no_contributor,
+        min_context=args.min_context,
+        min_output=args.min_output,
+        max_output_cost=args.max_output_cost,
+        max_burn=args.max_burn,
+        profile=args.profile,
+        token_mix=args.tokens,
+        weights=args.weights,
+    )
+
+
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
     loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
@@ -430,60 +445,32 @@ def handle_select(args: argparse.Namespace) -> int:
     plan = _effective_plan(snap.plan, args.plan, snap.models)
     mode = resolve_mode(args.mode, models)
 
-    skip_models = set(args.skip)
-    preferred_tiers = _parse_preferred_tiers(args.prefer)
+    criteria = _criteria_from_args(args, mode)
     candidate_ids = {
         ref
         for m in models
-        if m.id not in skip_models
-        and m.full_id not in skip_models
+        if m.id not in criteria.skip_models
+        and m.full_id not in criteria.skip_models
         and m.limit.context >= args.min_context
         and m.limit.output >= args.min_output
         for ref in (m.id, m.full_id)
     }
-    for tier, model_id in preferred_tiers.items():
+    for tier, model_id in criteria.preferred_tiers.items():
         if model_id not in candidate_ids:
             print(
                 f"{_PROG}: warning: preferred model '{model_id}' for tier '{tier}' "
                 "not found; ignoring",
                 file=sys.stderr,
             )
-    token_mix = args.tokens
-    weights = args.weights
-    top_n = args.top_n or 1
-    profile = args.profile
+    profile = criteria.profile
     explain = args.explain
 
-    tiers, candidates = allocate_tiers_with_fallbacks(
-        models,
-        top_n=top_n,
-        mode=mode,
-        preferred_tiers=preferred_tiers,
-        skip_models=skip_models,
-        allow_contributor=not args.no_contributor,
-        min_context=args.min_context,
-        min_output=args.min_output,
-        max_output_cost=args.max_output_cost,
-        profile=profile,
-        max_burn=args.max_burn,
-        token_mix=token_mix,
-        weights=weights,
-    )
-    fallbacks = candidates if top_n > 1 else None
+    selection = select_tiers(models, criteria)
+    tiers = selection.primary
+    fallbacks = selection.candidates if criteria.top_n > 1 else None
 
     if args.format == "json":
-        explanations = (
-            explain_tiers(
-                tiers,
-                models,
-                mode=mode,
-                profile=profile,
-                token_mix=token_mix,
-                weights=weights,
-            )
-            if explain
-            else None
-        )
+        explanations = explain_tiers(tiers, selection.models, criteria) if explain else None
         out = format_select_json(
             tiers,
             mode=mode,
@@ -499,13 +486,7 @@ def handle_select(args: argparse.Namespace) -> int:
         )
     elif args.format == "table":
         out = format_select_table(
-            tiers,
-            models,
-            plan=plan,
-            explain=explain,
-            profile=profile,
-            token_mix=token_mix,
-            weights=weights,
+            tiers, selection.models, plan=plan, explain=explain, criteria=criteria
         )
     elif args.format == "env":
         out = format_select_env(tiers, fallbacks=fallbacks)
@@ -530,19 +511,7 @@ def handle_rank(args: argparse.Namespace) -> int:
     models, _ = _load_or_fetch_models(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
     mode = resolve_mode(args.mode, models)
 
-    ranked = rank_catalog(
-        models,
-        mode=mode,
-        skip_models=set(args.skip),
-        allow_contributor=not args.no_contributor,
-        min_context=args.min_context,
-        min_output=args.min_output,
-        max_output_cost=args.max_output_cost,
-        profile=args.profile,
-        max_burn=args.max_burn,
-        token_mix=args.tokens,
-        weights=args.weights,
-    )
+    ranked = rank_catalog(models, _criteria_from_args(args, mode))
 
     if args.format == "json" and not args.table:
         out = format_rank_json(ranked)

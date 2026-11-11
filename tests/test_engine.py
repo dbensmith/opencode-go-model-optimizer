@@ -9,6 +9,7 @@ from opencode_go_model_optimizer.engine.allowance import (
     rank_paid_models,
     tie_break_key,
 )
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.pareto import (
     WORKLOAD_PROFILES,
     compute_quota_burn_pct,
@@ -18,13 +19,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     fisher_jenks_3_clusters,
     ssd,
 )
-from opencode_go_model_optimizer.engine.tiers import (
-    allocate_tier_fallbacks,
-    allocate_tiers,
-    allocate_tiers_allowance,
-    allocate_tiers_pareto,
-    rank_catalog,
-)
+from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
 from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
@@ -34,6 +29,28 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def _criteria(kw):
+    if "skip_models" in kw:
+        kw["skip_models"] = frozenset(kw["skip_models"])
+    return SelectionCriteria(**kw)
+
+
+def _tiers(models, **kw):
+    return select_tiers(models, _criteria(kw)).primary
+
+
+def _tiers_pareto(models, **kw):
+    return _tiers(models, mode="pareto", **kw)
+
+
+def _fallbacks(models, **kw):
+    return select_tiers(models, _criteria(kw)).candidates
+
+
+def _rank(models, **kw):
+    return rank_catalog(models, _criteria(kw))
 
 
 def _get_fixture_models() -> list[NormalizedModel]:
@@ -155,14 +172,17 @@ def test_pareto_evaluation():
     evaluated = evaluate_pareto(models)
     assert len(evaluated) == len(models)
 
-    assert qwen.composite_burn_pct is not None
-    assert deepseek.composite_burn_pct is not None
-    assert deepseek.bpe is not None
+    by_id = {m.id: m for m in evaluated}
+    assert by_id["qwen3.8-max"].composite_burn_pct is not None
+    assert by_id["deepseek-v4.1-flash"].composite_burn_pct is not None
+    assert by_id["deepseek-v4.1-flash"].bpe is not None
+    # Inputs are never mutated
+    assert qwen.composite_burn_pct is None and deepseek.bpe is None
 
 
 def test_allocate_tiers_allowance():
     models = _get_fixture_models()
-    tiers = allocate_tiers_allowance(models)
+    tiers = _tiers(models)
 
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
     assert tiers["heavy"] == "opencode-go/qwen3.8-max"
@@ -175,12 +195,12 @@ def test_allocate_tiers_with_preferences_and_skips():
     models = _get_fixture_models()
     # Pin preferred model for light
     prefs = {"light": "opencode-go/qwen3.8-max"}
-    tiers = allocate_tiers_allowance(models, preferred_tiers=prefs)
+    tiers = _tiers(models, preferred_tiers=prefs)
     assert tiers["light"] == "opencode-go/qwen3.8-max"
 
     # Skip deepseek
     skips = {"deepseek-v4.1-flash"}
-    tiers_skipped = allocate_tiers_allowance(models, skip_models=skips)
+    tiers_skipped = _tiers(models, skip_models=skips)
     assert tiers_skipped["balanced"] != "opencode-go/deepseek-v4.1-flash"
 
 
@@ -188,14 +208,14 @@ def test_allocate_tiers_pareto():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
-    tiers = allocate_tiers_pareto(models)
+    tiers = _tiers_pareto(models)
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
     assert all(tiers.values())
 
 
 def test_rank_catalog():
     models = _get_fixture_models()
-    ranked = rank_catalog(models, mode="allowance")
+    ranked = _rank(models, mode="allowance")
     assert len(ranked) > 0
     assert ranked[0].rank == 1
     assert ranked[1].rank == 2
@@ -304,7 +324,7 @@ def test_evaluate_pareto_edge_cases():
         NormalizedModel(id="m-no-iq", aa_iq=None),
     ]
     res = evaluate_pareto(unbenchmarked)
-    assert res == unbenchmarked
+    assert [m.id for m in res] == [m.id for m in unbenchmarked]
     assert all(m.bpe is None for m in res)
 
     # Models with zero burn, extreme burn, and NaN guards
@@ -326,11 +346,11 @@ def test_evaluate_pareto_edge_cases():
         id="m_coding", aa_coding=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
     )
     models = [mA, mB, mC, m_coding]
-    evaluate_pareto(models)
-    assert mA.composite_burn_pct == 0.0
-    assert mA.bpe is not None
-    assert mC.bpe is not None
-    assert m_coding.bpe is not None
+    rA, _, rC, r_coding = evaluate_pareto(models)
+    assert rA.composite_burn_pct == 0.0
+    assert rA.bpe is not None
+    assert rC.bpe is not None
+    assert r_coding.bpe is not None
 
     # Test extreme burn (inf/nan) and nan guards for burn_eff and qual_eff
     mD = NormalizedModel(
@@ -343,9 +363,9 @@ def test_evaluate_pareto_edge_cases():
         "opencode_go_model_optimizer.engine.pareto.compute_quota_burn_pct",
         side_effect=[float("inf"), float("nan")],
     ):
-        evaluate_pareto([mD, mE])
-        assert mD.bpe == 0.0
-        assert mE.bpe == 0.0
+        rD, rE = evaluate_pareto([mD, mE])
+        assert rD.bpe == 0.0
+        assert rE.bpe == 0.0
 
     # Test math.isnan(burn_eff) and math.isnan(qual_eff) fallback to 0.0
     mF = NormalizedModel(
@@ -355,8 +375,8 @@ def test_evaluate_pareto_edge_cases():
     # If peers have nan burn or nan iq
     with patch("math.isnan", side_effect=lambda val: True):
         # All isnan calls return True
-        evaluate_pareto([mF])
-        assert mF.bpe == 0.0
+        (rF,) = evaluate_pareto([mF])
+        assert rF.bpe == 0.0
 
 
 def test_allocate_tiers_pareto_comprehensive():
@@ -364,9 +384,7 @@ def test_allocate_tiers_pareto_comprehensive():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
-    tiers_pref = allocate_tiers_pareto(
-        models, preferred_tiers={"heavy": "opencode-go/deepseek-v4.1-flash"}
-    )
+    tiers_pref = _tiers_pareto(models, preferred_tiers={"heavy": "opencode-go/deepseek-v4.1-flash"})
     assert tiers_pref["heavy"] == "opencode-go/deepseek-v4.1-flash"
 
     # 2. At least 3 frontier models triggering cutoff calculation:
@@ -391,7 +409,7 @@ def test_allocate_tiers_pareto_comprehensive():
     m_free = NormalizedModel(id="free-1", is_zero_cost=True)
     catalog = [m1, m2, m3, m4, m5, m6, m_free]
 
-    tiers_cutoffs = allocate_tiers_pareto(catalog)
+    tiers_cutoffs = _tiers_pareto(catalog)
     assert tiers_cutoffs["heavy"] == "opencode-go/f-heavy"
     assert tiers_cutoffs["balanced"] == "opencode-go/f-bal"
     assert tiers_cutoffs["light"] == "opencode-go/f-light"
@@ -405,19 +423,19 @@ def test_allocate_tiers_pareto_comprehensive():
             ([m1], [m2], [m3]),  # fallback allocate_tiers_allowance
         ],
     ):
-        tiers_fb = allocate_tiers_pareto(catalog)
+        tiers_fb = _tiers_pareto(catalog)
         assert set(tiers_fb.keys()) == {"heavy", "balanced", "light", "free"}
 
     # 4. Small benchmarked list (len < 3):
-    t_small = allocate_tiers_pareto([m1, m2, m_free])
+    t_small = _tiers_pareto([m1, m2, m_free])
     assert set(t_small.keys()) == {"heavy", "balanced", "light", "free"}
 
     # 5. Fallback to allowance allocation when tiers missing:
-    t_single = allocate_tiers_pareto([m1])
+    t_single = _tiers_pareto([m1])
     assert t_single["heavy"] == "opencode-go/f-heavy"
 
     # 6. Free tier fallback when free_pick is None but free_ranked is not empty
-    t_free_pinned = allocate_tiers_pareto(
+    t_free_pinned = _tiers_pareto(
         [m1, m2, m3, m_free],
         preferred_tiers={"balanced": "opencode-go/free-1"},
     )
@@ -429,7 +447,7 @@ def test_allocate_tiers_pareto_comprehensive():
         "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
         return_value=([m1], [m1], [m2]),
     ):
-        t_dup = allocate_tiers_pareto([m1, m2, m_free])
+        t_dup = _tiers_pareto([m1, m2, m_free])
         assert t_dup["heavy"] == "opencode-go/f-heavy"
         assert t_dup["balanced"] == "opencode-go/f-heavy"
 
@@ -442,7 +460,7 @@ def test_allocate_tiers_allowance_edge_cases():
         monthly_allowance=50.0,
         cost=TokenCost(output=1.0),
     )
-    tiers = allocate_tiers_allowance([m_paid])
+    tiers = _tiers([m_paid])
     assert tiers["heavy"] == "opencode-go/paid-only"
     assert tiers["balanced"] == ""
     assert tiers["light"] == ""
@@ -450,7 +468,7 @@ def test_allocate_tiers_allowance_edge_cases():
 
     # Free model already used in preferred_tiers
     m_free = NormalizedModel(id="free-only", is_zero_cost=True)
-    tiers_free_used = allocate_tiers_allowance(
+    tiers_free_used = _tiers(
         [m_free, m_paid],
         preferred_tiers={"heavy": "opencode-go/free-only"},
     )
@@ -458,7 +476,7 @@ def test_allocate_tiers_allowance_edge_cases():
     assert tiers_free_used["free"] == "opencode-go/free-only"
 
     # Test fallback branch when no eligible paid models exist
-    tiers_no_paid = allocate_tiers_allowance([m_free])
+    tiers_no_paid = _tiers([m_free])
     assert tiers_no_paid["free"] == "opencode-go/free-only"
     assert tiers_no_paid["heavy"] == ""
     assert tiers_no_paid["balanced"] == ""
@@ -471,7 +489,7 @@ def test_allocate_tiers_allowance_edge_cases():
         "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
         return_value=([m_p1], [m_p1], [m_p2]),
     ):
-        t_dup = allocate_tiers_allowance([m_p1, m_p2])
+        t_dup = _tiers([m_p1, m_p2])
         assert t_dup["heavy"] == "opencode-go/p1"
         assert t_dup["balanced"] == "opencode-go/p1"
 
@@ -575,7 +593,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
             ),
         ),
     ):
-        res = allocate_tiers_pareto(
+        res = _tiers_pareto(
             [m_pareto, m_non_pareto, m_lower_burn, m_higher_burn, m_faster, m_slower, m_free]
         )
         assert res["heavy"] == "opencode-go/m_pareto"
@@ -593,7 +611,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
             return_value=([m_pareto], [m_lower_burn], [m_newer, m_older]),
         ),
     ):
-        res2 = allocate_tiers_pareto([m_pareto, m_lower_burn, m_newer, m_older, m_free])
+        res2 = _tiers_pareto([m_pareto, m_lower_burn, m_newer, m_older, m_free])
         assert res2["light"] == "opencode-go/m_newer"
 
 
@@ -605,14 +623,14 @@ def test_allocate_tiers_pareto_competitive_fallback():
         id="m_low", aa_iq=20.0, monthly_allowance=100.0, cost=TokenCost(output=20.0)
     )
     catalog = [m1, m2, m_low]
-    tiers = allocate_tiers_pareto(catalog)
+    tiers = _tiers_pareto(catalog)
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
 
 
 def test_allocate_tiers_pareto_reference_snapshot():
     snap = load_reference_snapshot()
     assert snap is not None
-    tiers = allocate_tiers_pareto(snap.models)
+    tiers = _tiers_pareto(snap.models)
     assert tiers["heavy"] in ("opencode-go/gemini-4-argon", "opencode-go/kimi-k3.1-pro")
     assert tiers["balanced"] in ("opencode-go/deepseek-v4.1-flash", "opencode-go/mimo-v2.6-pro")
     assert tiers["light"] == "opencode-go/mimo-v2.6-flash"
@@ -625,19 +643,19 @@ def test_rank_catalog_both_modes():
         m.aa_iq = 50.0 - idx
 
     # Test pareto mode without skips (all 4 tiers populated)
-    ranked_pareto_all = rank_catalog(models, mode="pareto")
+    ranked_pareto_all = _rank(models, mode="pareto")
     pareto_tiers = {m.tier for m in ranked_pareto_all if m.tier is not None}
     assert pareto_tiers == {"heavy", "balanced", "light", "free"}
     assert any(m.tier is None for m in ranked_pareto_all)
 
     # Test pareto mode with skip_models
-    ranked_pareto = rank_catalog(models, mode="pareto", skip_models={"deepseek-v4.1-flash"})
+    ranked_pareto = _rank(models, mode="pareto", skip_models={"deepseek-v4.1-flash"})
     assert all(m.id != "deepseek-v4.1-flash" for m in ranked_pareto)
     assert all(m.rank is not None for m in ranked_pareto)
     assert [m.rank for m in ranked_pareto] == list(range(1, len(ranked_pareto) + 1))
 
     # Test allowance mode with skips
-    ranked_allowance = rank_catalog(models, mode="allowance", skip_models={"qwen3.8-max"})
+    ranked_allowance = _rank(models, mode="allowance", skip_models={"qwen3.8-max"})
     assert all(m.id != "qwen3.8-max" for m in ranked_allowance)
     assert all(m.rank is not None for m in ranked_allowance)
     assert [m.rank for m in ranked_allowance] == list(range(1, len(ranked_allowance) + 1))
@@ -652,9 +670,9 @@ def test_allocate_tiers_unified():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
-    res_p = allocate_tiers(models, mode="pareto")
+    res_p = _tiers(models, mode="pareto")
     assert set(res_p.keys()) == {"heavy", "balanced", "light", "free"}
-    res_a = allocate_tiers(models, mode="allowance")
+    res_a = _tiers(models, mode="allowance")
     assert set(res_a.keys()) == {"heavy", "balanced", "light", "free"}
 
 
@@ -701,38 +719,36 @@ def test_min_context_and_allow_contributor():
         m.aa_iq = 50.0 - idx
 
     # Test allow_contributor=False in allowance mode
-    tiers_no_contrib = allocate_tiers_allowance(models, allow_contributor=False)
+    tiers_no_contrib = _tiers(models, allow_contributor=False)
     assert tiers_no_contrib["free"] == "opencode-go/beam-free"
 
     # Test allow_contributor=False in pareto mode
-    tiers_pareto_no_contrib = allocate_tiers_pareto(models, allow_contributor=False)
+    tiers_pareto_no_contrib = _tiers_pareto(models, allow_contributor=False)
     assert tiers_pareto_no_contrib["free"] != "opencode-go/iceman-contributor-free"
 
     # Test min_context filter in allowance mode
-    tiers_min_ctx = allocate_tiers_allowance(models, min_context=500000)
+    tiers_min_ctx = _tiers(models, min_context=500000)
     for model_id in tiers_min_ctx.values():
         if model_id:
             m = next(x for x in models if x.full_id == model_id)
             assert m.limit.context >= 500000
 
     # Test min_context filter in pareto mode
-    tiers_pareto_min_ctx = allocate_tiers_pareto(models, min_context=500000)
+    tiers_pareto_min_ctx = _tiers_pareto(models, min_context=500000)
     for model_id in tiers_pareto_min_ctx.values():
         if model_id:
             m = next(x for x in models if x.full_id == model_id)
             assert m.limit.context >= 500000
 
     # Test min_context filter in rank_catalog
-    ranked_min_ctx = rank_catalog(models, min_context=500000)
+    ranked_min_ctx = _rank(models, min_context=500000)
     assert len(ranked_min_ctx) > 0
     assert all(m.limit.context >= 500000 for m in ranked_min_ctx)
 
     # Test allocate_tiers unified with min_context and allow_contributor
-    unified_p = allocate_tiers(models, mode="pareto", min_context=100000, allow_contributor=False)
+    unified_p = _tiers(models, mode="pareto", min_context=100000, allow_contributor=False)
     assert unified_p["free"] != "opencode-go/iceman-contributor-free"
-    unified_a = allocate_tiers(
-        models, mode="allowance", min_context=100000, allow_contributor=False
-    )
+    unified_a = _tiers(models, mode="allowance", min_context=100000, allow_contributor=False)
     assert unified_a["free"] == "opencode-go/beam-free"
 
 
@@ -800,10 +816,10 @@ def test_workload_profiles():
     evaluated_coding = evaluate_pareto(models, profile="coding")
     assert all(x.composite_burn_pct is not None for x in evaluated_coding)
 
-    tiers_coding = allocate_tiers_pareto(models, profile="coding")
+    tiers_coding = _tiers_pareto(models, profile="coding")
     assert set(tiers_coding.keys()) == {"heavy", "balanced", "light", "free"}
 
-    ranked_fast = rank_catalog(models, mode="pareto", profile="fast")
+    ranked_fast = _rank(models, mode="pareto", profile="fast")
     assert len(ranked_fast) > 0
 
 
@@ -903,7 +919,7 @@ def test_pick_best_tie_breaking_deterministic():
             return_value=([m1, m3, m_no_burn, m2], [], []),
         ),
     ):
-        res = allocate_tiers_pareto([m1, m3, m_no_burn, m2, m_free])
+        res = _tiers_pareto([m1, m3, m_no_burn, m2, m_free])
         # Higher context wins (m2 beats m1), id ASC wins (m2 beats m3), burn 5.0 beats inf (m2 beats m_no_burn)
         assert res["heavy"] == "opencode-go/model-ctx-high"
 
@@ -941,7 +957,7 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
         side_effect=lambda models, **kwargs: models,
     ):
-        ranked = rank_catalog(models, mode="pareto")
+        ranked = _rank(models, mode="pareto")
 
     ids = [m.id for m in ranked]
     # mod-tied-b (burn 10.0, 1M ctx) > mod-burn-valid/mod-tied-a (burn 10.0, 500k ctx / 0 ctx) > mod-burn-none (burn inf)
@@ -976,20 +992,23 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
         is_pareto=True,
     )
 
-    evaluate_pareto([m1, m2_unbenchmarked, m3_skipped], skip_models={"mod-3"})
+    r1, r2, r3 = evaluate_pareto([m1, m2_unbenchmarked, m3_skipped], skip_models={"mod-3"})
 
     # m1 was benchmarked and evaluated
-    assert m1.bpe is not None
-    assert m1.is_pareto is True
+    assert r1.bpe is not None
+    assert r1.is_pareto is True
 
     # m2 was unbenchmarked: stale bpe and is_pareto must be cleared
-    assert m2_unbenchmarked.bpe is None
-    assert m2_unbenchmarked.is_pareto is None
+    assert r2.bpe is None
+    assert r2.is_pareto is None
 
     # m3 was skipped: burn was computed, but stale bpe and is_pareto cleared
-    assert m3_skipped.composite_burn_pct is not None
-    assert m3_skipped.bpe is None
-    assert m3_skipped.is_pareto is None
+    assert r3.composite_burn_pct is not None
+    assert r3.bpe is None
+    assert r3.is_pareto is None
+
+    # The inputs keep their original values
+    assert m2_unbenchmarked.bpe == 0.88 and m3_skipped.bpe == 0.95
 
 
 def test_evaluate_pareto_skipped_model_does_not_dominate():
@@ -1008,16 +1027,15 @@ def test_evaluate_pareto_skipped_model_does_not_dominate():
     )
 
     # Without skip: m_sub BPE is penalized by m_dom
-    evaluate_pareto([m_dom, m_sub])
-    bpe_with_dom = m_sub.bpe
+    bpe_with_dom = evaluate_pareto([m_dom, m_sub])[1].bpe
     assert bpe_with_dom is not None and bpe_with_dom < 1.0
 
     # With m_dom in skip_models: m_sub becomes the sole benchmarked model (BPE 1.0, is_pareto=True)
-    evaluate_pareto([m_dom, m_sub], skip_models={"dominant-model"})
-    assert m_sub.bpe == 1.0
-    assert m_sub.is_pareto is True
-    assert m_dom.bpe is None
-    assert m_dom.is_pareto is None
+    r_dom, r_sub = evaluate_pareto([m_dom, m_sub], skip_models={"dominant-model"})
+    assert r_sub.bpe == 1.0
+    assert r_sub.is_pareto is True
+    assert r_dom.bpe is None
+    assert r_dom.is_pareto is None
 
 
 def test_allocate_tiers_pareto_fallback_respects_already_selected():
@@ -1043,7 +1061,7 @@ def test_allocate_tiers_pareto_fallback_respects_already_selected():
         is_zero_cost=True,
     )
 
-    tiers = allocate_tiers_pareto([m_heavy, m_paid_other1, m_paid_other2, m_free])
+    tiers = _tiers_pareto([m_heavy, m_paid_other1, m_paid_other2, m_free])
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
 
     # All 4 tiers must be assigned distinct models without reusing m_heavy
@@ -1054,13 +1072,9 @@ def test_allocate_tiers_pareto_fallback_respects_already_selected():
     assert "opencode-go/m-heavy" not in (tiers["balanced"], tiers["light"], tiers["free"])
 
 
-def test_desc_str_key_lru_cache():
-    _desc_str_key.cache_clear()
-    k1 = _desc_str_key("2026-09-01")
-    k2 = _desc_str_key("2026-09-01")
-    assert k1 == k2
-    info = _desc_str_key.cache_info()
-    assert info.hits >= 1
+def test_desc_str_key_sorts_strings_descending():
+    samples = ["", "2026", "2026-05", "2026-05-01", "2026-04-30", "2025-12-31", "abc", "ab"]
+    assert sorted(samples, key=_desc_str_key) == sorted(samples, reverse=True)
 
 
 def test_evaluate_pareto_nan_burn_handling():
@@ -1078,22 +1092,18 @@ def test_evaluate_pareto_nan_burn_handling():
         assert evaluated[0].bpe == 0.0
 
 
-def test_allocate_tiers_already_evaluated_flag():
-    m1 = NormalizedModel(
-        id="mod-1",
-        aa_iq=90.0,
-        monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
-        is_pareto=True,
-        bpe=0.9,
-    )
-    m_free = NormalizedModel(id="mod-free", is_zero_cost=True)
-    with patch(
-        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
-        side_effect=RuntimeError("evaluate_pareto called unexpectedly"),
-    ):
-        tiers = allocate_tiers_pareto([m1, m_free], already_evaluated=True)
-        assert tiers["free"] == "opencode-go/mod-free"
+def test_selection_and_ranking_do_not_mutate_inputs():
+    models = _get_fixture_models()
+    for idx, m in enumerate(models):
+        m.aa_iq = 50.0 - idx
+    before = [m.model_dump() for m in models]
+
+    selection = select_tiers(models, SelectionCriteria(mode="pareto", top_n=3))
+    ranked = _rank(models, mode="pareto")
+
+    assert [m.model_dump() for m in models] == before
+    assert any(m.bpe is not None for m in selection.models)
+    assert all(m.rank is not None for m in ranked)
 
 
 def test_rank_catalog_single_evaluate_pareto_call():
@@ -1113,7 +1123,7 @@ def test_rank_catalog_single_evaluate_pareto_call():
         "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
         side_effect=counted_eval,
     ):
-        ranked = rank_catalog(models, mode="pareto")
+        ranked = _rank(models, mode="pareto")
         assert len(ranked) > 0
         # Exactly 1 call, not 2
         assert call_count == 1
@@ -1146,20 +1156,20 @@ def test_output_token_and_cost_filtering():
     models = [m_low_out, m_high_cost, m_compliant, m_free]
 
     # Filtering by min_output=8000 excludes m_low_out
-    tiers_out = allocate_tiers_allowance(models, min_output=8000)
+    tiers_out = _tiers(models, min_output=8000)
     assert "opencode-go/mod-low-out" not in tiers_out.values()
 
     # Filtering by max_output_cost=5.0 excludes m_high_cost
-    tiers_cost = allocate_tiers_allowance(models, max_output_cost=5.0)
+    tiers_cost = _tiers(models, max_output_cost=5.0)
     assert "opencode-go/mod-high-cost" not in tiers_cost.values()
 
     # In pareto mode
-    tiers_pareto = allocate_tiers_pareto(models, min_output=8000, max_output_cost=5.0)
+    tiers_pareto = _tiers_pareto(models, min_output=8000, max_output_cost=5.0)
     assert "opencode-go/mod-low-out" not in tiers_pareto.values()
     assert "opencode-go/mod-high-cost" not in tiers_pareto.values()
 
     # In rank_catalog
-    ranked = rank_catalog(models, min_output=8000, max_output_cost=5.0)
+    ranked = _rank(models, min_output=8000, max_output_cost=5.0)
     ranked_ids = [m.id for m in ranked]
     assert "mod-low-out" not in ranked_ids
     assert "mod-high-cost" not in ranked_ids
@@ -1169,13 +1179,13 @@ def test_output_token_and_cost_filtering():
 def test_allocate_tier_fallbacks_top_n_1():
     models = _get_fixture_models()
     # top_n=1 returns single-element lists
-    fallbacks_1 = allocate_tier_fallbacks(models, top_n=1, mode="allowance")
+    fallbacks_1 = _fallbacks(models, top_n=1, mode="allowance")
     assert set(fallbacks_1.keys()) == {"heavy", "balanced", "light", "free"}
     for tier in ("heavy", "balanced", "light", "free"):
         assert len(fallbacks_1[tier]) <= 1
 
     # top_n=0 returns single-element lists
-    fallbacks_0 = allocate_tier_fallbacks(models, top_n=0, mode="allowance")
+    fallbacks_0 = _fallbacks(models, top_n=0, mode="allowance")
     assert set(fallbacks_0.keys()) == {"heavy", "balanced", "light", "free"}
 
 
@@ -1184,7 +1194,7 @@ def test_allocate_tier_fallbacks_pareto_mode():
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
 
-    fallbacks = allocate_tier_fallbacks(models, top_n=3, mode="pareto")
+    fallbacks = _fallbacks(models, top_n=3, mode="pareto")
     assert set(fallbacks.keys()) == {"heavy", "balanced", "light", "free"}
     assert len(fallbacks["heavy"]) <= 3
     assert len(fallbacks["free"]) >= 1
@@ -1195,21 +1205,21 @@ def test_allocate_tier_fallbacks_pareto_mode():
         NormalizedModel(id="p2", monthly_allowance=40.0, cost=TokenCost(output=1.0)),
         NormalizedModel(id="f1", is_zero_cost=True),
     ]
-    fb_empty = allocate_tier_fallbacks(unbenchmarked, top_n=2, mode="pareto")
+    fb_empty = _fallbacks(unbenchmarked, top_n=2, mode="pareto")
     assert "opencode-go/f1" in fb_empty["free"]
     assert len(fb_empty["heavy"]) <= 2
 
 
 def test_allocate_tier_fallbacks_allowance_mode():
     models = _get_fixture_models()
-    fallbacks = allocate_tier_fallbacks(models, top_n=3, mode="allowance")
+    fallbacks = _fallbacks(models, top_n=3, mode="allowance")
     assert set(fallbacks.keys()) == {"heavy", "balanced", "light", "free"}
     for tier in ("heavy", "balanced", "light", "free"):
         assert len(fallbacks[tier]) <= 3
 
     # Empty paid models in allowance mode
     free_only = [NormalizedModel(id="f1", is_zero_cost=True)]
-    fb_free = allocate_tier_fallbacks(free_only, top_n=2, mode="allowance")
+    fb_free = _fallbacks(free_only, top_n=2, mode="allowance")
     assert fb_free["heavy"] == []
     assert fb_free["free"] == ["opencode-go/f1"]
 
@@ -1240,7 +1250,7 @@ def test_allocate_tier_fallbacks_filters():
     )
 
     models = [m1, m2, m3, m_free]
-    fb = allocate_tier_fallbacks(
+    fb = _fallbacks(
         models,
         top_n=3,
         min_context=60000,
@@ -1269,12 +1279,12 @@ def test_allocate_tier_fallbacks_top_n_truncation():
         for i in range(1, 10)
     ]
     # In pareto mode with top_n=2
-    fb_pareto = allocate_tier_fallbacks(free_models + paid_models, top_n=2, mode="pareto")
+    fb_pareto = _fallbacks(free_models + paid_models, top_n=2, mode="pareto")
     assert len(fb_pareto["free"]) == 2
     assert len(fb_pareto["heavy"]) == 2
 
     # In allowance mode with top_n=2
-    fb_allowance = allocate_tier_fallbacks(free_models + paid_models, top_n=2, mode="allowance")
+    fb_allowance = _fallbacks(free_models + paid_models, top_n=2, mode="allowance")
     assert len(fb_allowance["free"]) == 2
     assert len(fb_allowance["heavy"]) == 2
 
@@ -1324,16 +1334,16 @@ def test_max_burn_filtering_across_allocators():
     assert compute_quota_burn_pct(low) < 1.0
     assert compute_quota_burn_pct(high) > 1.0
 
-    allowance = allocate_tiers_allowance(_burn_models(), max_burn=1.0)
+    allowance = _tiers(_burn_models(), max_burn=1.0)
     assert high.full_id not in allowance.values()
 
-    pareto = allocate_tiers_pareto(_burn_models(), max_burn=1.0)
+    pareto = _tiers_pareto(_burn_models(), max_burn=1.0)
     assert high.full_id not in pareto.values()
 
-    ranked = rank_catalog(_burn_models(), max_burn=1.0)
+    ranked = _rank(_burn_models(), max_burn=1.0)
     assert [m.id for m in ranked] == ["low-burn"]
 
-    fallbacks = allocate_tier_fallbacks(_burn_models(), top_n=2, max_burn=1.0)
+    fallbacks = _fallbacks(_burn_models(), top_n=2, max_burn=1.0)
     flat = [model_id for candidates in fallbacks.values() for model_id in candidates]
     assert high.full_id not in flat
     assert low.full_id in flat
@@ -1341,7 +1351,7 @@ def test_max_burn_filtering_across_allocators():
 
 def test_token_mix_and_weights_flow_through_pareto():
     low, high = _burn_models()
-    ranked = rank_catalog(
+    ranked = _rank(
         [low, high],
         mode="pareto",
         token_mix=(1000, 0, 100),
@@ -1349,5 +1359,5 @@ def test_token_mix_and_weights_flow_through_pareto():
         max_burn=5.0,
     )
     assert [m.id for m in ranked] == ["low-burn"]
-    assert low.bpe is not None
-    assert low.composite_burn_pct is not None
+    assert ranked[0].bpe is not None
+    assert ranked[0].composite_burn_pct is not None
