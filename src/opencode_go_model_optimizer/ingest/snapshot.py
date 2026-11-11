@@ -346,6 +346,8 @@ def create_snapshot(
         else:
             merge_request_estimates(merged_models, request_estimates, endpoints, all_warnings)
 
+    apply_plan(merged_models, plan)
+
     return Snapshot(
         schema_version=1,
         fetched_at=now_utc,

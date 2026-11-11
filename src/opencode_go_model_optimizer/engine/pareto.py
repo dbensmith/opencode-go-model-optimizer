@@ -46,7 +46,7 @@ def compute_quota_burn_pct(
     if m.is_zero_cost or m.monthly_allowance == float("inf"):
         return 0.0
 
-    allowance = m.monthly_allowance or 15.0
+    allowance = 15.0 if m.monthly_allowance is None else m.monthly_allowance
     turn_cost = compute_turn_cost(m, profile=profile, token_mix=token_mix)
     if turn_cost <= 0.0:
         return 0.0
@@ -90,7 +90,8 @@ def compute_burn_pct(
         if est is not None and est.per_month > 0:
             if math.isinf(est.per_month):
                 return 0.0
-            return 1000.0 / est.per_month * 100.0 * (m.price_multiplier or 1.0)
+            mult = 1.0 if m.price_multiplier is None else m.price_multiplier
+            return 1000.0 / est.per_month * 100.0 * mult
     return compute_quota_burn_pct(m, profile=profile, token_mix=token_mix)
 
 

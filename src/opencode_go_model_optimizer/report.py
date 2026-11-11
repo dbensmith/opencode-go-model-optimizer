@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.allowance import rank_paid_models
+from opencode_go_model_optimizer.engine.allowance import is_eligible_free, rank_paid_models
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
@@ -65,7 +65,11 @@ def _num(value: float | None) -> float | int | str | None:
 def _strip_aa(value: Any) -> Any:
     """Recursively drop Artificial Analysis derived keys."""
     if isinstance(value, dict):
-        return {k: _strip_aa(v) for k, v in value.items() if k not in _DROP_KEYS}
+        return {
+            k: _strip_aa(v)
+            for k, v in value.items()
+            if k not in _DROP_KEYS and not str(k).startswith("aa_")
+        }
     if isinstance(value, list):
         return [_strip_aa(v) for v in value]
     return value
@@ -91,15 +95,14 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
     if m.is_preview:
         reasons.append("preview/experimental model")
     p = m.privacy
-    if p is not None and not passes_privacy(m, c):
-        if p.requires_global_region and not c.allow_global_region:
+    if not passes_privacy(m, c):
+        if p is not None and p.requires_global_region and not c.allow_global_region:
             reasons.append("requires Global workspace region (excluded by default)")
         else:
             reasons.append("excluded by privacy criteria")
     if reasons:
         return reasons
-    free = m.is_zero_cost or (m.is_contributor and (m.monthly_allowance == math.inf))
-    if free:
+    if is_eligible_free(m, allow_contributor=c.allow_contributor):
         return []
     allowance = m.monthly_allowance
     if allowance is None:

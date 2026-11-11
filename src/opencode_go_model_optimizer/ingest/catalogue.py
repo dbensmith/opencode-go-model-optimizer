@@ -22,16 +22,16 @@ HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
 
 def _safe_float(val: Any) -> float:
     """Safely convert value to float, handling nested dicts, strings, and nulls."""
-    if val is None:
+    if val is None or isinstance(val, bool):
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
     if isinstance(val, dict):
         for k in ("price", "default", "standard"):
-            if k in val and isinstance(val[k], (int, float, str)):
+            if k in val and not isinstance(val[k], bool) and isinstance(val[k], (int, float, str)):
                 return _safe_float(val[k])
         for v in val.values():
-            if isinstance(v, (int, float, str)):
+            if not isinstance(v, bool) and isinstance(v, (int, float, str)):
                 try:
                     return float(v)
                 except ValueError, TypeError:

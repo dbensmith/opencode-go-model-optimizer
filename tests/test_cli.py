@@ -964,9 +964,36 @@ def test_prefer_full_id_unknown_or_skipped_warns(tmp_path, capsys):
         ]
     )
     assert rc == 0
-    err = capsys.readouterr().err
+    cap = capsys.readouterr()
+    err = cap.err
     assert "preferred model 'opencode-go/beta-flash' for tier 'heavy'" in err
     assert "preferred model 'opencode-go/does-not-exist' for tier 'light'" in err
+    assert json.loads(cap.out)["tiers"]["heavy"] != "opencode-go/beta-flash"
+
+
+def test_prefer_pin_excluded_by_cost_or_deprecated_warns(tmp_path, capsys):
+    snap_path = _create_temp_snapshot(tmp_path)
+    rc = main(
+        [
+            "select",
+            "--snapshot",
+            str(snap_path),
+            "--max-output-cost",
+            "5.0",
+            "--prefer",
+            "heavy=alpha-max",
+            "--prefer",
+            "balanced=deprecated-old-model",
+        ]
+    )
+    assert rc == 0
+    cap = capsys.readouterr()
+    err = cap.err
+    assert "preferred model 'alpha-max' for tier 'heavy' not found; ignoring" in err
+    assert "preferred model 'deprecated-old-model' for tier 'balanced' not found; ignoring" in err
+    out = json.loads(cap.out)["tiers"]
+    assert out["heavy"] != "opencode-go/alpha-max"
+    assert out["balanced"] != "opencode-go/deprecated-old-model"
 
 
 def test_cache_ttl_env_invalid(monkeypatch, capsys):

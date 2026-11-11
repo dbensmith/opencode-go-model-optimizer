@@ -565,15 +565,9 @@ def handle_select(args: argparse.Namespace) -> int:
     mode = resolve_mode(args.mode, models)
 
     criteria = _criteria_from_args(args, mode)
+    selection = select_tiers(models, criteria)
     candidate_ids = {
-        ref
-        for m in models
-        if m.id not in criteria.skip_models
-        and m.full_id not in criteria.skip_models
-        and m.limit.context >= args.min_context
-        and m.limit.output >= args.min_output
-        and passes_privacy(m, criteria)
-        for ref in (m.id, m.full_id)
+        ref for m in selection.models if m.status == "active" for ref in (m.id, m.full_id)
     }
     privacy_excluded = {
         ref for m in models if not passes_privacy(m, criteria) for ref in (m.id, m.full_id)
@@ -589,7 +583,6 @@ def handle_select(args: argparse.Namespace) -> int:
     profile = criteria.profile
     explain = args.explain
 
-    selection = select_tiers(models, criteria)
     tiers = selection.primary
     fallbacks = selection.candidates if criteria.top_n > 1 else None
 
