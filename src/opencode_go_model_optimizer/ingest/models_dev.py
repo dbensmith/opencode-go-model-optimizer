@@ -8,6 +8,7 @@ from opencode_go_model_optimizer.ingest.docs import norm_name
 from opencode_go_model_optimizer.ingest.http import client_scope
 
 MODELS_DEV_URL = "https://models.dev/api.json"
+MODELS_DEV_PROVIDER = "opencode-go"
 
 
 def _extract_metadata(entry: dict[str, Any]) -> dict[str, Any]:
@@ -36,27 +37,28 @@ def _register(result: dict[str, dict[str, Any]], key: str, metadata: dict[str, A
 
 
 def parse_models_dev(data: Any) -> dict[str, dict[str, Any]]:
-    """Flatten a models.dev API payload into normalized-key metadata lookups."""
+    """Flatten the `opencode-go` provider of a models.dev payload into normalized-key lookups.
+
+    Other providers are ignored so same-named models cannot shadow opencode-go entries.
+    """
     result: dict[str, dict[str, Any]] = {}
     if not isinstance(data, dict):
         return result
 
-    for provider in data.values():
-        if not isinstance(provider, dict):
+    provider = data.get(MODELS_DEV_PROVIDER)
+    entries = provider.get("models") if isinstance(provider, dict) else None
+    if not isinstance(entries, dict):
+        return result
+    for model_id, entry in entries.items():
+        if not isinstance(entry, dict):
             continue
-        entries = provider.get("models")
-        if not isinstance(entries, dict):
+        metadata = _extract_metadata(entry)
+        if not metadata:
             continue
-        for model_id, entry in entries.items():
-            if not isinstance(entry, dict):
-                continue
-            metadata = _extract_metadata(entry)
-            if not metadata:
-                continue
-            _register(result, str(model_id), metadata)
-            name = entry.get("name")
-            if name:
-                _register(result, str(name), metadata)
+        _register(result, str(model_id), metadata)
+        name = entry.get("name")
+        if name:
+            _register(result, str(name), metadata)
 
     return result
 

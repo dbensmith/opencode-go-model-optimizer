@@ -88,12 +88,16 @@ uvx opencode-go-model-optimizer select --format json
     "mode": "pareto",
     "snapshot": {
       "source": "file",
-      "fetched_at": "2026-11-10T21:45:55+00:00"
+      "fetched_at": "2026-11-10T21:45:55+00:00",
+      "benchmark_source": "reference:2026-11-10T21:45:55+00:00"
     }
   }
   ```
   The `snapshot` block (JSON only) records provenance: `source` is `file` (`--snapshot`),
   `cache`, `live`, or `reference` (bundled fallback after a live fetch failure).
+  `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
+  `speed_tps`) came from: `aa_live` (fetched with `AA_API_KEY`), `reference:<fetched_at>`
+  (copied from the bundled reference snapshot, so possibly stale), or `none`.
   `--format table` (the default for `rank`) and `--format json` are also available.
 
 - **`rank`**: Produces a ranked comparison of every model in the catalog. Table output is the default:
@@ -124,6 +128,12 @@ uvx opencode-go-model-optimizer select --format json
   ```bash
   opencode-go-model-optimizer fetch --out snapshot.json
   ```
+  Pricing rows are matched to catalogue models by model ID through the docs "Endpoints" table
+  (falling back to name matching for models it does not list). The catalogue comes from the HTTP
+  endpoint, with the `opencode` CLI as a fallback; models.dev metadata is read from its
+  `opencode-go` provider only. Ingest problems (unmatched models or pricing rows, an empty
+  pricing table, benchmarks copied from the bundled reference) are stored in the snapshot's
+  `warnings` list and printed to stderr; they never fail the fetch.
 
 ### Offline Usage
 

@@ -297,54 +297,63 @@ def test_parse_catalogue_cli_edge_cases():
     assert models[0].name == "Valid Model"
 
 
-def test_fetch_catalogue_mocked():
-    # 1. opencode CLI available and succeeds
-    cli_stdout = """opencode-go/test-cli-m
-{
-  "id": "test-cli-m",
-  "name": "Test CLI Model"
-}
-"""
+def _http_ok(payload):
+    return httpx.Response(200, json=payload, request=httpx.Request("GET", "http://test"))
+
+
+def test_fetch_catalogue_http_primary_does_not_call_cli():
     with (
         patch("shutil.which", return_value="/usr/local/bin/opencode"),
         patch("subprocess.run") as mock_run,
+        patch("httpx.Client.get", return_value=_http_ok({"data": [{"id": "http-m"}]})),
     ):
+        models = fetch_catalogue()
+    assert [m.id for m in models] == ["http-m"]
+    mock_run.assert_not_called()
+
+
+def test_fetch_catalogue_custom_client_list_payload():
+    custom_client = httpx.Client()
+    with patch.object(custom_client, "get", return_value=_http_ok([{"id": "list-m"}])):
+        models = fetch_catalogue(client=custom_client)
+    assert [m.id for m in models] == ["list-m"]
+
+
+def test_fetch_catalogue_falls_back_to_cli_when_http_fails():
+    cli_stdout = 'opencode-go/test-cli-m\n{\n  "id": "test-cli-m",\n  "name": "Test CLI Model"\n}\n'
+    with (
+        patch("httpx.Client.get") as mock_get,
+        patch("shutil.which", return_value="/usr/local/bin/opencode"),
+        patch("subprocess.run") as mock_run,
+    ):
+        mock_get.return_value = httpx.Response(500, request=httpx.Request("GET", "http://test"))
         mock_run.return_value = subprocess.CompletedProcess(
             args=["opencode"], returncode=0, stdout=cli_stdout
         )
         models = fetch_catalogue()
-        assert len(models) == 1
-        assert models[0].id == "test-cli-m"
+    assert [m.id for m in models] == ["test-cli-m"]
 
-    # 2. opencode CLI fails with SubprocessError -> falls back to HTTP
-    http_data = {"data": [{"id": "http-m", "name": "HTTP Model"}]}
-    with (
-        patch("shutil.which", return_value="/usr/local/bin/opencode"),
-        patch("subprocess.run", side_effect=subprocess.SubprocessError("CLI crashed")),
-        patch("httpx.Client.get") as mock_get,
+
+def test_fetch_catalogue_raises_http_error_when_cli_also_unusable():
+    for which, run in (
+        (None, None),
+        ("/usr/bin/opencode", subprocess.CompletedProcess(args=[], returncode=1, stdout="")),
     ):
-        mock_get.return_value = httpx.Response(
-            200, json=http_data, request=httpx.Request("GET", "http://test")
-        )
-        models = fetch_catalogue()
-        assert len(models) == 1
-        assert models[0].id == "http-m"
-
-    # 3. opencode CLI not installed, custom client provided
-    custom_client = httpx.Client()
-    with patch("shutil.which", return_value=None), patch.object(custom_client, "get") as mock_get:
-        mock_get.return_value = httpx.Response(
-            200, json=[{"id": "list-m"}], request=httpx.Request("GET", "http://test")
-        )
-        models = fetch_catalogue(client=custom_client)
-        assert len(models) == 1
-        assert models[0].id == "list-m"
-
-    # 4. opencode CLI not installed, HTTP raises error
-    with patch("shutil.which", return_value=None), patch("httpx.Client.get") as mock_get:
-        mock_get.return_value = httpx.Response(500, request=httpx.Request("GET", "http://test"))
-        with pytest.raises(httpx.HTTPStatusError):
-            fetch_catalogue()
+        with (
+            patch("shutil.which", return_value=which),
+            patch("subprocess.run", return_value=run),
+            patch("httpx.Client.get") as mock_get,
+        ):
+            mock_get.return_value = httpx.Response(500, request=httpx.Request("GET", "http://t"))
+            with pytest.raises(httpx.HTTPStatusError):
+                fetch_catalogue()
+    with (
+        patch("shutil.which", return_value="/usr/bin/opencode"),
+        patch("subprocess.run", side_effect=subprocess.SubprocessError("boom")),
+        patch("httpx.Client.get", side_effect=httpx.ConnectError("down")),
+        pytest.raises(httpx.ConnectError),
+    ):
+        fetch_catalogue()
 
 
 def test_extract_plan_section_edge_cases():
@@ -998,7 +1007,7 @@ def test_cross_plan_cache_sharing(tmp_path):
 
 def test_parse_models_dev_payload():
     data = {
-        "provider-a": {
+        "opencode-go": {
             "models": {
                 "model-a": {
                     "name": "Model A",
@@ -1041,7 +1050,7 @@ def test_extract_metadata_edge_cases():
 
 
 def test_fetch_models_dev_success_and_failure():
-    payload = {"p": {"models": {"m": {"release_date": "2026-01-01"}}}}
+    payload = {"opencode-go": {"models": {"m": {"release_date": "2026-01-01"}}}}
 
     with patch("httpx.Client.get") as mock_get:
         mock_get.return_value = httpx.Response(

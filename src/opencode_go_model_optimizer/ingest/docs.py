@@ -157,6 +157,29 @@ def parse_go_pricing(
     return pricing_by_norm_name
 
 
+def parse_endpoints_table(mdx: str) -> dict[str, str]:
+    """Parse the `## Endpoints` table into {display name: model id}.
+
+    The table header is `| Model | Model ID | Endpoint | AI SDK Package |`. Returns {}
+    when the section or table is missing.
+    """
+    idx = mdx.find("## Endpoints")
+    if idx == -1:
+        return {}
+    rest = mdx[idx + len("## Endpoints") :]
+    nxt = re.search(r"^## ", rest, re.MULTILINE)
+    section = rest[: nxt.start()] if nxt else rest
+    mapping: dict[str, str] = {}
+    for cells in parse_table_rows(section):
+        if len(cells) < 2:
+            continue
+        name = _TAG_RE.sub(" ", cells[0]).strip()
+        model_id = cells[1].strip().strip("`").strip()
+        if name and model_id and model_id.lower() != "model id":
+            mapping[name] = model_id
+    return mapping
+
+
 def fetch_docs_mdx(
     url: str = DEFAULT_DOCS_URL,
     client: httpx.Client | None = None,
