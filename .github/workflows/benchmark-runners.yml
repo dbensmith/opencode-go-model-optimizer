@@ -1,0 +1,116 @@
+name: Benchmark Runners (Temporary)
+
+on:
+  push:
+    branches: [run-optimizer-and-report-back]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-slim, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Verify build and checks
+        run: |
+          uv run ruff format --check
+          uv run ruff check
+          uv run pytest --cov=opencode_go_model_optimizer --cov-report=term-missing
+          uv build
+
+      - name: Check 1Password secret availability
+        id: op_check
+        run: |
+          echo "has_token=${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+          echo "has_ref=${{ secrets.AA_SECRET_REF != '' || vars.AA_SECRET_REF != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Load AA API key from 1Password
+        if: steps.op_check.outputs.has_token == 'true' && steps.op_check.outputs.has_ref == 'true'
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
+
+      - name: Run optimizer and render issue body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          MODE="allowance"
+          if [[ -n "${AA_API_KEY:-}" ]]; then
+            MODE="pareto"
+          fi
+          if [[ "$MODE" == "pareto" ]]; then
+            OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --cache-ttl 300 --at "2026-11-15T16:00:00Z" --format json > out/select.json 2> out/script.log
+            OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --cache-ttl 300 --at "2026-11-15T16:00:00Z" > out/table.txt 2>> out/script.log
+          else
+            uv run opencode-go-model-optimizer select --mode allowance --format json --explain --cache-ttl 300 --at "2026-11-15T16:00:00Z" > out/select.json 2> out/script.log
+            uv run opencode-go-model-optimizer select --mode allowance --format table --explain --cache-ttl 300 --at "2026-11-15T16:00:00Z" > out/table.txt 2>> out/script.log
+          fi
+          uv run python scripts/render_optimizer_issue.py \
+            --json out/select.json \
+            --script-output out/table.txt \
+            --output out/issue.md
+          # Normalize volatile timestamps (evaluated_at, fetched_at) for cross-runner comparison
+          uv run python -c "
+          import json, re
+          from pathlib import Path
+          data = json.loads(Path('out/select.json').read_text())
+          data['evaluated_at'] = 'NORMALIZED'
+          if 'snapshot' in data:
+              data['snapshot']['fetched_at'] = 'NORMALIZED'
+          Path('out/select.normalized.json').write_text(json.dumps(data, indent=2, sort_keys=True))
+          md = Path('out/issue.md').read_text()
+          md = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+\d{2}:\d{2}', 'NORMALIZED', md)
+          Path('out/issue.normalized.md').write_text(md)
+          "
+          # Verify gh CLI works on this runner
+          gh issue list --repo "${{ github.repository }}" --label "optimizer-results" --state open --json number
+
+      - name: Upload verification outputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: output-${{ matrix.runner }}
+          path: |
+            out/table.txt
+            out/select.normalized.json
+            out/issue.normalized.md
+
+  compare:
+    needs: verify
+    runs-on: ubuntu-slim
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Verify identical outputs across runners
+        run: |
+          diff -u artifacts/output-ubuntu-slim/table.txt artifacts/output-ubuntu-latest/table.txt
+          diff -u artifacts/output-ubuntu-slim/select.normalized.json artifacts/output-ubuntu-latest/select.normalized.json
+          diff -u artifacts/output-ubuntu-slim/issue.normalized.md artifacts/output-ubuntu-latest/issue.normalized.md
+          echo "Outputs are 100% identical across ubuntu-slim and ubuntu-latest!"

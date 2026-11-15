@@ -154,6 +154,14 @@ A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.
 
 None are required. Allowance mode (and therefore `auto` without a key) needs no key. For Pareto mode you can set a free Artificial Analysis key in `AA_API_KEY`; it stays on your machine and only your own runs use it. When you display AA-derived values (`aa_iq`, `aa_coding`, `speed_tps`), attribute them: "Source: Artificial Analysis (artificialanalysis.ai)".
 
+If the key lives in 1Password, `scripts/run-optimizer.sh` resolves it and runs `select --mode pareto`:
+
+```bash
+AA_SECRET_REF='op://<vault>/<item>/AA_API_KEY' scripts/run-optimizer.sh
+```
+
+The script detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three. If no 1Password auth is available it falls back to an exported `AA_API_KEY`.
+
 ### Offline Usage
 
 - `--snapshot <file>` reads a local snapshot JSON and makes no network calls, so it works fully offline. Use it with your own `fetch` output.
