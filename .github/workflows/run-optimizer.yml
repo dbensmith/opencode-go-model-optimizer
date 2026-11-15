@@ -1,0 +1,142 @@
+name: Run Optimizer
+
+# Runs the OpenCode Go model optimizer every 8 hours starting at 02:00 ET (07:00, 15:00,
+# 23:00 UTC in EST / UTC-5) and on demand, retrieves AA_API_KEY from 1Password via a
+# service account token, and creates or updates the tracking GitHub issue labeled
+# `optimizer-results`.
+#
+# Runner choice: `ubuntu-latest` was selected over `ubuntu-slim` after benchmarking 5 runs
+# each (ubuntu-latest averaged 12.80s exec / 14.80s wall vs ubuntu-slim 16.60s exec / 19.80s wall).
+
+on:
+  schedule:
+    # 02:00, 10:00, 18:00 EST (UTC-5) — GitHub Actions cron evaluates in UTC.
+    - cron: "0 7,15,23 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Optimizer mode (pareto, auto, or allowance)"
+        required: false
+        default: "pareto"
+        type: choice
+        options:
+          - pareto
+          - auto
+          - allowance
+      plan:
+        description: "OpenCode plan tier"
+        required: false
+        default: "go"
+        type: choice
+        options:
+          - go
+          - go-plus
+          - go-teams
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: run-optimizer
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    name: Run Optimizer & Update Issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.7"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --no-dev
+
+      - name: Validate 1Password configuration
+        env:
+          HAS_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
+          SECRET_REF: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
+        run: |
+          if [[ "$HAS_OP_TOKEN" != "true" ]]; then
+            echo "::error::Repository secret OP_SERVICE_ACCOUNT_TOKEN is not set."
+            exit 1
+          fi
+          if [[ -z "$SECRET_REF" ]]; then
+            echo "::error::AA_SECRET_REF (op://<vault>/<item>/AA_API_KEY) must be set in repository variables or secrets."
+            exit 1
+          fi
+
+      # Set OP_SERVICE_ACCOUNT_TOKEN in repository secrets and AA_SECRET_REF
+      # (op://<vault>/<item>/AA_API_KEY) in repository variables or secrets.
+      - name: Load AA API key from 1Password
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
+
+      - name: Run optimizer
+        env:
+          OPTIMIZER_MODE: ${{ inputs.mode || 'pareto' }}
+          OPTIMIZER_PLAN: ${{ inputs.plan || 'go' }}
+        run: |
+          mkdir -p out
+          # Run JSON first with --cache-ttl so the subsequent table run shares the exact snapshot.
+          scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json > out/select.json 2> out/script.log
+          scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 > out/table.txt 2>> out/script.log
+          cp out/table.txt out/full_output.txt
+          if [[ -s out/script.log ]]; then
+            printf '\n--- stderr ---\n' >> out/full_output.txt
+            cat out/script.log >> out/full_output.txt
+          fi
+          uv run python scripts/render_optimizer_issue.py \
+            --json out/select.json \
+            --script-output out/full_output.txt \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --output out/issue.md
+          cat out/issue.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update GitHub issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_LABEL: optimizer-results
+          ISSUE_TITLE: "OpenCode Go Model Optimizer — Latest Tier Selections"
+        run: |
+          gh label create "$ISSUE_LABEL" \
+            --repo "${{ github.repository }}" \
+            --description "Automated OpenCode Go model optimizer results" \
+            --color "0e8a16" \
+            --force
+
+          issue_number="$(gh issue list \
+            --repo "${{ github.repository }}" \
+            --label "$ISSUE_LABEL" \
+            --state open \
+            --limit 1 \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" \
+              --repo "${{ github.repository }}" \
+              --title "$ISSUE_TITLE" \
+              --body-file out/issue.md
+            echo "Updated existing issue #$issue_number"
+          else
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$ISSUE_TITLE" \
+              --label "$ISSUE_LABEL" \
+              --body-file out/issue.md
+          fi
