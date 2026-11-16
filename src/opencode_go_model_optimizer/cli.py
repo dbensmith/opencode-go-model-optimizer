@@ -276,11 +276,18 @@ _FILTER_PARENT = _parent(
         },
     ),
     (
+        ("--no-global-region",),
+        {
+            "action": "store_true",
+            "help": "Exclude models that require Global regions in workspace privacy settings "
+            "(allowed by default)",
+        },
+    ),
+    (
         ("--allow-global-region",),
         {
             "action": "store_true",
-            "help": "Allow models that require Global regions in workspace privacy settings "
-            "(excluded by default)",
+            "help": "Deprecated: Global-region models are allowed by default",
         },
     ),
     (
@@ -549,7 +556,7 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
         skip_models=frozenset(args.skip),
         allow_contributor=not args.no_contributor,
-        allow_global_region=args.allow_global_region,
+        allow_global_region=not args.no_global_region,
         allow_training=not args.no_training,
         max_retention_days=args.max_retention_days,
         require_zdr=args.require_zdr,

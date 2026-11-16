@@ -197,7 +197,7 @@ def filter_benchmarked_models(
     models: Sequence[NormalizedModel],
     skip_models: AbstractSet[str] = frozenset(),
 ) -> list[NormalizedModel]:
-    """Return active, benchmarked, non-free, non-preview models not in ``skip_models``."""
+    """Return active, benchmarked, non-free, non-contributor models not in ``skip_models``."""
     return [
         m
         for m in models
@@ -205,7 +205,6 @@ def filter_benchmarked_models(
         and (m.aa_iq is not None or m.aa_coding is not None)
         and not m.is_zero_cost
         and not m.is_contributor
-        and not m.is_preview
         and m.id not in skip_models
         and m.full_id not in skip_models
     ]
@@ -234,7 +233,7 @@ def evaluate_pareto(
             m, profile=profile, token_mix=token_mix, basis=burn_basis
         )
 
-    # Models with benchmark intelligence (excluding contributor promos, previews, and skipped models)
+    # Models with benchmark intelligence (excluding contributor promos and skipped models)
     benchmarked = filter_benchmarked_models(models, skips)
     if not benchmarked:
         return models

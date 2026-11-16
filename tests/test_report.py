@@ -95,9 +95,10 @@ def test_excluded_models_have_reasons(snapshot):
         e["model_id"]: e["reasons"]
         for e in build_report(snapshot=snapshot, now=NOW)["plans"]["go"]["excluded"]
     }
-    assert "preview/experimental model" in excluded["opencode-go/omega-preview"][0]
+    # Preview models and Global-region models are eligible by default now.
+    assert "opencode-go/omega-preview" not in excluded
+    assert "opencode-go/kappa-free" not in excluded
     assert "not active" in excluded["opencode-go/deprecated-old-model"][0]
-    assert "Global workspace region" in excluded["opencode-go/kappa-free"][0]
     assert "contributor" in excluded["opencode-go/lambda-contributor"][0]
     assert "opencode-go/alpha-max" not in excluded
 
@@ -117,6 +118,13 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     assert exclusion_reasons(trains, SelectionCriteria(allow_training=False)) == [
         "excluded by privacy criteria"
     ]
+    global_model = NormalizedModel(
+        id="g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
+    )
+    assert exclusion_reasons(global_model, SelectionCriteria(allow_global_region=False)) == [
+        "requires Global workspace region (excluded by --no-global-region)"
+    ]
+    assert exclusion_reasons(global_model, SelectionCriteria()) == []
     contrib = NormalizedModel(
         id="c1",
         is_contributor=True,

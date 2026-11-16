@@ -37,10 +37,9 @@ _DROP_KEYS = {"aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto"}
 HOW_DECIDED = [
     "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance "
     "and price only.",
-    "Eligibility: only active models are considered. Preview/experimental models, models "
-    "requiring a Global workspace region, and models without a positive finite allowance are "
-    "excluded from the paid tiers (the privacy filter here is the default: Global-region "
-    "models excluded, training and retention not restricted).",
+    "Eligibility: only active models are considered. Models without a positive finite "
+    "allowance are excluded from the paid tiers. Global-region models are allowed by default; "
+    "training and retention are not restricted unless the corresponding flags are set.",
     "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, "
     "promo expiry) using the 7-day time-weighted average starting at generation time.",
     "Tiers: eligible paid models are split into three clusters by log effective output price "
@@ -96,12 +95,10 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
     if m.status != "active":
         return [f"status is {m.status!r} (not active)"]
     reasons: list[str] = []
-    if m.is_preview:
-        reasons.append("preview/experimental model")
     p = m.privacy
     if not passes_privacy(m, c):
         if p is not None and p.requires_global_region and not c.allow_global_region:
-            reasons.append("requires Global workspace region (excluded by default)")
+            reasons.append("requires Global workspace region (excluded by --no-global-region)")
         else:
             reasons.append("excluded by privacy criteria")
     if reasons:

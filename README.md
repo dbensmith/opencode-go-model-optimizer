@@ -51,7 +51,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 #### How Pareto tiers are chosen
 
-1. **Eligibility.** Start from active, non-free, non-preview, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
+1. **Eligibility.** Start from active, non-free, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. Global-region models are allowed by default; pass `--no-global-region` to exclude them. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
 2. **Pareto frontier.** Compare quality against monthly quota burn. A model is dominated when another eligible model has at least as much quality and no more burn, with at least one strict improvement. Dominated models are never picked; every remaining frontier model has BPE `1.000`.
 3. **Quality.** Quality is the AA Intelligence Index, blended with the AA Engineering capability index (the replacement for the retired Coding Index) using the `--profile` or `--weights` weights. `general` is 70% intelligence / 30% engineering, `coding` is 40/60, `reasoning` is 85/15, and `fast` also scales by output tokens per second.
 4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the docs' published requests per month (scaled by the price multiplier); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
@@ -82,11 +82,18 @@ OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`Deep
 
 #### How the free tier is chosen
 
-The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active, not preview, and either zero-cost or a contributor model with unlimited/zero-cost output. `--no-contributor` excludes contributor models, `--no-training` excludes models that train on your data, and `--require-zdr` / `--max-retention-days` apply as usual.
+The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active and either zero-cost or a contributor model with unlimited/zero-cost output. `--no-contributor` excludes contributor models, `--no-training` excludes models that train on your data, and `--require-zdr` / `--max-retention-days` apply as usual.
 
 Eligible free models are ranked by release date (newest first), then context window (largest), then model id. `--prefer free=<model>` overrides the pick.
 
-Live example: `LongCat 2.5 Free` (2026-11-02) is the newest free model but requires a Global workspace region, so it is excluded by default. `Iceman Contributor Free` (2026-10-24) is the newest eligible model and wins. `--no-training` or `--no-contributor` selects `Beam Free`; `--allow-global-region` selects `LongCat 2.5 Free`.
+Live example: `LongCat 2.5 Free` (2026-11-02) is the newest free model and wins by default now that Global regions are allowed. `--no-global-region` falls back to `Iceman Contributor Free` (2026-10-24); `--no-global-region --no-training` or `--no-global-region --no-contributor` selects `Beam Free`.
+
+#### Contributor vs. training, and preview models
+
+- **Contributor** is a commercial tier: heavily discounted or free access in exchange for permission to use your prompts and completions to improve the model (for example Meta Muse Spark Contributor and Iceman Contributor Free). It is inferred from the model id/name and stored as `is_contributor`.
+- **Training** (`trains_on_data`) is a data-policy property from the Go docs Privacy table: whether the provider trains on your prompts and completions. It can apply to non-contributor models too.
+- `--no-contributor` excludes the contributor commercial tier. `--no-training` excludes any model whose privacy row says it trains, regardless of tier. Contributor models usually train, but the flags are independent.
+- **Preview/experimental** models are no longer excluded by default. The `is_preview` flag remains available for display and filtering, but it does not prevent a model from being selected if it passes the other filters.
 
 ---
 
@@ -264,12 +271,12 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and coding/engineering weights (e.g. `--weights 0.5,0.5`).
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
-- **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (e.g. a free model hosted outside your allowed regions). Excluded by default, because default workspace settings block these models and selecting one would fail at request time.
+- **`--no-global-region`**: Exclude models that the docs say require **Global** regions in workspace privacy settings. Global-region models are allowed by default. The old `--allow-global-region` flag is still accepted as a deprecated no-op.
 - **`--no-training`**: Exclude models whose provider trains on your prompts and completions (e.g. contributor-tier models).
 - **`--max-retention-days <N>`**: Exclude models that retain data longer than N days. Models with unknown retention (`Not ZDR`, or no privacy data) fail.
 - **`--require-zdr`**: Only allow zero-data-retention models. Models with no privacy data fail.
 
-  These four filters apply to every tier (including `free`), to `rank`, and to `--prefer` pins: a pinned model that fails them is ignored with an `excluded by privacy filters; ignoring` warning. Models without privacy data (older snapshots) pass unless `--max-retention-days` or `--require-zdr` is set. Privacy data comes from the `## Privacy` table and notes in the Go docs and is stored per model as `privacy`: `trains_on_data`, `retention_days` (null for `Not ZDR`/unknown), `zdr` (true when retention is `0 days`), `requires_global_region`, `note` (raw docs note), and `agreement_valid_until` (ISO date from notes such as "valid through November 30, 2026"; a warning is recorded when it is in the past). `select --explain` and `rank --format json` include these fields; the `rank` table adds a `Privacy` column (`ZDR`, `30d`, `train`, `global`), and `diff` reports privacy changes in their own section.
+  These privacy filters apply to every tier (including `free`), to `rank`, and to `--prefer` pins: a pinned model that fails them is ignored with an `excluded by privacy filters; ignoring` warning. Models without privacy data (older snapshots) pass unless `--max-retention-days` or `--require-zdr` is set. Privacy data comes from the `## Privacy` table and notes in the Go docs and is stored per model as `privacy`: `trains_on_data`, `retention_days` (null for `Not ZDR`/unknown), `zdr` (true when retention is `0 days`), `requires_global_region`, `note` (raw docs note), and `agreement_valid_until` (ISO date from notes such as "valid through November 30, 2026"; a warning is recorded when it is in the past). `select --explain` and `rank --format json` include these fields; the `rank` table adds a `Privacy` column (`ZDR`, `30d`, `train`, `global`), and `diff` reports privacy changes in their own section.
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (default: 0, or `OPENCODE_GO_CACHE_TTL`).
 - **`--prefer <tier>=<model_id>`** *(`select` only)*: Pin a model to a tier (e.g. `--prefer heavy=model-a`).
 - **`--top-n <count>`** *(`select` only)*: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.

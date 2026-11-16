@@ -66,9 +66,8 @@ def test_allowance_paid_ranking():
     models = _get_fixture_models()
     ranked = rank_paid_models(models)
 
-    # Preview and deprecated models must be excluded
+    # Preview models are no longer excluded, but deprecated/zero-cost/contributor models are.
     ids = [m.id for m in ranked]
-    assert "omega-preview" not in ids
     assert "deprecated-old-model" not in ids
     assert "delta-contributor" not in ids
     assert "epsilon-free" not in ids

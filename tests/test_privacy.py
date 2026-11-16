@@ -100,8 +100,9 @@ def _m(mid, privacy=None, out=0.0, allowance=None):
     ("kw", "privacy", "ok"),
     [
         ({}, None, True),
-        ({}, Privacy(requires_global_region=True), False),
+        ({}, Privacy(requires_global_region=True), True),
         ({"allow_global_region": True}, Privacy(requires_global_region=True), True),
+        ({"allow_global_region": False}, Privacy(requires_global_region=True), False),
         ({"allow_training": False}, Privacy(trains_on_data=True), False),
         ({"allow_training": False}, Privacy(trains_on_data=False), True),
         ({}, Privacy(trains_on_data=True), True),
@@ -119,14 +120,17 @@ def test_passes_privacy(kw, privacy, ok):
     assert passes_privacy(_m("a", privacy), SelectionCriteria(**kw)) is ok
 
 
-def test_free_tier_skips_global_region_model_by_default():
+def test_free_tier_allows_global_region_by_default_and_can_exclude_it():
     glob = _m("glob", Privacy(requires_global_region=True))
     local = _m("local", Privacy())
-    assert select_tiers([glob, local], SelectionCriteria()).primary["free"] == "opencode-go/local"
-    allowed = SelectionCriteria(allow_global_region=True)
-    assert select_tiers([glob], allowed).primary["free"] == "opencode-go/glob"
-    assert select_tiers([glob], SelectionCriteria()).primary["free"] == ""
-    assert [m.id for m in rank_catalog([glob, local], SelectionCriteria())] == ["local"]
+    # Global-region models are allowed by default; id ASC breaks the release/context tie.
+    assert select_tiers([glob, local], SelectionCriteria()).primary["free"] == "opencode-go/glob"
+    assert select_tiers([glob], SelectionCriteria()).primary["free"] == "opencode-go/glob"
+
+    excluded = SelectionCriteria(allow_global_region=False)
+    assert select_tiers([glob, local], excluded).primary["free"] == "opencode-go/local"
+    assert select_tiers([glob], excluded).primary["free"] == ""
+    assert [m.id for m in rank_catalog([glob, local], excluded)] == ["local"]
 
 
 def test_select_without_privacy_data_unchanged():
@@ -159,24 +163,26 @@ def _select(tmp_path, capsys, *flags):
 
 def test_cli_flags_filter_free_tier(tmp_path, capsys):
     out, _ = _select(tmp_path, capsys)
-    assert out["tiers"]["free"] == "opencode-go/free-train"
-    out, _ = _select(tmp_path, capsys, "--no-training")
-    assert out["tiers"]["free"] == ""
-    out, _ = _select(tmp_path, capsys, "--allow-global-region", "--no-training")
     assert out["tiers"]["free"] == "opencode-go/free-global"
-    out, _ = _select(tmp_path, capsys, "--require-zdr", "--allow-global-region")
+    out, _ = _select(tmp_path, capsys, "--no-global-region")
+    assert out["tiers"]["free"] == "opencode-go/free-train"
+    out, _ = _select(tmp_path, capsys, "--no-global-region", "--no-training")
+    assert out["tiers"]["free"] == ""
+    out, _ = _select(tmp_path, capsys, "--no-training")
     assert out["tiers"]["free"] == "opencode-go/free-global"
     out, _ = _select(tmp_path, capsys, "--require-zdr")
+    assert out["tiers"]["free"] == "opencode-go/free-global"
+    out, _ = _select(tmp_path, capsys, "--require-zdr", "--no-global-region")
     assert out["tiers"]["free"] == ""
     out, _ = _select(tmp_path, capsys, "--max-retention-days", "0", "--top-n", "3")
     assert "opencode-go/paid" not in json.dumps(out["fallbacks"])
 
 
 def test_pinned_model_excluded_by_privacy_warns(tmp_path, capsys):
-    out, err = _select(tmp_path, capsys, "--prefer", "free=free-global")
+    out, err = _select(tmp_path, capsys, "--prefer", "free=free-global", "--no-global-region")
     assert "preferred model 'free-global' for tier 'free' excluded by privacy filters" in err
     assert out["tiers"]["free"] != "opencode-go/free-global"
-    out, err = _select(tmp_path, capsys, "--prefer", "free=free-global", "--allow-global-region")
+    out, err = _select(tmp_path, capsys, "--prefer", "free=free-global")
     assert "excluded by privacy" not in err
     assert out["tiers"]["free"] == "opencode-go/free-global"
 

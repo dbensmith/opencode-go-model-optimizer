@@ -18,9 +18,9 @@ class SelectionCriteria:
     preferred_tiers: dict[str, str] = field(default_factory=dict)
     skip_models: frozenset[str] = frozenset()
     allow_contributor: bool = True
-    # Privacy / region eligibility. Models requiring a Global workspace region are excluded
-    # by default because default workspace settings block them.
-    allow_global_region: bool = False
+    # Privacy / region eligibility. Global-region models are allowed by default; pass
+    # --no-global-region to exclude them.
+    allow_global_region: bool = True
     allow_training: bool = True
     max_retention_days: int | None = None
     require_zdr: bool = False

@@ -18,7 +18,7 @@ def tie_break_key(m: NormalizedModel) -> tuple[tuple[int, ...], int, str]:
 
 def is_eligible_free(m: NormalizedModel, allow_contributor: bool = True) -> bool:
     """Determine if a model is eligible for the free tier."""
-    if m.status != "active" or m.is_preview:
+    if m.status != "active":
         return False
     if not allow_contributor and m.is_contributor:
         return False
@@ -33,7 +33,7 @@ def is_eligible_free(m: NormalizedModel, allow_contributor: bool = True) -> bool
 
 def is_eligible_paid(m: NormalizedModel) -> bool:
     """Determine if a model is eligible for paid tiers under allowance mode."""
-    if m.status != "active" or m.is_preview or m.is_zero_cost or m.is_contributor:
+    if m.status != "active" or m.is_zero_cost or m.is_contributor:
         return False
     allowance = m.monthly_allowance
     return allowance is not None and allowance > 0 and not math.isinf(allowance)
