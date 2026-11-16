@@ -72,12 +72,12 @@ jobs:
             exit 1
           fi
           if [[ -z "$SECRET_REF" ]]; then
-            echo "::error::AA_SECRET_REF (op://<vault>/<item>/AA_API_KEY) must be set in repository variables or secrets."
+            echo "::error::AA_SECRET_REF (op://<vault>/<item>/<field>) must be set in repository variables or secrets."
             exit 1
           fi
 
       # Set OP_SERVICE_ACCOUNT_TOKEN in repository secrets and AA_SECRET_REF
-      # (op://<vault>/<item>/AA_API_KEY) in repository variables or secrets.
+      # (op://<vault>/<item>/<field>) in repository variables or secrets.
       - name: Load AA API key from 1Password
         uses: 1password/load-secrets-action@v5
         with:

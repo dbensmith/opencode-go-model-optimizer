@@ -1009,6 +1009,66 @@ def test_fetch_aa_benchmarks_robust_parsing():
     assert _to_float(float("nan")) is None
 
 
+def test_fetch_aa_benchmarks_v2_paginates_and_reads_performance_v3():
+    pages = {
+        1: {
+            "tier": "free",
+            "pagination": {"page": 1, "page_size": 2, "total_pages": 2, "has_more": True},
+            "data": [
+                {
+                    "id": "id-1",
+                    "slug": "model-one",
+                    "name": "Model One",
+                    "evaluations": {
+                        "artificial_analysis_intelligence_index": 50.5,
+                        "artificial_analysis_coding_index": None,
+                    },
+                    "performance_v3": {"mean_output_tokens_per_second": 123.4},
+                }
+            ],
+        },
+        2: {
+            "tier": "free",
+            "pagination": {"page": 2, "page_size": 2, "total_pages": 2, "has_more": False},
+            "data": [
+                {
+                    "id": "id-2",
+                    "slug": "model-two",
+                    "name": "Model Two",
+                    "evaluations": {"artificial_analysis_intelligence_index": 60.0},
+                    "performance": {"median_output_tokens_per_second": 55.5},
+                }
+            ],
+        },
+    }
+    seen: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        seen.append(page)
+        return httpx.Response(200, json=pages[page])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    bench = fetch_aa_benchmarks("k", client=client)
+
+    assert seen == [1, 2]
+    assert bench["model-one"] == {"iq": 50.5, "coding": None, "tps": 123.4}
+    assert bench["model-two"] == {"iq": 60.0, "coding": None, "tps": 55.5}
+
+
+def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "API key is required"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    errors: list[str] = []
+    bench = fetch_aa_benchmarks("super-secret-key", client=client, errors=errors)
+
+    assert bench == {}
+    assert errors == ["Artificial Analysis returned HTTP 401"]
+    assert "super-secret-key" not in " ".join(errors)
+
+
 def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
     mdx = (Path(__file__).parent / "fixtures" / "go_docs.mdx").read_text(encoding="utf-8")
     mdx = mdx.replace('slot="go-teams"', 'slot="unused"')  # fixture without a teams table

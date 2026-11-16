@@ -150,6 +150,25 @@ def test_aa_key_set_but_fetch_empty_warns_and_resolves_allowance():
     assert resolve_mode("auto", snap.models) == "allowance"
 
 
+def test_aa_fetch_error_detail_is_included_in_warning():
+    def fake_fetch(api_key, client=None, errors=None):
+        if errors is not None:
+            errors.append("Artificial Analysis returned HTTP 401")
+        return {}
+
+    models = parse_catalogue_http(OC)
+    with (
+        patch.dict(os.environ, {"AA_API_KEY": "k"}, clear=True),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=models),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=MDX),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks", side_effect=fake_fetch),
+    ):
+        snap = fetch_and_build_snapshot(plan="go")
+
+    assert any("HTTP 401" in w for w in snap.warnings)
+
+
 def test_fetch_prints_warnings_to_stderr(tmp_path, capsys):
     out = tmp_path / "s.json"
     models = [m for m in parse_catalogue_http(OC) if m.id != "alpha-max"]

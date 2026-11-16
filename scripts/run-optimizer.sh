@@ -12,7 +12,7 @@
 # and regular accounts alike. The secret reference therefore has to work the
 # same way in all three cases (vault and item IDs are allowed):
 #
-#   AA_SECRET_REF=op://<vault>/<item>/AA_API_KEY scripts/run-optimizer.sh
+#   AA_SECRET_REF=op://<vault>/<item>/<field> scripts/run-optimizer.sh
 #
 # If no 1Password auth is available, an already-exported AA_API_KEY is used.
 set -euo pipefail
@@ -75,7 +75,7 @@ if [[ "$auth" == "connect" && -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
 fi
 
 if [[ -n "$auth" ]]; then
-  [[ -n "$SECRET_REF" ]] || die "1Password auth detected ($auth) but AA_SECRET_REF is not set (expected op://<vault>/<item>/AA_API_KEY)"
+  [[ -n "$SECRET_REF" ]] || die "1Password auth detected ($auth) but AA_SECRET_REF is not set (expected op://<vault>/<item>/<field>)"
   printf 'run-optimizer: reading AA_API_KEY from 1Password (%s)\n' "$auth" >&2
   key="$(op read --no-newline "$SECRET_REF")" || die "op read failed (auth: $auth)"
   [[ -n "$key" ]] || die "op read returned an empty AA_API_KEY"

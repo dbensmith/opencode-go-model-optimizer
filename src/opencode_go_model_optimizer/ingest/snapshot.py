@@ -65,41 +65,90 @@ def _to_float(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+AA_MODELS_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
+AA_MAX_PAGES = 20
+
+
+def _aa_speed_tps(item: dict[str, Any]) -> float | None:
+    """Output tokens/sec from performance_v3, then the deprecated performance block."""
+    perf_v3 = item.get("performance_v3")
+    if isinstance(perf_v3, dict):
+        value = _to_float(perf_v3.get("mean_output_tokens_per_second"))
+        if value is not None:
+            return value
+    perf = item.get("performance")
+    if isinstance(perf, dict):
+        value = _to_float(perf.get("median_output_tokens_per_second"))
+        if value is not None:
+            return value
+    return _to_float(item.get("median_output_tokens_per_second"))
+
+
 def fetch_aa_benchmarks(
     api_key: str,
     client: httpx.Client | None = None,
+    errors: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Fetch live benchmark metrics from Artificial Analysis API."""
+    """Fetch live benchmark metrics from the Artificial Analysis Data API.
+
+    Uses the Free-tier language model list, which accepts every key tier. The legacy
+    ``/api/v2/data/*`` endpoints were retired (HTTP 410) in November 2026.
+    """
     try:
         with client_scope(client) as http:
-            r = http.get(
-                "https://artificialanalysis.ai/api/v2/data/llms/models",
-                headers={"x-api-key": api_key},
-            )
-            r.raise_for_status()
-            data = r.json()
-            models = data if isinstance(data, list) else data.get("data", [])
             benchmarks: dict[str, dict[str, Any]] = {}
-            for item in models:
-                if not isinstance(item, dict):
-                    continue
-                slug = item.get("slug") or item.get("id") or ""
-                evals = item.get("evaluations")
-                if not isinstance(evals, dict):
-                    evals = {}
-                if slug:
-                    entry = {
-                        "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
-                        "coding": _to_float(evals.get("artificial_analysis_coding_index")),
-                        "tps": _to_float(item.get("median_output_tokens_per_second")),
-                    }
-                    slug = str(slug)
-                    benchmarks[slug] = entry
-                    benchmarks[norm_name(slug)] = entry
-                    if item.get("name") and norm_name(str(item["name"])):
-                        benchmarks[norm_name(str(item["name"]))] = entry
+            for page in range(1, AA_MAX_PAGES + 1):
+                r = http.get(
+                    AA_MODELS_URL,
+                    headers={"x-api-key": api_key},
+                    params={"page": page},
+                )
+                r.raise_for_status()
+                payload = r.json()
+                if isinstance(payload, list):
+                    models = payload
+                    has_more = False
+                elif isinstance(payload, dict):
+                    models = payload.get("data", [])
+                    pagination = payload.get("pagination")
+                    has_more = (
+                        bool(pagination.get("has_more"))
+                        if isinstance(pagination, dict)
+                        else False
+                    )
+                else:
+                    raise ValueError("unexpected Artificial Analysis response")
+
+                if not isinstance(models, list):
+                    raise ValueError("unexpected Artificial Analysis model list")
+                for item in models:
+                    if not isinstance(item, dict):
+                        continue
+                    slug = item.get("slug") or item.get("id") or ""
+                    evals = item.get("evaluations")
+                    if not isinstance(evals, dict):
+                        evals = {}
+                    if slug:
+                        entry = {
+                            "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
+                            "coding": _to_float(evals.get("artificial_analysis_coding_index")),
+                            "tps": _aa_speed_tps(item),
+                        }
+                        slug = str(slug)
+                        benchmarks[slug] = entry
+                        benchmarks[norm_name(slug)] = entry
+                        if item.get("name") and norm_name(str(item["name"])):
+                            benchmarks[norm_name(str(item["name"]))] = entry
+                if not has_more:
+                    break
             return benchmarks
-    except httpx.HTTPError, ValueError:
+    except httpx.HTTPStatusError as exc:
+        if errors is not None:
+            errors.append(f"Artificial Analysis returned HTTP {exc.response.status_code}")
+        return {}
+    except (httpx.HTTPError, ValueError) as exc:
+        if errors is not None:
+            errors.append(f"Artificial Analysis fetch failed ({type(exc).__name__})")
         return {}
 
 
@@ -528,12 +577,17 @@ def _fetch_and_build(
     plan: str, active_client: httpx.Client, use_aa: bool, recorder: _SourceRecorder
 ) -> Snapshot:
     aa_key = os.environ.get("AA_API_KEY") if use_aa else None
+    aa_errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         fut_cat = executor.submit(fetch_catalogue, client=active_client)
         fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
         fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
         fut_aa = (
-            executor.submit(fetch_aa_benchmarks, aa_key, client=active_client) if aa_key else None
+            executor.submit(
+                fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors
+            )
+            if aa_key
+            else None
         )
 
         models = fut_cat.result()
@@ -551,9 +605,10 @@ def _fetch_and_build(
 
     warnings: list[str] = []
     if aa_key and not aa_benchmarks:
+        detail = f" ({'; '.join(aa_errors)})" if aa_errors else ""
         warnings.append(
-            "AA_API_KEY is set but no Artificial Analysis benchmarks could be fetched; "
-            "falling back to allowance ranking"
+            "AA_API_KEY is set but no Artificial Analysis benchmarks could be fetched"
+            f"{detail}; falling back to allowance ranking"
         )
 
     return create_snapshot(
