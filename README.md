@@ -160,7 +160,7 @@ If the key lives in 1Password, `scripts/run-optimizer.sh` resolves it and runs `
 AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 ```
 
-The script detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three. If no 1Password auth is available it falls back to an exported `AA_API_KEY`.
+If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
 A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs every 8 hours starting at 02:00 EST (`0 7,15,23 * * *` UTC) and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh`, formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), and creates or updates the open GitHub issue labeled `optimizer-results`.
 
