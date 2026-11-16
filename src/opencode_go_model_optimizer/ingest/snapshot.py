@@ -185,26 +185,35 @@ def _model_aa_lookup_keys(
     no_params_canon = _AA_PARAM_SIZE_RE.sub("", canon)
     no_params_tail = _AA_PARAM_SIZE_RE.sub("", canon_tail)
     forms: list[str] = [
-        m.id,
+        # Exact release-specific identifiers first: an OpenCode ID like
+        # ``deepseek-v4.1-flash`` may serve the ``1017`` release, and AA also lists a
+        # separate non-1017 model. Never let the generic ID shadow the exact release.
         m.name,
-        _AA_DATE_CODE_RE.sub(" ", m.name),
         canon,
         canon_tail,
         no_params_canon,
         no_params_tail,
         _AA_TRAILING_ONE_DOT_ZERO_RE.sub("", no_params_canon),
         _AA_TRAILING_ONE_DOT_ZERO_RE.sub("", no_params_tail),
+        m.id,
         *norm_names_by_id.get(m.id, ()),
+        _AA_DATE_CODE_RE.sub(" ", m.name),
         _AA_EDITION_RE.sub("", m.id),
         _AA_EDITION_RE.sub("", m.name),
     ]
-    keys: list[str] = [m.id]
-    seen: set[str] = {m.id}
+    keys: list[str] = []
+    seen: set[str] = set()
     for form in forms:
         nk = norm_name(form)
         if nk and nk not in seen:
             seen.add(nk)
             keys.append(nk)
+    # Raw IDs are a last-resort exact match for synthetic fixtures and older snapshots;
+    # they never shadow the release-specific normalized keys above.
+    for raw in (m.id, m.name):
+        if raw and raw not in seen:
+            seen.add(raw)
+            keys.append(raw)
     return keys
 
 

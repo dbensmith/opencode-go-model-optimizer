@@ -423,45 +423,30 @@ def test_allocate_tiers_pareto_comprehensive():
 
     tiers_cutoffs = _tiers_pareto(catalog)
     assert tiers_cutoffs["heavy"] == "opencode-go/f-heavy"
+    # f-bal is the best quality-per-burn among models at least 60% as capable as heavy;
+    # f-light is below that floor, so light stays f-light.
     assert tiers_cutoffs["balanced"] == "opencode-go/f-bal"
     assert tiers_cutoffs["light"] == "opencode-go/f-light"
     assert tiers_cutoffs["free"] == "opencode-go/free-1"
 
-    # 3. Empty cluster missing tier falls back to allowance picks
-    with patch(
-        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
-        side_effect=[
-            ([m1, m2], [m3], []),  # tier_light is empty
-            ([m1], [m2], [m3]),  # fallback allocate_tiers_allowance
-        ],
-    ):
-        tiers_fb = _tiers_pareto(catalog)
-        assert set(tiers_fb.keys()) == {"heavy", "balanced", "light", "free"}
-
-    # 4. Small benchmarked list (len < 3):
+    # 3. Small benchmarked list: tiers are still populated (sharing when needed)
     t_small = _tiers_pareto([m1, m2, m_free])
     assert set(t_small.keys()) == {"heavy", "balanced", "light", "free"}
+    assert all(t_small.values())
 
-    # 5. Fallback to allowance allocation when tiers missing:
+    # 4. Single benchmarked model: all paid tiers share it.
     t_single = _tiers_pareto([m1])
     assert t_single["heavy"] == "opencode-go/f-heavy"
+    assert t_single["balanced"] == "opencode-go/f-heavy"
+    assert t_single["light"] == "opencode-go/f-heavy"
 
-    # 6. Free tier fallback when free_pick is None but free_ranked is not empty
+    # 5. Free tier fallback when free_pick is None but free_ranked is not empty
     t_free_pinned = _tiers_pareto(
         [m1, m2, m3, m_free],
         preferred_tiers={"balanced": "opencode-go/free-1"},
     )
     assert t_free_pinned["balanced"] == "opencode-go/free-1"
     assert t_free_pinned["free"] == "opencode-go/free-1"
-
-    # 7. Cluster returning ranked[0] when all models already in used_model_ids
-    with patch(
-        "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
-        return_value=([m1], [m1], [m2]),
-    ):
-        t_dup = _tiers_pareto([m1, m2, m_free])
-        assert t_dup["heavy"] == "opencode-go/f-heavy"
-        assert t_dup["balanced"] == "opencode-go/f-heavy"
 
 
 def test_allocate_tiers_allowance_edge_cases():
@@ -1104,7 +1089,9 @@ def test_pareto_light_tier_ignores_dominated_models():
         tiers = _tiers_pareto([m_heavy, m_bal, m_light, m_dominated, m_free])
 
     assert tiers["heavy"] == "opencode-go/m-heavy"
-    assert tiers["balanced"] == "opencode-go/m-bal"
+    # m-light has nearly the same quality as m-bal at a fifth of the burn, so it is both the
+    # best-value balanced pick and the cheapest light pick.
+    assert tiers["balanced"] == "opencode-go/m-light"
     assert tiers["light"] == "opencode-go/m-light"
     assert "opencode-go/m-dominated" not in tiers.values()
 

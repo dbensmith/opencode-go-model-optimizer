@@ -120,13 +120,12 @@ def _pick_paid_tiers(
 def _pareto_clusters(
     evaluated: list[NormalizedModel], c: SelectionCriteria
 ) -> dict[str, list[NormalizedModel]]:
-    """Cluster the Pareto frontier by quota cost into ranked per-tier lists.
+    """Rank the Pareto frontier for each tier's objective.
 
-    Only Pareto-optimal models are eligible: a model that is dominated on both quality and
-    quota burn can never be a sensible tier pick. Clustering by cost (not quality) keeps the
-    tier ladder monotonic — heavy is the dearest band, balanced the middle, light the
-    cheapest — and the best-quality frontier model in each band wins. The allocator shares
-    frontier models across tiers when the frontier is smaller than the number of paid tiers.
+    ``heavy`` takes the highest-quality frontier model, ``balanced`` the best quality per
+    unit of quota burn (the cost-effective workhorse), and ``light`` the lowest-burn frontier
+    model. Only Pareto-optimal models are eligible. Tiers may share a model; when the
+    frontier is smaller than the paid tiers, the missing tiers reuse a pick.
     """
     empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
@@ -136,25 +135,53 @@ def _pareto_clusters(
     def quality(m: NormalizedModel) -> float:
         return effective_quality(m, profile=c.profile, weights=c.weights)
 
-    def cost(m: NormalizedModel) -> float:
-        burn = m.composite_burn_pct
-        return math.log1p(burn) if burn is not None and burn > 0 else 0.0
+    def burn(m: NormalizedModel) -> float:
+        return m.composite_burn_pct if m.composite_burn_pct is not None else float("inf")
 
-    frontier = [m for m in benchmarked if m.is_pareto]
-    pool = frontier or benchmarked
+    def value(m: NormalizedModel) -> float:
+        q, b = quality(m), burn(m)
+        return q / b if b > 0 and q > 0 else 0.0
+
+    def base(m: NormalizedModel) -> tuple[bool]:
+        return (not bool(m.is_pareto),)
+
+    frontier = [m for m in benchmarked if m.is_pareto] or benchmarked
+    heavy_quality = max((quality(m) for m in frontier), default=0.0)
+    balanced_pool = [m for m in frontier if quality(m) >= heavy_quality * 0.6] or frontier
     return {
-        tier: sorted(
-            cluster,
+        "heavy": sorted(
+            frontier,
             key=lambda m: (
-                not bool(m.is_pareto),
-                -(m.bpe or 0.0),
+                *base(m),
                 -quality(m),
-                m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
+                burn(m),
+                -(m.bpe or 0.0),
                 -(m.speed_tps or 0.0),
                 tie_break_key(m),
             ),
-        )
-        for tier, cluster in zip(_PAID_TIERS, fisher_jenks_3_clusters(pool, key=cost), strict=True)
+        ),
+        "balanced": sorted(
+            balanced_pool,
+            key=lambda m: (
+                *base(m),
+                -value(m),
+                -quality(m),
+                burn(m),
+                -(m.bpe or 0.0),
+                tie_break_key(m),
+            ),
+        ),
+        "light": sorted(
+            frontier,
+            key=lambda m: (
+                *base(m),
+                burn(m),
+                -quality(m),
+                -(m.bpe or 0.0),
+                -(m.speed_tps or 0.0),
+                tie_break_key(m),
+            ),
+        ),
     }
 
 
@@ -224,9 +251,9 @@ def _allocate_pareto(
 ) -> tuple[dict[str, str], dict[str, list[NormalizedModel]], list[NormalizedModel]]:
     """Pareto allocation over already-filtered, already-evaluated models.
 
-    Tiers are allowed to share a model. If the Pareto frontier has fewer models than paid
-    tiers, the missing tiers reuse the nearest selected paid tier instead of dropping to a
-    dominated model.
+    Tiers are allowed to share a model: each tier ranks the same Pareto frontier by its own
+    objective, so one model can be the best pick for more than one tier. If there is no
+    benchmarked/Pareto model at all, fall back to allowance allocation.
     """
     free_ranked = rank_free_models(
         evaluated, skip_models=c.skip_models, allow_contributor=c.allow_contributor
@@ -234,18 +261,6 @@ def _allocate_pareto(
     clusters = _pareto_clusters(evaluated, c)
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
     _pick_paid_tiers(selected, used, clusters)
-
-    for tier in _PAID_TIERS:
-        if selected.get(tier):
-            continue
-        if tier == "light":
-            shared = selected.get("balanced") or selected.get("heavy") or ""
-        elif tier == "balanced":
-            shared = selected.get("heavy") or selected.get("light") or ""
-        else:
-            shared = selected.get("balanced") or selected.get("light") or ""
-        if shared:
-            selected[tier] = shared
 
     # No benchmarked/Pareto model at all: fall back to allowance allocation.
     if not any(selected.get(t) for t in _PAID_TIERS):

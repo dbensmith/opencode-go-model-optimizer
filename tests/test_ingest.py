@@ -1206,6 +1206,35 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
     assert bench["explicitmax"]["iq"] == 40.0
 
 
+def test_aa_exact_release_beats_generic_id():
+    # OpenCode's `deepseek-v4.1-flash` serves the 1017 release; AA also lists a separate
+    # non-1017 model. The exact release-specific name/canonical_id must win over the generic
+    # catalogue ID.
+    items = [
+        {
+            "slug": "deepseek-v4-1-flash",
+            "name": "DeepSeek V4.1 Flash (Max)",
+            "evaluations": {"artificial_analysis_intelligence_index": 40.0},
+        },
+        {
+            "slug": "deepseek-v4-1-flash-1017",
+            "name": "DeepSeek V4.1 Flash 1017 (Max)",
+            "evaluations": {"artificial_analysis_intelligence_index": 32.6},
+        },
+    ]
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": items}))
+    )
+    bench = fetch_aa_benchmarks("k", client=client)
+    model = NormalizedModel(
+        id="deepseek-v4.1-flash",
+        name="DeepSeek V4.1 Flash 1017",
+        canonical_id="deepseek/deepseek-v4.1-flash-1017",
+    )
+    merged = merge_docs_pricing([model], {}, aa_benchmarks=bench)
+    assert merged[0].aa_iq == 32.6
+
+
 def test_fetch_aa_benchmarks_invalid_payloads_and_error_reporting():
     for bad_payload in ("not-a-container", {"data": "not-a-list"}):
         client = httpx.Client(

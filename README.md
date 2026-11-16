@@ -45,7 +45,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ### Operating Modes
 
-- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks natural breaks. Only Pareto-optimal models are clustered into tiers, so a tier is never filled with a model dominated on both quality and quota burn; when the frontier has fewer models than paid tiers, tiers may share a model rather than falling back to a dominated one.
+- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE). Only Pareto-optimal models are eligible: `heavy` takes the highest-quality frontier model, `balanced` the best quality per unit of burn among models at least 60% as capable as `heavy`, and `light` the lowest-burn frontier model. Tiers may share a model rather than falling back to a dominated one.
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
 - **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
 

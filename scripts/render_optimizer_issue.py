@@ -162,9 +162,11 @@ def render_issue_markdown(
     if mode == "pareto":
         lines.append(
             "Selected in **Pareto mode** using Bidirectional Pareto Efficiency (BPE) "
-            "over Artificial Analysis benchmarks vs. monthly quota burn, grouped into paid "
-            "cost tiers (`heavy`, `balanced`, `light`) via Fisher-Jenks natural breaks, plus "
-            "the newest eligible zero-cost `free` model."
+            "over Artificial Analysis benchmarks vs. monthly quota burn. Only Pareto-optimal "
+            "models are eligible: `heavy` takes the highest-quality frontier model, "
+            "`balanced` the best quality per unit of burn among models at least 60% as "
+            "capable as `heavy`, and `light` the lowest-burn frontier model; tiers may share "
+            "a model. Plus the newest eligible zero-cost `free` model."
         )
     else:
         lines.append(
