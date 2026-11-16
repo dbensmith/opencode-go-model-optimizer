@@ -120,11 +120,13 @@ def _pick_paid_tiers(
 def _pareto_clusters(
     evaluated: list[NormalizedModel], c: SelectionCriteria
 ) -> dict[str, list[NormalizedModel]]:
-    """Cluster the Pareto frontier by quality into ranked per-tier lists.
+    """Cluster the Pareto frontier by quota cost into ranked per-tier lists.
 
     Only Pareto-optimal models are eligible: a model that is dominated on both quality and
-    quota burn can never be a sensible tier pick. The allocator shares frontier models
-    across tiers when the frontier is smaller than the number of paid tiers.
+    quota burn can never be a sensible tier pick. Clustering by cost (not quality) keeps the
+    tier ladder monotonic — heavy is the dearest band, balanced the middle, light the
+    cheapest — and the best-quality frontier model in each band wins. The allocator shares
+    frontier models across tiers when the frontier is smaller than the number of paid tiers.
     """
     empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
@@ -134,6 +136,10 @@ def _pareto_clusters(
     def quality(m: NormalizedModel) -> float:
         return effective_quality(m, profile=c.profile, weights=c.weights)
 
+    def cost(m: NormalizedModel) -> float:
+        burn = m.composite_burn_pct
+        return math.log1p(burn) if burn is not None and burn > 0 else 0.0
+
     frontier = [m for m in benchmarked if m.is_pareto]
     pool = frontier or benchmarked
     return {
@@ -142,14 +148,13 @@ def _pareto_clusters(
             key=lambda m: (
                 not bool(m.is_pareto),
                 -(m.bpe or 0.0),
+                -quality(m),
                 m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
                 -(m.speed_tps or 0.0),
                 tie_break_key(m),
             ),
         )
-        for tier, cluster in zip(
-            _PAID_TIERS, fisher_jenks_3_clusters(pool, key=quality), strict=True
-        )
+        for tier, cluster in zip(_PAID_TIERS, fisher_jenks_3_clusters(pool, key=cost), strict=True)
     }
 
 
