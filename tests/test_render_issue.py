@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "render_optimizer_issue.py"
@@ -118,7 +119,55 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     assert "Paid training**: blocked" in md
     assert "Free training**: allowed" in md
     assert "Pareto mode" in md
+    assert "#### Visual Tier Summary" in md
+    assert "```mermaid\nflowchart LR" in md
+    assert 'title "Tier Comparison: Benchmark Scores vs Quota Burn %"' in md
     assert "Source: Artificial Analysis (artificialanalysis.ai)" in md
+    assert ".." not in md
+
+
+def test_render_allowance_issue_markdown_visuals() -> None:
+    payload = {
+        "plan": "go",
+        "mode": "allowance",
+        "evaluated_at": "2026-11-15T16:00:00+00:00",
+        "snapshot": {
+            "source": "live",
+            "fetched_at": "2026-11-15T16:00:00+00:00",
+            "benchmark_source": "none",
+        },
+        "tiers": {
+            "heavy": "opencode-go/model-a",
+            "balanced": "opencode-go/model-b",
+            "light": "opencode-go/model-c",
+            "free": "opencode-go/model-free",
+        },
+        "explanations": {
+            "heavy": {
+                "model_id": "opencode-go/model-a",
+                "monthly_allowance": 30.0,
+                "output_cost_per_1m": 10.0,
+                "quota_burn_pct": 45.0,
+            },
+            "balanced": {
+                "model_id": "opencode-go/model-b",
+                "monthly_allowance": 20.0,
+                "output_cost_per_1m": 4.0,
+                "quota_burn_pct": 25.0,
+            },
+            "light": {
+                "model_id": "opencode-go/model-c",
+                "monthly_allowance": 15.0,
+                "output_cost_per_1m": 1.0,
+                "quota_burn_pct": 10.0,
+            },
+        },
+    }
+    md = _MOD.render_issue_markdown(payload)
+    assert "#### Visual Tier Summary" in md
+    assert 'title "Paid Tier Allowance vs Output Cost"' in md
+    assert "bar [30.0, 20.0, 15.0]" in md
+    assert "line [10.0, 4.0, 1.0]" in md
     assert ".." not in md
 
 
@@ -161,6 +210,9 @@ def test_render_ci_comment_markdown(tmp_path: Path) -> None:
     assert "`abcdef123456`" in comment
     assert "| Check code formatting (`ruff format --check`) | `success` |" in comment
     assert "| Run test suite with coverage (`pytest`) | `failure` |" in comment
+    assert "```mermaid\nflowchart LR" in comment
+    assert "class Format success;" in comment
+    assert "class Pytest failure;" in comment
     assert "````text" in comment
     assert "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside" in comment
 
@@ -245,6 +297,7 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     )
 
     analysis_out = tmp_path / "analysis.md"
+    charts_dir = tmp_path / "charts"
 
     res = subprocess.run(
         [
@@ -258,6 +311,8 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
             f"go={plan_file}",
             "--free-matrix-json",
             str(free_matrix_file),
+            "--charts-dir",
+            str(charts_dir),
             "--analysis-output",
             str(analysis_out),
         ],
@@ -272,6 +327,24 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     assert "opencode-go/model-a" in content
     assert "opencode-go/model-fallback" in content
     assert "opencode-go/free-default" in content
+    assert "xychart-beta" in content
+    assert "quadrantChart" in content
+    assert "flowchart LR" in content
+    assert "pie showData" in content
+    assert "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)" in content
+    assert "![Multi-Plan Comparison](charts/multi-plan-comparison.svg)" in content
+    assert "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)" in content
+
+    for svg_name in (
+        "pareto-frontier.svg",
+        "catalog-ranking.svg",
+        "multi-plan-comparison.svg",
+    ):
+        svg_path = charts_dir / svg_name
+        assert svg_path.is_file(), f"Missing generated SVG: {svg_name}"
+        svg_text = svg_path.read_text(encoding="utf-8")
+        root = ET.fromstring(svg_text)
+        assert root.tag.endswith("svg")
 
 
 def test_render_ci_comment_cli(tmp_path: Path) -> None:

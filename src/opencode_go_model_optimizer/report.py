@@ -280,6 +280,40 @@ def _fmt_cost(value: Any) -> str:
     return "-" if value is None else f"${value:g}"
 
 
+def _format_allowance(val: Any) -> str:
+    if val is None:
+        return "-"
+    if isinstance(val, (int, float)) and not math.isinf(val) and not math.isnan(val):
+        return f"${val:g}"
+    return str(val)
+
+
+def _format_cluster_range(cluster: dict[str, Any] | None) -> str:
+    if cluster and cluster.get("output_cost_per_1m_range"):
+        lo, hi = cluster["output_cost_per_1m_range"]
+        return f"${lo:g}-${hi:g}/1M"
+    return "N/A"
+
+
+def _bucket_exclusion_reason(reason: str) -> str:
+    r = reason.lower()
+    if "global" in r:
+        return "Global Region Required"
+    if "free model trains" in r:
+        return "Free Model Trains"
+    if "paid model trains" in r:
+        return "Paid Model Trains"
+    if "not active" in r or "status is" in r:
+        return "Not Active"
+    return "Unpriced / Other"
+
+
+def _round_chart_num(val: Any) -> float | int:
+    if isinstance(val, (int, float)) and not math.isinf(val) and not math.isnan(val):
+        return int(val) if float(val).is_integer() else round(float(val), 4)
+    return 0
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     """Render the report as human-readable Markdown."""
     lines = [
@@ -291,7 +325,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         + ". Allowance mode, default criteria, top 3 per tier.",
         "",
     ]
-    first_plan = next(iter(report["plans"].values()), {})
+    first_plan = next(iter(report.get("plans", {}).values()), {})
     criteria = first_plan.get("criteria") or {}
     if criteria:
         lines += [
@@ -311,13 +345,35 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| max burn `{criteria.get('max_burn') or 'none'}`",
             "",
         ]
-    for plan, section in report["plans"].items():
+
+    # Cross-Plan Overview Diagram
+    if report.get("plans"):
+        flowchart_lines = ["```mermaid", "flowchart LR"]
+        for plan, section in report["plans"].items():
+            p_id = "plan_" + "".join(c if c.isalnum() else "_" for c in str(plan))
+            flowchart_lines.append(f'    {p_id}["Plan: {plan}"]')
+            tiers_data = section.get("explanations") or {}
+            tier_keys = [t for t in STANDARD_TIERS if t in tiers_data] or list(tiers_data.keys())
+            for tier in tier_keys:
+                entry = tiers_data[tier]
+                t_id = f"{p_id}_{tier}"
+                pick = entry.get("model_id") or "None"
+                ex = entry.get("explanation", {})
+                allowance_str = _format_allowance(ex.get("monthly_allowance"))
+                cluster_str = _format_cluster_range(entry.get("cluster"))
+                label = f"{tier}: {pick} (Allowance: {allowance_str}, Cluster: {cluster_str})"
+                label_safe = label.replace('"', "'")
+                flowchart_lines.append(f'    {p_id} --> {t_id}["{label_safe}"]')
+        flowchart_lines += ["```", ""]
+        lines += flowchart_lines
+
+    for plan, section in report.get("plans", {}).items():
         lines += [f"## Plan: {plan}", ""]
         lines += [
             "| Tier | Pick | Allowance | Out $/1M | Price x | Burn %/1k turns | Basis | Fallbacks |",
             "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
-        for tier, entry in section["explanations"].items():
+        for tier, entry in section.get("explanations", {}).items():
             ex = entry["explanation"]
             fb = ", ".join(f"`{f}`" for f in entry["fallbacks"]) or "-"
             lines.append(
@@ -326,7 +382,7 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {ex.get('quota_burn_pct', '-')} | {ex.get('burn_basis_used', '-')} | {fb} |"
             )
         lines += ["", "Why:", ""]
-        for tier, entry in section["explanations"].items():
+        for tier, entry in section.get("explanations", {}).items():
             lines.append(f"- **{tier}**: {entry['why']}")
             cluster = entry.get("cluster")
             if cluster and cluster["output_cost_per_1m_range"]:
@@ -343,12 +399,82 @@ def render_markdown(report: dict[str, Any]) -> str:
                     f"retention_days={p.get('retention_days')}, zdr={p.get('zdr')}, "
                     f"global_region_required={p.get('requires_global_region')}"
                 )
-        lines += ["", "<details><summary>Excluded models</summary>", ""]
-        if section["excluded"]:
-            lines += ["| Model | Reason |", "| --- | --- |"]
-            lines += [
-                f"| `{e['model_id']}` | {'; '.join(e['reasons'])} |" for e in section["excluded"]
+
+        # Per-Plan Visual: xychart-beta for paid tiers
+        explanations = section.get("explanations", {})
+        has_numeric = any(
+            isinstance(
+                explanations.get(t, {}).get("explanation", {}).get(k),
+                (int, float),
+            )
+            for t in PAID_TIERS
+            for k in ("monthly_allowance", "output_cost_per_1m")
+        )
+        if has_numeric:
+            allowances = [
+                _round_chart_num(
+                    explanations.get(t, {}).get("explanation", {}).get("monthly_allowance")
+                )
+                for t in PAID_TIERS
             ]
+            output_costs = [
+                _round_chart_num(
+                    explanations.get(t, {}).get("explanation", {}).get("output_cost_per_1m")
+                )
+                for t in PAID_TIERS
+            ]
+            x_labels = json.dumps(list(PAID_TIERS))
+            lines += [
+                "",
+                "```mermaid",
+                "xychart-beta",
+                f'    title "Plan {plan}: Tier Allowances ($) & Output Costs ($/1M)"',
+                f"    x-axis {x_labels}",
+                f"    bar {allowances}",
+                f"    line {output_costs}",
+                "```",
+            ]
+
+        lines += ["", "<details><summary>Excluded models</summary>", ""]
+        excluded = section.get("excluded", [])
+        if excluded:
+            eligible_models: set[str] = set()
+            for entry in explanations.values():
+                if entry.get("model_id"):
+                    eligible_models.add(entry["model_id"])
+                for fb in entry.get("fallbacks", []):
+                    eligible_models.add(fb)
+                for c in entry.get("candidates", []):
+                    if c.get("model_id"):
+                        eligible_models.add(c["model_id"])
+            eligible_count = len(eligible_models)
+
+            bucket_counts: dict[str, int] = {}
+            for item in excluded:
+                reasons = item.get("reasons", [])
+                bucket = _bucket_exclusion_reason(reasons[0]) if reasons else "Unpriced / Other"
+                bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+
+            lines += [
+                "```mermaid",
+                "pie showData",
+                f'    title "Plan {plan}: Model Eligibility & Exclusion Breakdown"',
+            ]
+            if eligible_count > 0:
+                lines.append(f'    "Eligible" : {eligible_count}')
+            for bucket in [
+                "Global Region Required",
+                "Free Model Trains",
+                "Paid Model Trains",
+                "Not Active",
+                "Unpriced / Other",
+            ]:
+                if bucket_counts.get(bucket, 0) > 0:
+                    lines.append(f'    "{bucket}" : {bucket_counts[bucket]}')
+            lines += ["```", ""]
+
+            lines += ["| Model | Reason |", "| --- | --- |"]
+            lines += [f"| `{e['model_id']}` | {'; '.join(e['reasons'])} |" for e in excluded]
         else:
             lines.append("None.")
         lines += ["", "</details>", ""]
@@ -366,19 +492,37 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
     lines += ["", report["provenance"]["note"] + ". Full digests are in results.json.", ""]
     lines += ["## Test results", ""]
-    tests = report["tests"]
+    tests = report.get("tests")
     if tests is None:
         lines.append("No test results supplied.")
     else:
         lines += [f"Overall: **{tests['result']}**", ""]
+        runs = tests.get("runs") or []
+        if runs:
+            passed = sum(r.get("passed", 0) for r in runs)
+            failed = sum(r.get("failed", 0) for r in runs) + sum(1 for r in runs if "error" in r)
+            skipped = sum(r.get("skipped", 0) for r in runs)
+            if passed > 0 or failed > 0 or skipped > 0:
+                lines += [
+                    "```mermaid",
+                    "pie showData",
+                    '    title "Test Suite Results"',
+                ]
+                if passed > 0:
+                    lines.append(f'    "Passed" : {passed}')
+                if failed > 0:
+                    lines.append(f'    "Failed" : {failed}')
+                if skipped > 0:
+                    lines.append(f'    "Skipped" : {skipped}')
+                lines += ["```", ""]
         lines += ["| Run | Passed | Failed | Skipped |", "| --- | --- | --- | --- |"]
-        for run in tests["runs"]:
+        for run in runs:
             lines.append(
                 f"| {run['name']} | {run['passed']} | {run['failed']} | {run['skipped']} |"
             )
             if run.get("error"):
                 lines.append(f"| {run['name']} | {run['error']} | | |")
-        failing = [f"`{t}`" for run in tests["runs"] for t in run["failing"]]
+        failing = [f"`{t}`" for run in runs for t in run["failing"]]
         if failing:
             lines += ["", "Failing tests: " + ", ".join(failing)]
     return "\n".join(lines) + "\n"

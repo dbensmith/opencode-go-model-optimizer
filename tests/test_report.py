@@ -19,6 +19,10 @@ from opencode_go_model_optimizer.ingest.docs import (
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Privacy, TokenCost
 from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, load_cached_snapshot
 from opencode_go_model_optimizer.report import (
+    _bucket_exclusion_reason,
+    _format_allowance,
+    _format_cluster_range,
+    _round_chart_num,
     _strip_aa,
     assert_no_aa,
     build_report,
@@ -297,3 +301,155 @@ def test_num_none():
     m = NormalizedModel(id="test", monthly_allowance=None)
     row = _candidate_row(m)
     assert row["monthly_allowance"] is None
+
+
+def test_render_markdown_mermaid_diagrams_and_charts(snapshot, tmp_path):
+    junit = _junit(
+        tmp_path,
+        "offline",
+        [
+            '<testcase classname="t" name="t1"/>',
+            '<testcase classname="t" name="t2"><failure/></testcase>',
+            '<testcase classname="t" name="t3"><skipped/></testcase>',
+        ],
+    )
+    report = build_report(junit_paths=[junit], snapshot=snapshot, now=NOW)
+    md = render_markdown(report)
+
+    # 1. Cross-Plan Overview Diagram (flowchart LR)
+    assert "```mermaid\nflowchart LR" in md
+    assert 'plan_go["Plan: go"]' in md
+    assert (
+        'plan_go --> plan_go_heavy["heavy: opencode-go/alpha-max (Allowance: $12, Cluster: $9-$18/1M)"]'
+        in md
+    )
+    assert (
+        'plan_go --> plan_go_balanced["balanced: opencode-go/beta-pro (Allowance: $40, Cluster: $2.5375-$4/1M)"]'
+        in md
+    )
+    assert (
+        'plan_go --> plan_go_light["light: opencode-go/beta-flash (Allowance: $80, Cluster: $0.4-$1.2/1M)"]'
+        in md
+    )
+    assert (
+        'plan_go --> plan_go_free["free: opencode-go/epsilon-free (Allowance: unlimited, Cluster: N/A)"]'
+        in md
+    )
+    assert 'plan_go_plus["Plan: go-plus"]' in md
+    assert (
+        'plan_go_plus --> plan_go_plus_heavy["heavy: opencode-go/alpha-max (Allowance: $120, Cluster: $9-$18/1M)"]'
+        in md
+    )
+    assert 'plan_go_teams["Plan: go-teams"]' in md
+    assert (
+        'plan_go_teams --> plan_go_teams_heavy["heavy: opencode-go/alpha-max (Allowance: $24, Cluster: $9-$18/1M)"]'
+        in md
+    )
+
+    # 2. Per-Plan xychart-beta
+    assert "xychart-beta" in md
+    assert 'title "Plan go: Tier Allowances ($) & Output Costs ($/1M)"' in md
+    assert 'x-axis ["heavy", "balanced", "light"]' in md
+    assert "bar [12, 40, 80]" in md
+    assert "line [9, 2.5375, 0.8458]" in md
+    assert 'title "Plan go-plus: Tier Allowances ($) & Output Costs ($/1M)"' in md
+    assert "bar [120, 400, 800]" in md
+
+    # 3. Per-Plan Excluded Models pie showData
+    assert "pie showData" in md
+    assert 'title "Plan go: Model Eligibility & Exclusion Breakdown"' in md
+    assert '"Eligible" : 10' in md
+    assert '"Global Region Required" : 1' in md
+    assert '"Free Model Trains" : 1' in md
+    assert '"Paid Model Trains" : 1' in md
+    assert '"Not Active" : 1' in md
+
+    # 4. Test Results pie showData
+    assert 'title "Test Suite Results"' in md
+    assert '"Passed" : 1' in md
+    assert '"Failed" : 1' in md
+    assert '"Skipped" : 1' in md
+
+    # Invariant: NO Artificial Analysis / Benchmark data
+    assert_no_aa(report)
+    assert "aa_" not in md
+    assert "speed_tps" not in md
+    assert '"bpe"' not in md
+
+
+def test_render_markdown_mermaid_edge_cases():
+    # Unit tests for helpers
+    assert _format_allowance(None) == "-"
+    assert _format_allowance("unlimited") == "unlimited"
+    assert _format_allowance(12.0) == "$12"
+    assert _format_allowance(12.5) == "$12.5"
+
+    assert _format_cluster_range(None) == "N/A"
+    assert _format_cluster_range({}) == "N/A"
+    assert _format_cluster_range({"output_cost_per_1m_range": [1.0, 5.0]}) == "$1-$5/1M"
+
+    assert _bucket_exclusion_reason("requires Global workspace region") == "Global Region Required"
+    assert _bucket_exclusion_reason("free model trains on request data") == "Free Model Trains"
+    assert _bucket_exclusion_reason("paid model trains on request data") == "Paid Model Trains"
+    assert _bucket_exclusion_reason("status is 'deprecated' (not active)") == "Not Active"
+    assert _bucket_exclusion_reason("unpriced: allowance is zero") == "Unpriced / Other"
+    assert _bucket_exclusion_reason("any generic reason") == "Unpriced / Other"
+
+    assert _round_chart_num(None) == 0
+    assert _round_chart_num("invalid") == 0
+    assert _round_chart_num(float("inf")) == 0
+    assert _round_chart_num(float("nan")) == 0
+    assert _round_chart_num(10.0) == 10
+    assert _round_chart_num(2.55555) == 2.5556
+
+    # Empty plans dict -> no flowchart
+    minimal_report = {
+        "generated_at": "2026-11-10T12:00:00+00:00",
+        "tool_version": "0.1.0",
+        "git_sha": None,
+        "plans": {},
+        "warnings": [],
+        "provenance": {"sources": {}, "note": ""},
+        "how_decided": [],
+        "tests": None,
+    }
+    md = render_markdown(minimal_report)
+    assert "flowchart LR" not in md
+    assert "No test results supplied." in md
+
+    # Plan with no numeric paid tiers and excluded model with empty reasons
+    sparse_plan_report = {
+        "generated_at": "2026-11-10T12:00:00+00:00",
+        "tool_version": "0.1.0",
+        "git_sha": None,
+        "plans": {
+            "custom": {
+                "criteria": {},
+                "explanations": {
+                    "heavy": {
+                        "model_id": None,
+                        "fallbacks": [],
+                        "explanation": {"monthly_allowance": None, "output_cost_per_1m": None},
+                        "cluster": None,
+                        "why": "none",
+                    }
+                },
+                "excluded": [
+                    {"model_id": "m1", "reasons": []},
+                    {"model_id": "m2", "reasons": ["unrecognized reason"]},
+                ],
+            }
+        },
+        "warnings": [],
+        "provenance": {"sources": {}, "note": ""},
+        "how_decided": [],
+        "tests": {
+            "result": "pass",
+            "runs": [{"name": "empty", "passed": 0, "failed": 0, "skipped": 0, "failing": []}],
+        },
+    }
+    sparse_md = render_markdown(sparse_plan_report)
+    assert 'plan_custom["Plan: custom"]' in sparse_md
+    assert "xychart-beta" not in sparse_md
+    assert '"Unpriced / Other" : 2' in sparse_md
+    assert "Test Suite Results" not in sparse_md

@@ -10,6 +10,40 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/themes/core.min.css" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/themes/addons/core-dark.min.css" media="(prefers-color-scheme: dark)" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/themes/prism.min.css" crossorigin="anonymous">
+  <style>
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 1.5rem auto;
+      padding: 1rem;
+      overflow-x: auto;
+      max-width: 100%;
+      background: transparent;
+    }
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+    .chart-svg,
+    img[src$=".svg"] {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 1.5rem auto;
+      padding: 0.5rem;
+      border-radius: 6px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .mermaid {
+        color: #e6edf3;
+      }
+      .chart-svg,
+      img[src$=".svg"] {
+        filter: brightness(0.95) contrast(1.05);
+      }
+    }
+  </style>
 </head>
 <body>
   <div id="app"></div>
@@ -56,11 +90,36 @@
                 .replace(/\{\{REPO_URL\}\}/g, repoUrl || '#')
                 .replace(/\{\{ISSUES_URL\}\}/g, issuesUrl);
             });
+            hook.doneEach(function () {
+              var targets = document.querySelectorAll('pre[data-lang="mermaid"], pre code.lang-mermaid, code.lang-mermaid');
+              var processed = [];
+              targets.forEach(function (el) {
+                var pre = (el.tagName.toLowerCase() === 'pre') ? el : el.closest('pre');
+                if (pre && processed.indexOf(pre) === -1 && pre.parentNode) {
+                  processed.push(pre);
+                  var code = pre.querySelector('code');
+                  var text = code ? code.textContent : pre.textContent;
+                  var div = document.createElement('div');
+                  div.className = 'mermaid';
+                  div.textContent = text;
+                  pre.parentNode.replaceChild(div, pre);
+                }
+              });
+              if (window.mermaid) {
+                window.mermaid.initialize({
+                  startOnLoad: false,
+                  securityLevel: 'strict',
+                  theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default'
+                });
+                window.mermaid.run({ querySelector: '.mermaid' });
+              }
+            });
           }
         ]
       };
     })();
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js" defer crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/docsify.min.js" defer crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/plugins/search.min.js" defer crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/plugins/zoom-image.min.js" defer crossorigin="anonymous"></script>
