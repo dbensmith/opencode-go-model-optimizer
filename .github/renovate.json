@@ -34,12 +34,38 @@
       "security"
     ]
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track Docsify core, themes, and plugins loaded via jsDelivr CDN in docs/index.html",
+      "managerFilePatterns": [
+        "/^docs/index\\.html$/"
+      ],
+      "matchStrings": [
+        "https://cdn\\.jsdelivr\\.net/npm/(?<depName>@?[^@/]+(?:/[^@/]+)?)@(?<currentValue>[^/\"'\\s]+)"
+      ],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "Track uv version pinned in setup-uv action inputs",
+      "managerFilePatterns": [
+        "/^\\.github/actions/setup-env/action\\.yml$/"
+      ],
+      "matchStrings": [
+        "uses:\\s*astral-sh/setup-uv@[^\\s]+\\s+with:\\s+version:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "astral-sh/uv",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
   "packageRules": [
     {
-      "description": "Daily automerge for non-major PyPI dependencies and GitHub Actions",
+      "description": "Daily automerge for non-major PyPI, GitHub Actions, and Docsify/npm dependencies",
       "matchDatasources": [
         "pypi",
-        "github-actions"
+        "github-actions",
+        "npm"
       ],
       "matchUpdateTypes": [
         "minor",
@@ -49,6 +75,13 @@
         "lockFileMaintenance"
       ],
       "automerge": true
+    },
+    {
+      "description": "Group Docsify core, plugins, and syntax highlighting CDN assets",
+      "matchDatasources": [
+        "npm"
+      ],
+      "groupName": "docsify plugins"
     },
     {
       "description": "Automerge vulnerability fixes immediately once CI passes",

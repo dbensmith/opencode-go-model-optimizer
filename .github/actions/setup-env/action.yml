@@ -1,0 +1,44 @@
+name: "Setup Environment"
+description: "Configure uv, set up Python, and install dependencies"
+inputs:
+  sync-args:
+    description: "Arguments to pass to uv sync"
+    required: false
+    default: "--all-extras --dev"
+  cache-tools:
+    description: "Whether to cache ruff and pytest state"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.3.3
+      with:
+        version: "0.13.7"
+        enable-cache: true
+        cache-python: true
+        cache-dependency-glob: "uv.lock"
+
+    - name: Set up Python
+      run: uv python install
+      shell: bash
+
+    - name: Cache ruff and pytest state
+      if: inputs.cache-tools == 'true'
+      uses: actions/cache@v6
+      with:
+        path: |
+          .ruff_cache
+          .pytest_cache
+        key: tools-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+        restore-keys: |
+          tools-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}-
+          tools-${{ runner.os }}-
+
+    - name: Install dependencies
+      env:
+        SYNC_ARGS: ${{ inputs.sync-args }}
+      run: uv sync --locked $SYNC_ARGS
+      shell: bash

@@ -186,8 +186,8 @@ uvx opencode-go-model-optimizer select --format json
 
 A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.yml)) runs twice daily (05:17 and 17:17 UTC), executes the offline and live contract tests, runs `report`, and force-pushes a single orphan commit to the `results` branch, so the branch has no history. It is published whatever the test outcome, and the job then fails if a test run failed.
 
-- Machine-readable: <https://raw.githubusercontent.com/dbensmith/opencode-go-model-optimizer/results/results.json>
-- Human-readable (tables, how it was decided, warnings, provenance, test results): <https://raw.githubusercontent.com/dbensmith/opencode-go-model-optimizer/results/README.md>
+- Machine-readable: <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/results.json>
+- Human-readable (tables, how it was decided, warnings, provenance, test results): <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/README.md>
 
 ### Data policy
 
@@ -208,7 +208,7 @@ AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 
 If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
-A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs every 8 hours starting at 02:00 EST (`0 7,15,23 * * *` UTC) and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh`, formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), and creates or updates the open GitHub issue labeled `optimizer-results`.
+A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests on PRs (publishing CI job results and output as a comment on the pull request), and runs tests then updates the issue and deploys to GitHub Pages on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh`, formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), creates or updates the open GitHub issue labeled `optimizer-results`, and publishes the rendered report, CLI usage docs, and raw selection JSON as a Docsify site to GitHub Pages.
 
 ### Offline Usage
 
@@ -307,7 +307,7 @@ Requires Python 3.15+ (see `.python-version`; `uv` will fetch it automatically).
 
 ```bash
 # Clone repository
-git clone https://github.com/dbensmith/opencode-go-model-optimizer.git
+git clone https://github.com/<owner>/opencode-go-model-optimizer.git
 cd opencode-go-model-optimizer
 
 # Sync dependencies and run tests

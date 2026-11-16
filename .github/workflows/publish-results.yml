@@ -28,17 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.3
-        with:
-          version: "0.13.7"
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install
-
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Set up environment
+        uses: ./.github/actions/setup-env
 
       - name: Offline tests
         id: offline
@@ -67,16 +58,21 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish to results branch
+        env:
+          GENERATED_AT: ${{ steps.report.outputs.generated_at }}
+          TEST_RESULT: ${{ steps.report.outputs.result }}
+          ACTOR: ${{ github.actor }}
+          ACTOR_ID: ${{ github.actor_id }}
         run: |
           mv out "$RUNNER_TEMP/out"
           git checkout --orphan results
           git rm -rf -q .
           git clean -ffdxq
           cp -r "$RUNNER_TEMP/out/." .
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "$ACTOR"
+          git config user.email "${ACTOR_ID}+${ACTOR}@users.noreply.github.com"
           git add -A
-          git commit -q -m "results: ${{ steps.report.outputs.generated_at }} (${{ steps.report.outputs.result }})"
+          git commit -q -m "results: $GENERATED_AT ($TEST_RESULT)"
           git push -f origin HEAD:results
 
       - name: Fail if tests failed
