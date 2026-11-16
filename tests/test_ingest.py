@@ -1069,6 +1069,153 @@ def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
     assert "super-secret-key" not in " ".join(errors)
 
 
+def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
+    # AA returns multiple effort rows per model family; canonical/flagship (Max) must not be
+    # overwritten by later Low/High/Non-reasoning variants that normalize to the same name.
+    # Also covers creator-prefixed slugs (tencent-hy4 -> hy4), edition suffixes (-next -> base),
+    # engineering_index fallback for coding, and canonical_id lookup (reflection/beam-1.0-501b-a23b).
+    items = [
+        {
+            "slug": "deepseek-v4-1-flash-1017",
+            "name": "DeepSeek V4.1 Flash 1017 (Max)",
+            "model_creator": {"name": "DeepSeek"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 32.6,
+                "artificial_analysis_coding_index": None,
+                "artificial_analysis_engineering_index": 37.6,
+            },
+            "performance_v3": {"mean_output_tokens_per_second": 174.35},
+        },
+        {
+            "slug": "deepseek-v4-1-flash-1017-high",
+            "name": "DeepSeek V4.1 Flash 1017 (High)",
+            "model_creator": {"name": "DeepSeek"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 28.6,
+                "artificial_analysis_engineering_index": 34.4,
+            },
+            "performance_v3": {"mean_output_tokens_per_second": 174.64},
+        },
+        {
+            "slug": "deepseek-v4-1-flash-1017-non-reasoning",
+            "name": "DeepSeek V4.1 Flash 1017 (Non-reasoning)",
+            "model_creator": {"name": "DeepSeek"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 18.5,
+                "artificial_analysis_engineering_index": 25.0,
+            },
+            "performance_v3": {"mean_output_tokens_per_second": 152.85},
+        },
+        {
+            "slug": "grok-4-7",
+            "name": "Grok 4.7 (Xhigh)",
+            "model_creator": {"name": "SpaceXAI"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 35.5,
+                "artificial_analysis_engineering_index": 41.8,
+            },
+        },
+        {
+            "slug": "grok-4-7-low",
+            "name": "Grok 4.7 (Low)",
+            "model_creator": {"name": "SpaceXAI"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 31.1,
+                "artificial_analysis_engineering_index": 37.7,
+            },
+        },
+        {
+            "slug": "qwen3-8-max",
+            "name": "Qwen3.8 Max (0902)",
+            "model_creator": {"name": "Alibaba"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 33.7,
+                "artificial_analysis_engineering_index": 39.3,
+            },
+        },
+        {
+            "slug": "qwen3-8-flash-next",
+            "name": "Qwen3.8-Flash-Next",
+            "model_creator": {"name": "Alibaba"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 28.6,
+                "artificial_analysis_engineering_index": 33.0,
+            },
+        },
+        {
+            "slug": "tencent-hy4",
+            "name": "Tencent Hy4",
+            "model_creator": {"name": "Tencent"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 34.6,
+                "artificial_analysis_engineering_index": 41.1,
+            },
+        },
+        {
+            "slug": "reflection-beam",
+            "name": "Beam 1.0",
+            "model_creator": {"name": "Reflection"},
+            "evaluations": {
+                "artificial_analysis_intelligence_index": 17.7,
+                "artificial_analysis_engineering_index": 25.2,
+            },
+        },
+        {
+            "slug": "explicit-max",
+            "name": "Explicit (Max)",
+            "evaluations": {"artificial_analysis_intelligence_index": 40.0},
+        },
+    ]
+    # Pass a top-level list to exercise the list-response branch as well.
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=items)))
+    bench = fetch_aa_benchmarks("k", client=client)
+
+    models = [
+        NormalizedModel(
+            id="deepseek-v4.1-flash",
+            name="DeepSeek V4.1 Flash 1017",
+            canonical_id="deepseek/deepseek-v4.1-flash-1017",
+        ),
+        NormalizedModel(id="grok-4.7", name="Grok 4.7", canonical_id="xai/grok-4.7"),
+        NormalizedModel(id="qwen3.8-max", name="Qwen3.8 Max", canonical_id="alibaba/qwen3.8-max"),
+        NormalizedModel(
+            id="qwen3.8-flash", name="Qwen3.8 Flash", canonical_id="alibaba/qwen3.8-flash"
+        ),
+        NormalizedModel(id="hy4", name="Hy4", canonical_id="tencent/hy4"),
+        NormalizedModel(
+            id="beam-free",
+            name="Beam Free",
+            canonical_id="reflection/beam-1.0-501b-a23b",
+            is_zero_cost=True,
+        ),
+    ]
+    merged = merge_docs_pricing(
+        models,
+        {},
+        aa_benchmarks=bench,
+        endpoints={"DeepSeek V4.1 Flash": "deepseek-v4.1-flash"},
+    )
+    by_id = {m.id: m for m in merged}
+    assert by_id["deepseek-v4.1-flash"].aa_iq == 32.6
+    assert by_id["deepseek-v4.1-flash"].aa_coding == 37.6
+    assert by_id["grok-4.7"].aa_iq == 35.5
+    assert by_id["qwen3.8-max"].aa_iq == 33.7
+    assert by_id["qwen3.8-flash"].aa_iq == 28.6
+    assert by_id["hy4"].aa_iq == 34.6
+    assert by_id["beam-free"].aa_iq == 17.7
+    assert bench["explicitmax"]["iq"] == 40.0
+
+
+def test_fetch_aa_benchmarks_invalid_payloads_and_error_reporting():
+    for bad_payload in ("not-a-container", {"data": "not-a-list"}):
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda r, p=bad_payload: httpx.Response(200, json=p))
+        )
+        errors: list[str] = []
+        assert fetch_aa_benchmarks("k", client=client, errors=errors) == {}
+        assert errors == ["Artificial Analysis fetch failed (ValueError)"]
+
+
 def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
     mdx = (Path(__file__).parent / "fixtures" / "go_docs.mdx").read_text(encoding="utf-8")
     mdx = mdx.replace('slot="go-teams"', 'slot="unused"')  # fixture without a teams table

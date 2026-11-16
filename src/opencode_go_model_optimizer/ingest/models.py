@@ -92,6 +92,7 @@ class NormalizedModel(BaseModel):
     id: str
     provider_id: str = "opencode-go"
     full_id: str = ""
+    canonical_id: str = ""
     name: str = ""
     status: str = "active"  # "active" or "deprecated"
     release_date: str = ""

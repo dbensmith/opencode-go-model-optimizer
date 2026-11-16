@@ -152,7 +152,7 @@ A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.
 
 ### API keys
 
-None are required. Allowance mode (and therefore `auto` without a key) needs no key. For Pareto mode you can set a free Artificial Analysis key in `AA_API_KEY`; it stays on your machine and only your own runs use it. When you display AA-derived values (`aa_iq`, `aa_coding`, `speed_tps`), attribute them: "Source: Artificial Analysis (artificialanalysis.ai)". Artificial Analysis no longer publishes its Coding Index, so `aa_coding` is null and quality weighting falls back to the Intelligence Index; the `--profile` token mix still applies.
+None are required. Allowance mode (and therefore `auto` without a key) needs no key. For Pareto mode you can set a free Artificial Analysis key in `AA_API_KEY`; it stays on your machine and only your own runs use it. When you display AA-derived values (`aa_iq`, `aa_coding`, `speed_tps`), attribute them: "Source: Artificial Analysis (artificialanalysis.ai)". Artificial Analysis replaced `artificial_analysis_coding_index` in v2 with the Capability Indexes, so `aa_coding` falls back to `artificial_analysis_engineering_index`. When AA lists multiple reasoning-effort rows for the same model family (`Max`, `High`, `Low`, `Non-reasoning`), the canonical flagship entry is matched rather than letting lower-effort variants overwrite it.
 
 If the key lives in 1Password, `scripts/run-optimizer.sh` resolves it and runs `select --mode pareto`:
 

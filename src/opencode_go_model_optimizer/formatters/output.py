@@ -379,6 +379,8 @@ def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
     data = []
     for m in ranked_models:
         item = m.model_dump(mode="json", exclude_none=True)
+        if not item.get("canonical_id"):
+            item.pop("canonical_id", None)
         if not item.get("multipliers"):
             item.pop("multipliers", None)
         if not item.get("request_estimates"):

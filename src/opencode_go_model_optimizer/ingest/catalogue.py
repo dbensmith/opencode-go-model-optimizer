@@ -105,6 +105,7 @@ def model_from_dict(d: dict[str, Any]) -> NormalizedModel:
     # `owned_by` is the vendor label ("opencode"), not a provider ID; never use it.
     provider_id = str(d.get("providerID") or "opencode-go")
     name = str(d.get("name", model_id))
+    canonical_id = str(d.get("canonical_id") or "")
     status = str(d.get("status", "active"))
     release_date = str(d.get("release_date", d.get("last_updated", "")))
 
@@ -114,6 +115,7 @@ def model_from_dict(d: dict[str, Any]) -> NormalizedModel:
     return NormalizedModel(
         id=model_id,
         provider_id=provider_id,
+        canonical_id=canonical_id,
         name=name,
         status=status,
         release_date=release_date,
