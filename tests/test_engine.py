@@ -66,14 +66,17 @@ def test_allowance_paid_ranking():
     models = _get_fixture_models()
     ranked = rank_paid_models(models)
 
-    # Preview models are no longer excluded, but deprecated/zero-cost/contributor models are.
+    # Preview models are included; zero-cost/deprecated models are still excluded.
+    # Contributors are included in the raw ranking and filtered later by privacy/flags.
     ids = [m.id for m in ranked]
     assert "deprecated-old-model" not in ids
     assert "delta-contributor" not in ids
     assert "epsilon-free" not in ids
+    assert "lambda-contributor" in ids
 
-    # Allowance descending: beta-flash ($80), gamma-flash ($50), beta-pro ($40)
-    assert ids[:3] == ["beta-flash", "gamma-flash", "beta-pro"]
+    # Allowance descending: beta-flash ($80), gamma-flash ($50), then the $40 tier.
+    assert ids[:2] == ["beta-flash", "gamma-flash"]
+    assert "beta-pro" in ids
     assert ids[-1] == "theta-pro"
 
 
@@ -83,6 +86,11 @@ def test_allowance_free_ranking():
 
     # Newest release first: delta (2026-10-01), epsilon (2026-09-20), kappa (2026-08-25)
     assert [m.id for m in ranked] == ["delta-contributor", "epsilon-free", "kappa-free"]
+
+    # --no-contributor removes contributor models from the free pool.
+    without_contrib = rank_free_models(models, allow_contributor=False)
+    assert all(not m.is_contributor for m in without_contrib)
+    assert "delta-contributor" not in [m.id for m in without_contrib]
 
 
 def test_deterministic_tie_breaking():

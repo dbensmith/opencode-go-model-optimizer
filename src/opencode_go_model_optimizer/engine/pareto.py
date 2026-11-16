@@ -197,14 +197,13 @@ def filter_benchmarked_models(
     models: Sequence[NormalizedModel],
     skip_models: AbstractSet[str] = frozenset(),
 ) -> list[NormalizedModel]:
-    """Return active, benchmarked, non-free, non-contributor models not in ``skip_models``."""
+    """Return active, benchmarked, non-free models not in ``skip_models``."""
     return [
         m
         for m in models
         if m.status == "active"
         and (m.aa_iq is not None or m.aa_coding is not None)
         and not m.is_zero_cost
-        and not m.is_contributor
         and m.id not in skip_models
         and m.full_id not in skip_models
     ]

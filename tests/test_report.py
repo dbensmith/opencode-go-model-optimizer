@@ -72,7 +72,7 @@ def test_report_structure_and_no_benchmark_keys(snapshot, monkeypatch):
     go = report["plans"]["go"]
     assert go["mode"] == "allowance"
     assert go["tiers"]["heavy"] == "opencode-go/alpha-max"
-    assert go["tiers"]["free"] == "opencode-go/delta-contributor"
+    assert go["tiers"]["free"] == "opencode-go/epsilon-free"
     assert len(go["explanations"]["light"]["candidates"]) == 3
     assert go["fallbacks"]["light"] == [
         c["model_id"] for c in go["explanations"]["light"]["candidates"][1:]
@@ -95,11 +95,12 @@ def test_excluded_models_have_reasons(snapshot):
         e["model_id"]: e["reasons"]
         for e in build_report(snapshot=snapshot, now=NOW)["plans"]["go"]["excluded"]
     }
-    # Preview models and Global-region models are eligible by default now.
+    # Preview models are included; Global-region and training models use the Go defaults.
     assert "opencode-go/omega-preview" not in excluded
-    assert "opencode-go/kappa-free" not in excluded
+    assert "Global workspace region" in excluded["opencode-go/kappa-free"][0]
+    assert "free model trains" in excluded["opencode-go/delta-contributor"][0]
+    assert "paid model trains" in excluded["opencode-go/lambda-contributor"][0]
     assert "not active" in excluded["opencode-go/deprecated-old-model"][0]
-    assert "contributor" in excluded["opencode-go/lambda-contributor"][0]
     assert "opencode-go/alpha-max" not in excluded
 
 
@@ -114,17 +115,38 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     assert "unlimited" in exclusion_reasons(unlimited, c)[0]
     ok = NormalizedModel(id="a", cost=TokenCost(output=1), monthly_allowance=5.0)
     assert exclusion_reasons(ok, c) == []
-    trains = NormalizedModel(id="t", privacy=Privacy(trains_on_data=True), monthly_allowance=5.0)
-    assert exclusion_reasons(trains, SelectionCriteria(allow_training=False)) == [
-        "excluded by privacy criteria"
-    ]
+    trains = NormalizedModel(
+        id="t",
+        privacy=Privacy(trains_on_data=True),
+        cost=TokenCost(output=1),
+        monthly_allowance=5.0,
+    )
+    assert "paid model trains" in exclusion_reasons(trains, SelectionCriteria())[0]
+    assert exclusion_reasons(trains, SelectionCriteria(allow_paid_training=True)) == []
+    consent = NormalizedModel(
+        id="consent",
+        is_contributor=True,
+        privacy=Privacy(trains_on_data=True),
+        cost=TokenCost(output=1),
+        monthly_allowance=5.0,
+    )
+    assert (
+        "consent to train"
+        in exclusion_reasons(consent, SelectionCriteria(allow_paid_training=True))[0]
+    )
+    contrib_paid = NormalizedModel(
+        id="cp", is_contributor=True, cost=TokenCost(output=1), monthly_allowance=10.0
+    )
+    assert exclusion_reasons(contrib_paid, c) == []
+    assert (
+        "contributor tier excluded"
+        in exclusion_reasons(contrib_paid, SelectionCriteria(allow_contributor=False))[0]
+    )
     global_model = NormalizedModel(
         id="g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
     )
-    assert exclusion_reasons(global_model, SelectionCriteria(allow_global_region=False)) == [
-        "requires Global workspace region (excluded by --no-global-region)"
-    ]
-    assert exclusion_reasons(global_model, SelectionCriteria()) == []
+    assert "Global workspace region" in exclusion_reasons(global_model, SelectionCriteria())[0]
+    assert exclusion_reasons(global_model, SelectionCriteria(allow_global_region=True)) == []
     contrib = NormalizedModel(
         id="c1",
         is_contributor=True,

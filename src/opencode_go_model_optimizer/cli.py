@@ -276,25 +276,41 @@ _FILTER_PARENT = _parent(
         },
     ),
     (
-        ("--no-global-region",),
-        {
-            "action": "store_true",
-            "help": "Exclude models that require Global regions in workspace privacy settings "
-            "(allowed by default)",
-        },
-    ),
-    (
         ("--allow-global-region",),
         {
             "action": "store_true",
-            "help": "Deprecated: Global-region models are allowed by default",
+            "help": "Allow models that require Global regions in workspace privacy settings "
+            "(blocked by default)",
+        },
+    ),
+    (
+        ("--allow-paid-training",),
+        {
+            "action": "store_true",
+            "help": "Allow paid endpoints that train on request data (blocked by default)",
+        },
+    ),
+    (
+        ("--allow-consent-training",),
+        {
+            "action": "store_true",
+            "help": "Allow Go models that require consent to train on your requests "
+            "(disabled by default)",
+        },
+    ),
+    (
+        ("--allow-free-training",),
+        {
+            "action": "store_true",
+            "help": "Allow free endpoints that train on request data (blocked by default; "
+            "turning this off disables those free models)",
         },
     ),
     (
         ("--no-training",),
         {
             "action": "store_true",
-            "help": "Exclude models whose provider trains on your prompts",
+            "help": "Disable all training allowances (paid, consent, and free)",
         },
     ),
     (
@@ -556,8 +572,10 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
         skip_models=frozenset(args.skip),
         allow_contributor=not args.no_contributor,
-        allow_global_region=not args.no_global_region,
-        allow_training=not args.no_training,
+        allow_global_region=args.allow_global_region,
+        allow_paid_training=args.allow_paid_training and not args.no_training,
+        allow_consent_training=args.allow_consent_training and not args.no_training,
+        allow_free_training=args.allow_free_training and not args.no_training,
         max_retention_days=args.max_retention_days,
         require_zdr=args.require_zdr,
         min_context=args.min_context,

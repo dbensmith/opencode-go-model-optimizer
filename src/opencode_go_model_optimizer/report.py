@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from opencode_go_model_optimizer.engine.allowance import is_eligible_free
-from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
+from opencode_go_model_optimizer.engine.criteria import (
+    SelectionCriteria,
+    _is_free_candidate,
+    passes_privacy,
+)
 from opencode_go_model_optimizer.engine.tiers import (
     PAID_TIERS,
     STANDARD_TIERS,
@@ -38,8 +42,11 @@ HOW_DECIDED = [
     "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance "
     "and price only.",
     "Eligibility: only active models are considered. Models without a positive finite "
-    "allowance are excluded from the paid tiers. Global-region models are allowed by default; "
-    "training and retention are not restricted unless the corresponding flags are set.",
+    "allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: "
+    "Global-region models are blocked, paid endpoints that train on request data are blocked, "
+    "Go models that require consent to train are disabled, and free endpoints that train are "
+    "blocked. Preview models are included. Retention is unrestricted unless a retention/ZDR "
+    "flag is set.",
     "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, "
     "promo expiry) using the 7-day time-weighted average starting at generation time.",
     "Tiers: eligible paid models are split into three clusters by log effective output price "
@@ -94,11 +101,20 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
     """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
     if m.status != "active":
         return [f"status is {m.status!r} (not active)"]
+    if not c.allow_contributor and m.is_contributor:
+        return ["contributor tier excluded (--no-contributor)"]
     reasons: list[str] = []
     p = m.privacy
     if not passes_privacy(m, c):
         if p is not None and p.requires_global_region and not c.allow_global_region:
-            reasons.append("requires Global workspace region (excluded by --no-global-region)")
+            reasons.append("requires Global workspace region (enable --allow-global-region)")
+        elif p is not None and p.trains_on_data:
+            if _is_free_candidate(m):
+                reasons.append("free model trains on request data (enable --allow-free-training)")
+            elif not c.allow_paid_training:
+                reasons.append("paid model trains on request data (enable --allow-paid-training)")
+            elif m.is_contributor and not c.allow_consent_training:
+                reasons.append("requires consent to train (enable --allow-consent-training)")
         else:
             reasons.append("excluded by privacy criteria")
     if reasons:
@@ -112,8 +128,6 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         reasons.append("unpriced: allowance is zero")
     elif math.isinf(allowance):
         reasons.append("unlimited allowance on a priced model (not eligible for paid tiers)")
-    elif m.is_contributor:
-        reasons.append("contributor model with a finite allowance")
     return reasons
 
 
@@ -191,7 +205,9 @@ def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, A
             "burn_basis": criteria.burn_basis,
             "profile": criteria.profile,
             "allow_global_region": criteria.allow_global_region,
-            "allow_training": criteria.allow_training,
+            "allow_paid_training": criteria.allow_paid_training,
+            "allow_consent_training": criteria.allow_consent_training,
+            "allow_free_training": criteria.allow_free_training,
             "allow_contributor": criteria.allow_contributor,
             "at": now.isoformat(timespec="seconds"),
         },

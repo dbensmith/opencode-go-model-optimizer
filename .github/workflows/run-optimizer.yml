@@ -6,6 +6,10 @@ name: Run Optimizer
 # `optimizer-results`, AND publishes the Docsify site to GitHub Pages on the same schedule.
 # Also runs tests on PRs and pushes to main.
 #
+# CI privacy policy: pass --allow-global-region and --allow-free-training so Global-region
+# models and free models that train are eligible. Paid and consent-required training remain
+# blocked (the OpenCode Go defaults).
+#
 # Runner choice: `ubuntu-latest` was selected over `ubuntu-slim` after benchmarking 5 runs
 # each (ubuntu-latest averaged 12.80s exec / 14.80s wall vs ubuntu-slim 16.60s exec / 19.80s wall).
 
@@ -110,11 +114,13 @@ jobs:
         run: |
           mkdir -p out
           # Run JSON first with --cache-ttl so the subsequent table run shares the exact snapshot.
-          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json > out/select.json 2> out/script.log; then
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json \
+            --allow-global-region --allow-free-training > out/select.json 2> out/script.log; then
             cat out/script.log >&2
             exit 1
           fi
-          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 > out/table.txt 2> out/table.err; then
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 \
+            --allow-global-region --allow-free-training > out/table.txt 2> out/table.err; then
             cat out/table.err >&2
             exit 1
           fi

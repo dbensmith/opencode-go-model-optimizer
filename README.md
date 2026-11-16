@@ -51,7 +51,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 #### How Pareto tiers are chosen
 
-1. **Eligibility.** Start from active, non-free, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. Global-region models are allowed by default; pass `--no-global-region` to exclude them. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
+1. **Eligibility.** Start from active, non-free, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. OpenCode Go privacy defaults apply: Global-region models, paid endpoints that train, Go models requiring consent, and free endpoints that train are all blocked unless the corresponding `--allow-*` flag is passed. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
 2. **Pareto frontier.** Compare quality against monthly quota burn. A model is dominated when another eligible model has at least as much quality and no more burn, with at least one strict improvement. Dominated models are never picked; every remaining frontier model has BPE `1.000`.
 3. **Quality.** Quality is the AA Intelligence Index, blended with the AA Engineering capability index (the replacement for the retired Coding Index) using the `--profile` or `--weights` weights. `general` is 70% intelligence / 30% engineering, `coding` is 40/60, `reasoning` is 85/15, and `fast` also scales by output tokens per second.
 4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the docs' published requests per month (scaled by the price multiplier); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
@@ -82,18 +82,28 @@ OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`Deep
 
 #### How the free tier is chosen
 
-The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active and either zero-cost or a contributor model with unlimited/zero-cost output. `--no-contributor` excludes contributor models, `--no-training` excludes models that train on your data, and `--require-zdr` / `--max-retention-days` apply as usual.
+The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active and either zero-cost or a contributor model with unlimited/zero-cost output. With OpenCode Go defaults, free models that train are blocked; pass `--allow-free-training` to include them. `--no-contributor` is a tier filter, not a privacy setting. `--require-zdr` / `--max-retention-days` apply as usual.
 
 Eligible free models are ranked by release date (newest first), then context window (largest), then model id. `--prefer free=<model>` overrides the pick.
 
-Live example: `LongCat 2.5 Free` (2026-11-02) is the newest free model and wins by default now that Global regions are allowed. `--no-global-region` falls back to `Iceman Contributor Free` (2026-10-24); `--no-global-region --no-training` or `--no-global-region --no-contributor` selects `Beam Free`.
+Live example: with the OpenCode Go defaults (Global blocked, free training blocked), `Beam Free` (2026-10-05) is the only eligible free model. `--allow-free-training` selects `Iceman Contributor Free` (2026-10-24); `--allow-global-region` selects `LongCat 2.5 Free` (2026-11-02); both together (the CI setting) select `LongCat 2.5 Free`.
 
-#### Contributor vs. training, and preview models
+#### Contributor vs. training
 
-- **Contributor** is a commercial tier: heavily discounted or free access in exchange for permission to use your prompts and completions to improve the model (for example Meta Muse Spark Contributor and Iceman Contributor Free). It is inferred from the model id/name and stored as `is_contributor`.
-- **Training** (`trains_on_data`) is a data-policy property from the Go docs Privacy table: whether the provider trains on your prompts and completions. It can apply to non-contributor models too.
-- `--no-contributor` excludes the contributor commercial tier. `--no-training` excludes any model whose privacy row says it trains, regardless of tier. Contributor models usually train, but the flags are independent.
-- **Preview/experimental** models are no longer excluded by default. The `is_preview` flag remains available for display and filtering, but it does not prevent a model from being selected if it passes the other filters.
+These are not the same thing:
+
+- **Contributor** is a commercial/pricing tier. The model is discounted or free in exchange for permission to use your data. It is inferred from the model id/name (`is_contributor`) and used for tier placement. `--no-contributor` excludes the tier as a convenience.
+- **Training** is a privacy permission (`privacy.trains_on_data`) from the Go docs. OpenCode Go exposes three separate toggles, all off by default:
+  1. **Allow paid endpoints that train** — `--allow-paid-training`.
+  2. **Allow Go models that require consent to train** — `--allow-consent-training`.
+  3. **Allow free endpoints that train** — `--allow-free-training` (turning it off disables those free models).
+- A contributor model usually trains, which is why the two concepts look similar. But the flags act on different things: `--no-contributor` removes the tier; the `--allow-*training` flags decide whether a model that trains is eligible.
+- Examples:
+  - `iceman-contributor-free`: contributor, free, trains → needs `--allow-free-training`.
+  - `longcat-2.5-free`: not contributor, free, no training, ZDR → needs `--allow-global-region`.
+  - `muse-spark-1.3-contributor`: contributor, paid, trains → needs `--allow-paid-training` **and** `--allow-consent-training`.
+  - `beam-free`: not contributor, free, no training → eligible by default.
+- **Preview/experimental** models are included by default. The `is_preview` flag remains for display/filtering, but it does not prevent selection.
 
 ---
 
@@ -208,7 +218,7 @@ AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 
 If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
-A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests on PRs (publishing CI job results and output as a comment on the pull request), and runs tests then updates the issue and deploys to GitHub Pages on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh`, formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), creates or updates the open GitHub issue labeled `optimizer-results`, and publishes the rendered report, CLI usage docs, and raw selection JSON as a Docsify site to GitHub Pages.
+A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests on PRs (publishing CI job results and output as a comment on the pull request), and runs tests then updates the issue and deploys to GitHub Pages on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh` with `--allow-global-region --allow-free-training` (CI accepts Global-region models and free models that train, while paid/consent training stays blocked), formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), creates or updates the open GitHub issue labeled `optimizer-results`, and publishes the rendered report, CLI usage docs, and raw selection JSON as a Docsify site to GitHub Pages.
 
 ### Offline Usage
 
@@ -270,9 +280,12 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
   Why: the docs estimates reflect each model's real token profile (cache-heavy models differ a lot from the one-size synthetic mix). They also expose the 5-hour window (20% of monthly), which is the limit users usually hit first: `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column (only when estimates are present). Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`), old snapshots without them still load, and `diff` reports estimate changes under pricing changes.
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and coding/engineering weights (e.g. `--weights 0.5,0.5`).
-- **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
-- **`--no-global-region`**: Exclude models that the docs say require **Global** regions in workspace privacy settings. Global-region models are allowed by default. The old `--allow-global-region` flag is still accepted as a deprecated no-op.
-- **`--no-training`**: Exclude models whose provider trains on your prompts and completions (e.g. contributor-tier models).
+- **`--no-contributor`**: Exclude contributor-tier models as a pricing-tier filter. This is not a privacy setting; use the training flags for that.
+- **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (blocked by default).
+- **`--allow-paid-training`**: Allow paid endpoints that train on request data (blocked by default).
+- **`--allow-consent-training`**: Allow Go models that require consent to train on your requests (disabled by default).
+- **`--allow-free-training`**: Allow free endpoints that train on request data (blocked by default; turning this off disables those free models).
+- **`--no-training`**: Shorthand to disable all three training allowances (paid, consent, and free). This is the default.
 - **`--max-retention-days <N>`**: Exclude models that retain data longer than N days. Models with unknown retention (`Not ZDR`, or no privacy data) fail.
 - **`--require-zdr`**: Only allow zero-data-retention models. Models with no privacy data fail.
 
