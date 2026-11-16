@@ -16,19 +16,13 @@ def tie_break_key(m: NormalizedModel) -> tuple[tuple[int, ...], int, str]:
     return (_desc_str_key(m.release_date or ""), -m.limit.context, m.id)
 
 
-def is_eligible_free(m: NormalizedModel, allow_contributor: bool = True) -> bool:
+def is_eligible_free(m: NormalizedModel) -> bool:
     """Determine if a model is eligible for the free tier."""
     if m.status != "active":
         return False
-    if not allow_contributor and m.is_contributor:
-        return False
     if m.is_zero_cost:
         return True
-    return bool(
-        allow_contributor
-        and m.is_contributor
-        and (m.monthly_allowance == float("inf") or m.cost.output == 0)
-    )
+    return bool(m.is_contributor and (m.monthly_allowance == float("inf") or m.cost.output == 0))
 
 
 def is_eligible_paid(m: NormalizedModel) -> bool:
@@ -42,16 +36,11 @@ def is_eligible_paid(m: NormalizedModel) -> bool:
 def rank_free_models(
     models: list[NormalizedModel],
     skip_models: AbstractSet[str] | None = None,
-    allow_contributor: bool = True,
 ) -> list[NormalizedModel]:
     """Rank eligible free models by release_date DESC, context DESC, id ASC."""
     skips = skip_models or set()
     eligible = [
-        m
-        for m in models
-        if is_eligible_free(m, allow_contributor=allow_contributor)
-        and m.id not in skips
-        and m.full_id not in skips
+        m for m in models if is_eligible_free(m) and m.id not in skips and m.full_id not in skips
     ]
 
     return sorted(eligible, key=tie_break_key)

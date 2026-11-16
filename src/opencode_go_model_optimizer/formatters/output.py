@@ -56,6 +56,7 @@ def format_select_json(
     profile: str | None = None,
     fallbacks: dict[str, list[str]] | None = None,
     snapshot_info: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> str:
     """Format tier selection as standard JSON."""
     ts = evaluated_at or datetime.now(UTC).isoformat(timespec="seconds")
@@ -67,6 +68,8 @@ def format_select_json(
     }
     if snapshot_info is not None:
         payload["snapshot"] = snapshot_info
+    if settings is not None:
+        payload["settings"] = settings
     if profile is not None and profile != "general":
         payload["profile"] = profile
     if fallbacks is not None:
@@ -74,6 +77,31 @@ def format_select_json(
     if explanations is not None:
         payload["explanations"] = explanations
     return json.dumps(payload, indent=2)
+
+
+def settings_payload(criteria: SelectionCriteria) -> dict[str, Any]:
+    """Serialize the effective selection criteria for provenance in outputs."""
+    return {
+        "mode": criteria.mode,
+        "top_n": criteria.top_n,
+        "profile": criteria.profile,
+        "price_basis": criteria.price_basis,
+        "burn_basis": criteria.burn_basis,
+        "allow_global_region": criteria.allow_global_region,
+        "allow_paid_training": criteria.allow_paid_training,
+        "allow_free_training": criteria.allow_free_training,
+        "max_retention_days": criteria.max_retention_days,
+        "require_zdr": criteria.require_zdr,
+        "min_context": criteria.min_context,
+        "min_output": criteria.min_output,
+        "max_output_cost": criteria.max_output_cost,
+        "max_burn": criteria.max_burn,
+        "skip": sorted(criteria.skip_models),
+        "prefer": dict(sorted(criteria.preferred_tiers.items())),
+        "tokens": list(criteria.token_mix) if criteria.token_mix else None,
+        "weights": list(criteria.weights) if criteria.weights else None,
+        "at": criteria.at.isoformat(timespec="seconds") if criteria.at else None,
+    }
 
 
 def _model_map(models: list[NormalizedModel]) -> dict[str, NormalizedModel]:

@@ -44,9 +44,8 @@ HOW_DECIDED = [
     "Eligibility: only active models are considered. Models without a positive finite "
     "allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: "
     "Global-region models are blocked, paid endpoints that train on request data are blocked, "
-    "Go models that require consent to train are disabled, and free endpoints that train are "
-    "blocked. Preview models are included. Retention is unrestricted unless a retention/ZDR "
-    "flag is set.",
+    "and free endpoints that train are blocked. Preview models are included. Retention is "
+    "unrestricted unless a retention/ZDR flag is set.",
     "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, "
     "promo expiry) using the 7-day time-weighted average starting at generation time.",
     "Tiers: eligible paid models are split into three clusters by log effective output price "
@@ -101,8 +100,6 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
     """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
     if m.status != "active":
         return [f"status is {m.status!r} (not active)"]
-    if not c.allow_contributor and m.is_contributor:
-        return ["contributor tier excluded (--no-contributor)"]
     reasons: list[str] = []
     p = m.privacy
     if not passes_privacy(m, c):
@@ -111,15 +108,13 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         elif p is not None and p.trains_on_data:
             if _is_free_candidate(m):
                 reasons.append("free model trains on request data (enable --allow-free-training)")
-            elif not c.allow_paid_training:
+            else:
                 reasons.append("paid model trains on request data (enable --allow-paid-training)")
-            elif m.is_contributor and not c.allow_consent_training:
-                reasons.append("requires consent to train (enable --allow-consent-training)")
         else:
             reasons.append("excluded by privacy criteria")
     if reasons:
         return reasons
-    if is_eligible_free(m, allow_contributor=c.allow_contributor):
+    if is_eligible_free(m):
         return []
     allowance = m.monthly_allowance
     if allowance is None:
@@ -206,9 +201,15 @@ def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, A
             "profile": criteria.profile,
             "allow_global_region": criteria.allow_global_region,
             "allow_paid_training": criteria.allow_paid_training,
-            "allow_consent_training": criteria.allow_consent_training,
             "allow_free_training": criteria.allow_free_training,
-            "allow_contributor": criteria.allow_contributor,
+            "max_retention_days": criteria.max_retention_days,
+            "require_zdr": criteria.require_zdr,
+            "min_context": criteria.min_context,
+            "min_output": criteria.min_output,
+            "max_output_cost": criteria.max_output_cost,
+            "max_burn": criteria.max_burn,
+            "skip": sorted(criteria.skip_models),
+            "prefer": dict(sorted(criteria.preferred_tiers.items())),
             "at": now.isoformat(timespec="seconds"),
         },
         "tiers": {t: tiers[t]["model_id"] or "" for t in STANDARD_TIERS},
@@ -290,6 +291,26 @@ def render_markdown(report: dict[str, Any]) -> str:
         + ". Allowance mode, default criteria, top 3 per tier.",
         "",
     ]
+    first_plan = next(iter(report["plans"].values()), {})
+    criteria = first_plan.get("criteria") or {}
+    if criteria:
+        lines += [
+            "## Run settings",
+            "",
+            f"- **Mode**: `{criteria.get('mode', 'allowance')}` | **Profile**: `{criteria.get('profile', 'general')}` "
+            f"| **Price basis**: `{criteria.get('price_basis', '-')}` | **Burn basis**: `{criteria.get('burn_basis', '-')}` "
+            f"| **Top N**: `{criteria.get('top_n', TOP_N)}`",
+            f"- **Global regions**: {'allowed' if criteria.get('allow_global_region') else 'blocked'} "
+            f"| **Paid training**: {'allowed' if criteria.get('allow_paid_training') else 'blocked'} "
+            f"| **Free training**: {'allowed' if criteria.get('allow_free_training') else 'blocked'}",
+            f"- **Filters**: max retention `{criteria.get('max_retention_days') or 'none'}` "
+            f"| ZDR required `{criteria.get('require_zdr', False)}` "
+            f"| min context `{criteria.get('min_context', 0)}` "
+            f"| min output `{criteria.get('min_output', 0)}` "
+            f"| max output cost `{criteria.get('max_output_cost') or 'none'}` "
+            f"| max burn `{criteria.get('max_burn') or 'none'}`",
+            "",
+        ]
     for plan, section in report["plans"].items():
         lines += [f"## Plan: {plan}", ""]
         lines += [

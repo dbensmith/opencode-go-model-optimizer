@@ -29,6 +29,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_github_output,
     format_select_json,
     format_select_table,
+    settings_payload,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
@@ -269,13 +270,6 @@ _FILTER_PARENT = _parent(
         },
     ),
     (
-        ("--no-contributor",),
-        {
-            "action": "store_true",
-            "help": "Exclude contributor-tier models from free tier selection",
-        },
-    ),
-    (
         ("--allow-global-region",),
         {
             "action": "store_true",
@@ -291,26 +285,11 @@ _FILTER_PARENT = _parent(
         },
     ),
     (
-        ("--allow-consent-training",),
-        {
-            "action": "store_true",
-            "help": "Allow Go models that require consent to train on your requests "
-            "(disabled by default)",
-        },
-    ),
-    (
         ("--allow-free-training",),
         {
             "action": "store_true",
             "help": "Allow free endpoints that train on request data (blocked by default; "
             "turning this off disables those free models)",
-        },
-    ),
-    (
-        ("--no-training",),
-        {
-            "action": "store_true",
-            "help": "Disable all training allowances (paid, consent, and free)",
         },
     ),
     (
@@ -384,11 +363,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parents=[_PLAN_PARENT, _RANKING_PARENT, _PRICE_PARENT, _FILTER_PARENT],
     )
     rank_parser.add_argument(
-        "--table",
-        action="store_true",
-        help="Output results as a human-readable table",
-    )
-    rank_parser.add_argument(
         "--format",
         choices=["table", "json"],
         default="table",
@@ -418,7 +392,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     diff_parser.add_argument(
         "--fail-on-change",
-        "--exit-code",
         action="store_true",
         dest="fail_on_change",
         help="Exit with code 2 when catalog, pricing, or tier assignments changed",
@@ -571,11 +544,9 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
         top_n=getattr(args, "top_n", None) or 1,
         preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
         skip_models=frozenset(args.skip),
-        allow_contributor=not args.no_contributor,
         allow_global_region=args.allow_global_region,
-        allow_paid_training=args.allow_paid_training and not args.no_training,
-        allow_consent_training=args.allow_consent_training and not args.no_training,
-        allow_free_training=args.allow_free_training and not args.no_training,
+        allow_paid_training=args.allow_paid_training,
+        allow_free_training=args.allow_free_training,
         max_retention_days=args.max_retention_days,
         require_zdr=args.require_zdr,
         min_context=args.min_context,
@@ -635,6 +606,7 @@ def handle_select(args: argparse.Namespace) -> int:
                 "fetched_at": snap.fetched_at,
                 "benchmark_source": snap.metadata.benchmark_source,
             },
+            settings=settings_payload(criteria),
         )
     elif args.format == "table":
         out = format_select_table(
@@ -665,7 +637,7 @@ def handle_rank(args: argparse.Namespace) -> int:
 
     ranked = rank_catalog(models, _criteria_from_args(args, mode))
 
-    if args.format == "json" and not args.table:
+    if args.format == "json":
         out = format_rank_json(ranked)
     else:
         out = format_rank_table(ranked, mode=mode)

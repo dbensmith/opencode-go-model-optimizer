@@ -57,7 +57,6 @@ def test_parse_args_select():
             "heavy=zeta-pro",
             "--min-context",
             "128000",
-            "--no-contributor",
             "--profile",
             "coding",
             "--explain",
@@ -70,7 +69,6 @@ def test_parse_args_select():
     assert args.skip == ["model-a", "model-b"]
     assert args.prefer == ["heavy=zeta-pro"]
     assert args.min_context == 128000
-    assert args.no_contributor is True
     assert args.profile == "coding"
     assert args.explain is True
 
@@ -87,7 +85,6 @@ def test_parse_args_rank():
             "model-c",
             "--min-context",
             "200000",
-            "--no-contributor",
             "--profile",
             "fast",
         ]
@@ -96,7 +93,6 @@ def test_parse_args_rank():
     assert args.cache_ttl == 600
     assert args.skip == ["model-c"]
     assert args.min_context == 200000
-    assert args.no_contributor is True
     assert args.profile == "fast"
 
 
@@ -172,7 +168,7 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
     snap_path = create_temp_snapshot(tmp_path)
 
-    # Test --skip, --prefer, --no-contributor, --min-context
+    # Test --skip, --prefer, --min-context
     rc = main(
         [
             "select",
@@ -184,7 +180,6 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
             "opencode-go/alpha-max",
             "--prefer",
             "heavy=opencode-go/gamma-flash",
-            "--no-contributor",
             "--min-context",
             "100000",
         ]
@@ -192,7 +187,37 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["tiers"]["heavy"] == "opencode-go/gamma-flash"
-    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
+    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
+
+
+def test_select_json_includes_settings(tmp_path, capsys):
+    snap_path = create_temp_snapshot(tmp_path)
+    rc = main(
+        [
+            "select",
+            "--format",
+            "json",
+            "--snapshot",
+            str(snap_path),
+            "--allow-global-region",
+            "--allow-free-training",
+            "--max-retention-days",
+            "30",
+            "--require-zdr",
+            "--min-context",
+            "1000",
+        ]
+    )
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    settings = data["settings"]
+    assert settings["allow_global_region"] is True
+    assert settings["allow_paid_training"] is False
+    assert settings["allow_free_training"] is True
+    assert settings["max_retention_days"] == 30
+    assert settings["require_zdr"] is True
+    assert settings["min_context"] == 1000
+    assert settings["mode"] == "allowance"
 
 
 def test_cli_rank_filters(tmp_path, capsys):
@@ -209,7 +234,6 @@ def test_cli_rank_filters(tmp_path, capsys):
             "alpha-max",
             "--min-context",
             "120000",
-            "--no-contributor",
         ]
     )
     assert rc == 0
@@ -218,7 +242,7 @@ def test_cli_rank_filters(tmp_path, capsys):
     assert all(m["limit"]["context"] >= 120000 for m in models)
     free_models = [m for m in models if m.get("tier") == "free"]
     assert len(free_models) == 1
-    assert not free_models[0].get("is_contributor", False)
+    assert free_models[0]["id"] == "delta-contributor"
 
 
 def test_cli_select_plan_switch(tmp_path):
@@ -361,7 +385,7 @@ def test_cli_select_output_file(tmp_path):
 
 def test_cli_rank_table(tmp_path, capsys):
     snap_path = create_temp_snapshot(tmp_path)
-    rc = main(["rank", "--table", "--snapshot", str(snap_path)])
+    rc = main(["rank", "--format", "table", "--snapshot", str(snap_path)])
     assert rc == 0
     captured = capsys.readouterr()
     assert "Rank" in captured.out
@@ -518,8 +542,8 @@ def test_load_or_fetch_models(tmp_path):
 def test_handle_rank_modes_and_formats(tmp_path, capsys):
     snap_path = create_temp_snapshot(tmp_path)
 
-    # --table flag overrides format
-    rc = main(["rank", "--table", "--snapshot", str(snap_path)])
+    # --format table is the default and can be explicit
+    rc = main(["rank", "--format", "table", "--snapshot", str(snap_path)])
     assert rc == 0
     out = capsys.readouterr().out
     assert "Rank" in out
@@ -832,7 +856,7 @@ def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
             str(old_path),
             "--new",
             str(old_path),
-            "--exit-code",
+            "--fail-on-change",
         ]
     )
     assert rc_same == 0

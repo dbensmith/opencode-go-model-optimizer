@@ -17,15 +17,12 @@ class SelectionCriteria:
     top_n: int = 1
     preferred_tiers: dict[str, str] = field(default_factory=dict)
     skip_models: frozenset[str] = frozenset()
-    allow_contributor: bool = True
     # OpenCode Go workspace privacy defaults. Everything is opt-in:
     # - Global-region models are blocked.
     # - Paid endpoints that train on request data are blocked.
-    # - Go models that require consent to train are disabled.
     # - Free endpoints that train on request data are blocked (disables those free models).
     allow_global_region: bool = False
     allow_paid_training: bool = False
-    allow_consent_training: bool = False
     allow_free_training: bool = False
     max_retention_days: int | None = None
     require_zdr: bool = False
@@ -55,11 +52,8 @@ def passes_privacy(m: NormalizedModel, c: SelectionCriteria) -> bool:
     """Return True when a model satisfies the privacy and region criteria.
 
     Models without privacy data pass unless a retention or ZDR requirement is set
-    (unknown is not compliant). Training is controlled separately for free models, paid
-    models, and paid models that require consent (contributor models).
+    (unknown is not compliant). Training is controlled separately for free and paid models.
     """
-    if not c.allow_contributor and m.is_contributor:
-        return False
     p = m.privacy
     if p is None:
         return not (c.require_zdr or c.max_retention_days is not None)
@@ -69,11 +63,8 @@ def passes_privacy(m: NormalizedModel, c: SelectionCriteria) -> bool:
         if _is_free_candidate(m):
             if not c.allow_free_training:
                 return False
-        else:
-            if not c.allow_paid_training:
-                return False
-            if m.is_contributor and not c.allow_consent_training:
-                return False
+        elif not c.allow_paid_training:
+            return False
     if c.require_zdr and p.zdr is not True:
         return False
     return not (

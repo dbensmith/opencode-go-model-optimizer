@@ -51,7 +51,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 #### How Pareto tiers are chosen
 
-1. **Eligibility.** Start from active, non-free, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. OpenCode Go privacy defaults apply: Global-region models, paid endpoints that train, Go models requiring consent, and free endpoints that train are all blocked unless the corresponding `--allow-*` flag is passed. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
+1. **Eligibility.** Start from active, non-free models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. OpenCode Go privacy defaults apply: Global-region models, paid endpoints that train, and free endpoints that train are all blocked unless the corresponding `--allow-*` flag is passed. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
 2. **Pareto frontier.** Compare quality against monthly quota burn. A model is dominated when another eligible model has at least as much quality and no more burn, with at least one strict improvement. Dominated models are never picked; every remaining frontier model has BPE `1.000`.
 3. **Quality.** Quality is the AA Intelligence Index, blended with the AA Engineering capability index (the replacement for the retired Coding Index) using the `--profile` or `--weights` weights. `general` is 70% intelligence / 30% engineering, `coding` is 40/60, `reasoning` is 85/15, and `fast` also scales by output tokens per second.
 4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the docs' published requests per month (scaled by the price multiplier); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
@@ -82,7 +82,7 @@ OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`Deep
 
 #### How the free tier is chosen
 
-The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active and either zero-cost or a contributor model with unlimited/zero-cost output. With OpenCode Go defaults, free models that train are blocked; pass `--allow-free-training` to include them. `--no-contributor` is a tier filter, not a privacy setting. `--require-zdr` / `--max-retention-days` apply as usual.
+The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active and either zero-cost or a contributor model with unlimited/zero-cost output. With OpenCode Go defaults, free models that train are blocked; pass `--allow-free-training` to include them. `--require-zdr` / `--max-retention-days` apply as usual.
 
 Eligible free models are ranked by release date (newest first), then context window (largest), then model id. `--prefer free=<model>` overrides the pick.
 
@@ -90,23 +90,21 @@ Live example: with the OpenCode Go defaults (Global blocked, free training block
 
 #### Contributor vs. training
 
-**Contributor is a pricing tier, not a privacy rule.** It is inferred from the model id/name (for example `Muse Spark 1.3 Contributor` or `Iceman Contributor Free`). A contributor model is discounted or free in exchange for permission to use your data, which is why it usually also has `trains_on_data=true`. `--no-contributor` is an optional tier filter; it is not the privacy control.
+**Contributor is a pricing tier, not a privacy rule.** It is inferred from the model id/name (for example `Muse Spark 1.3 Contributor` or `Iceman Contributor Free`). A contributor model is discounted or free in exchange for permission to use your data, which is why it usually also has `trains_on_data=true`. There is no separate contributor filter; contributor models are enabled or blocked by the training flags below.
 
-**Training is the privacy control.** OpenCode Go exposes three independent toggles, all off by default:
+**Training is the privacy control.** Two independent toggles, both off by default:
 
 | OpenCode Go setting | CLI flag | Default | Enables |
 | --- | --- | --- | --- |
 | Allow paid endpoints that train | `--allow-paid-training` | off | Paid models with `trains_on_data=true` |
-| Allow Go models that require consent | `--allow-consent-training` | off | Contributor paid models that require consent (also needs `--allow-paid-training`) |
 | Allow free endpoints that train | `--allow-free-training` | off | Free models with `trains_on_data=true` |
 
 Examples:
 
 - `iceman-contributor-free`: contributor, free, trains → `--allow-free-training`.
-- `muse-spark-1.3-contributor`: contributor, paid, trains → `--allow-paid-training --allow-consent-training`.
+- `muse-spark-1.3-contributor`: contributor, paid, trains → `--allow-paid-training`.
 - `longcat-2.5-free`: not contributor, free, no training, ZDR → `--allow-global-region`.
 - `beam-free`: not contributor, free, no training → eligible by default.
-- `--no-contributor` still excludes any contributor model even after training is allowed.
 
 **Preview/experimental** models are included by default. The `is_preview` flag remains for display/filtering, but it does not prevent selection.
 
@@ -156,6 +154,10 @@ uvx opencode-go-model-optimizer select --format json
   `cache`, `live`, or `stale-cache` (your local cache, used after a live fetch failure).
   `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
   `speed_tps`) came from: `aa_live` (fetched with your own `AA_API_KEY`) or `none`.
+  The `settings` block records the effective run criteria: mode, profile, price/burn basis,
+  Global/paid-training/free-training flags, retention/ZDR, context/output/cost/burn filters,
+  skip list and tier pins. The issue, CI comment and GitHub Pages report render it under
+  **Run Settings**.
   `--format table` (the default for `rank`) and `--format json` are also available.
 
 - **`rank`**: Produces a ranked comparison of every model in the catalog. Table output is the default:
@@ -171,7 +173,7 @@ uvx opencode-go-model-optimizer select --format json
   | 1    | model-a  | heavy | $30.00    | $10.00/1M   | 2026-10-13 |
   | 2    | model-b  | -     | $15.00    | $0.87/1M    | 2026-09-22 |
   ```
-  The legacy `rank --table` flag is still accepted, but `--format table` is the default.
+  `--format table` is the default.
 
 - **`diff`**: Compares catalog, pricing, status, capability/benchmark (context, max output, AA IQ/coding, speed), and tier assignments between two snapshots:
   ```bash
@@ -179,7 +181,7 @@ uvx opencode-go-model-optimizer select --format json
   ```
   `--old` is required (save one earlier with `fetch`); `--new` defaults to a live fetch, falling
   back to your local cache. Use `--format json` for machine-readable drift reports and `--fail-on-change`
-  (alias `--exit-code`) to exit `2` when anything changed, which is ideal for scheduled CI jobs.
+  to exit `2` when anything changed, which is ideal for scheduled CI jobs.
 
 - **`fetch`**: Captures a normalized, timestamped `snapshot.json` from upstream sources:
   ```bash
@@ -192,7 +194,7 @@ uvx opencode-go-model-optimizer select --format json
   pricing table, an AA key that returned no benchmarks) are stored in the snapshot's
   `warnings` list and printed to stderr; they never fail the fetch.
 
-- **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (eligibility filters, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
+- **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (the effective criteria including Global/paid-training/free-training flags, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
   ```bash
   opencode-go-model-optimizer report --out-dir out --tests-junit offline.xml --tests-junit live.xml
   ```
@@ -223,7 +225,7 @@ AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 
 If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
-A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests on PRs (publishing CI job results and output as a comment on the pull request), and runs tests then updates the issue and deploys to GitHub Pages on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh` with `--allow-global-region --allow-free-training` (CI accepts Global-region models and free models that train, while paid/consent training stays blocked), formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), creates or updates the open GitHub issue labeled `optimizer-results`, and publishes the rendered report, CLI usage docs, and raw selection JSON as a Docsify site to GitHub Pages.
+A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests on PRs (publishing CI job results and output as a comment on the pull request), and runs tests then updates the issue and deploys to GitHub Pages on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), runs `scripts/run-optimizer.sh` with `--allow-global-region --allow-free-training` (CI accepts Global-region models and free models that train, while paid training stays blocked), formats a Markdown table, explanation, and full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), creates or updates the open GitHub issue labeled `optimizer-results`, and publishes the rendered report, CLI usage docs, and raw selection JSON as a Docsify site to GitHub Pages.
 
 ### Offline Usage
 
@@ -285,12 +287,9 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
   Why: the docs estimates reflect each model's real token profile (cache-heavy models differ a lot from the one-size synthetic mix). They also expose the 5-hour window (20% of monthly), which is the limit users usually hit first: `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column (only when estimates are present). Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`), old snapshots without them still load, and `diff` reports estimate changes under pricing changes.
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and coding/engineering weights (e.g. `--weights 0.5,0.5`).
-- **`--no-contributor`**: Exclude contributor-tier models as a pricing-tier filter. This is not a privacy setting; use the training flags for that.
 - **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (blocked by default).
 - **`--allow-paid-training`**: Allow paid endpoints that train on request data (blocked by default).
-- **`--allow-consent-training`**: Allow Go models that require consent to train on your requests (disabled by default).
 - **`--allow-free-training`**: Allow free endpoints that train on request data (blocked by default; turning this off disables those free models).
-- **`--no-training`**: Shorthand to disable all three training allowances (paid, consent, and free). This is the default.
 - **`--max-retention-days <N>`**: Exclude models that retain data longer than N days. Models with unknown retention (`Not ZDR`, or no privacy data) fail.
 - **`--require-zdr`**: Only allow zero-data-retention models. Models with no privacy data fail.
 

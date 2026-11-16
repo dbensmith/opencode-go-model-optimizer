@@ -87,11 +87,6 @@ def test_allowance_free_ranking():
     # Newest release first: delta (2026-10-01), epsilon (2026-09-20), kappa (2026-08-25)
     assert [m.id for m in ranked] == ["delta-contributor", "epsilon-free", "kappa-free"]
 
-    # --no-contributor removes contributor models from the free pool.
-    without_contrib = rank_free_models(models, allow_contributor=False)
-    assert all(not m.is_contributor for m in without_contrib)
-    assert "delta-contributor" not in [m.id for m in without_contrib]
-
 
 def test_deterministic_tie_breaking():
     # Models with identical allowance and output cost
@@ -711,18 +706,10 @@ def test_model_roundtripping_and_allowance_normalization():
     assert m_noslash.full_id == "prov/my-model"
 
 
-def test_min_context_and_allow_contributor():
+def test_min_context_filtering():
     models = _get_fixture_models()
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
-
-    # Test allow_contributor=False in allowance mode
-    tiers_no_contrib = _tiers(models, allow_contributor=False)
-    assert tiers_no_contrib["free"] == "opencode-go/epsilon-free"
-
-    # Test allow_contributor=False in pareto mode
-    tiers_pareto_no_contrib = _tiers_pareto(models, allow_contributor=False)
-    assert tiers_pareto_no_contrib["free"] != "opencode-go/delta-contributor"
 
     # Test min_context filter in allowance mode
     tiers_min_ctx = _tiers(models, min_context=500000)
@@ -742,12 +729,6 @@ def test_min_context_and_allow_contributor():
     ranked_min_ctx = _rank(models, min_context=500000)
     assert len(ranked_min_ctx) > 0
     assert all(m.limit.context >= 500000 for m in ranked_min_ctx)
-
-    # Test allocate_tiers unified with min_context and allow_contributor
-    unified_p = _tiers(models, mode="pareto", min_context=100000, allow_contributor=False)
-    assert unified_p["free"] != "opencode-go/delta-contributor"
-    unified_a = _tiers(models, mode="allowance", min_context=100000, allow_contributor=False)
-    assert unified_a["free"] == "opencode-go/epsilon-free"
 
 
 def test_workload_profiles():

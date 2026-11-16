@@ -212,9 +212,7 @@ def _allocate_allowance(
     """Allowance allocation over already-filtered models."""
     skips = c.skip_models
     if free_ranked is None:
-        free_ranked = rank_free_models(
-            models, skip_models=skips, allow_contributor=c.allow_contributor
-        )
+        free_ranked = rank_free_models(models, skip_models=skips)
     if paid_ranked is None:
         paid_ranked = rank_paid_models(models, skip_models=skips)
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
@@ -260,9 +258,7 @@ def _allocate_pareto(
     objective, so one model can be the best pick for more than one tier. If there is no
     benchmarked/Pareto model at all, fall back to allowance allocation.
     """
-    free_ranked = rank_free_models(
-        evaluated, skip_models=c.skip_models, allow_contributor=c.allow_contributor
-    )
+    free_ranked = rank_free_models(evaluated, skip_models=c.skip_models)
     clusters = _pareto_clusters(evaluated, c)
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
     _pick_paid_tiers(selected, used, clusters)

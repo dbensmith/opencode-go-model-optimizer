@@ -135,11 +135,8 @@ def test_passes_privacy_training_controls():
     assert not passes_privacy(paid_train, SelectionCriteria())
     assert passes_privacy(paid_train, SelectionCriteria(allow_paid_training=True))
     assert passes_privacy(paid_clean, SelectionCriteria())
-    assert not passes_privacy(consent_train, SelectionCriteria(allow_paid_training=True))
-    assert passes_privacy(
-        consent_train,
-        SelectionCriteria(allow_paid_training=True, allow_consent_training=True),
-    )
+    # Contributor status no longer adds a separate consent gate.
+    assert passes_privacy(consent_train, SelectionCriteria(allow_paid_training=True))
     assert not passes_privacy(free_train, SelectionCriteria())
     assert passes_privacy(free_train, SelectionCriteria(allow_free_training=True))
 
@@ -204,8 +201,6 @@ def test_cli_flags_filter_free_tier(tmp_path, capsys):
     assert out["tiers"]["free"] == "opencode-go/free-global"
     out, _ = _select(tmp_path, capsys, "--allow-global-region", "--allow-free-training")
     assert out["tiers"]["free"] == "opencode-go/free-global"
-    out, _ = _select(tmp_path, capsys, "--no-training")
-    assert out["tiers"]["free"] == "opencode-go/free-plain"
     out, _ = _select(tmp_path, capsys, "--require-zdr")
     assert out["tiers"]["free"] == "opencode-go/free-plain"
     out, _ = _select(tmp_path, capsys, "--require-zdr", "--allow-global-region")

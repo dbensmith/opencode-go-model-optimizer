@@ -23,6 +23,24 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
             "fetched_at": "2026-11-15T15:59:59+00:00",
             "benchmark_source": "aa_live",
         },
+        "settings": {
+            "mode": "pareto",
+            "top_n": 1,
+            "profile": "general",
+            "price_basis": "blended",
+            "burn_basis": "auto",
+            "allow_global_region": True,
+            "allow_paid_training": False,
+            "allow_free_training": True,
+            "max_retention_days": None,
+            "require_zdr": False,
+            "min_context": 0,
+            "min_output": 0,
+            "max_output_cost": None,
+            "max_burn": None,
+            "skip": [],
+            "prefer": {},
+        },
         "tiers": {
             "heavy": "opencode-go/model-a",
             "balanced": "opencode-go/model-b",
@@ -95,6 +113,10 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
         in md
     )
     assert "| **free** | `opencode-go/model-free` | Unlimited | Free | 262,144 |" in md
+    assert "### Run Settings" in md
+    assert "Global regions**: allowed" in md
+    assert "Paid training**: blocked" in md
+    assert "Free training**: allowed" in md
     assert "Pareto mode" in md
     assert "Source: Artificial Analysis (artificialanalysis.ai)" in md
     assert ".." not in md

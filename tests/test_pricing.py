@@ -312,6 +312,7 @@ def test_cli_list_basis_reproduces_unadjusted_output(tmp_path, capsys):
         out = json.loads(_run(capsys, "select", "--snapshot", path, "--explain", *common, *extra))
         out.pop("evaluated_at")
         out.pop("snapshot")
+        out.pop("settings", None)
         return out
 
     assert sel(s, "--price-basis", "list") == sel(str(p))

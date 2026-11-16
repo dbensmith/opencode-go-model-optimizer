@@ -129,6 +129,37 @@ def render_issue_markdown(
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
 
+    settings = payload.get("settings") or {}
+    if settings:
+        lines.extend(
+            [
+                "",
+                "### Run Settings",
+                "",
+                f"- **Mode**: `{settings.get('mode', mode)}` | **Profile**: `{settings.get('profile', 'general')}` "
+                f"| **Price basis**: `{settings.get('price_basis', '-')}` | **Burn basis**: `{settings.get('burn_basis', '-')}` "
+                f"| **Top N**: `{settings.get('top_n', 1)}`",
+                f"- **Global regions**: {'allowed' if settings.get('allow_global_region') else 'blocked'} "
+                f"| **Paid training**: {'allowed' if settings.get('allow_paid_training') else 'blocked'} "
+                f"| **Free training**: {'allowed' if settings.get('allow_free_training') else 'blocked'}",
+                f"- **Filters**: max retention `{settings.get('max_retention_days') or 'none'}` "
+                f"| ZDR required `{settings.get('require_zdr', False)}` "
+                f"| min context `{settings.get('min_context', 0)}` "
+                f"| min output `{settings.get('min_output', 0)}` "
+                f"| max output cost `{settings.get('max_output_cost') or 'none'}` "
+                f"| max burn `{settings.get('max_burn') or 'none'}`",
+            ]
+        )
+        skip = settings.get("skip") or []
+        prefer = settings.get("prefer") or {}
+        if skip or prefer:
+            extras = []
+            if skip:
+                extras.append(f"skip `{', '.join(skip)}`")
+            if prefer:
+                extras.append("prefer " + ", ".join(f"`{k}={v}`" for k, v in prefer.items()))
+            lines.append("- **Overrides**: " + " | ".join(extras))
+
     lines.extend(
         [
             "",

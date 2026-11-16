@@ -88,6 +88,11 @@ def test_report_structure_and_no_benchmark_keys(snapshot, monkeypatch):
     assert "Synthetic Go Pricing" not in text
     assert report["tests"] is None
     assert report["warnings"] == []
+    md = render_markdown(report)
+    assert "## Run settings" in md
+    assert "Global regions**: blocked" in md
+    assert "Paid training**: blocked" in md
+    assert "Free training**: blocked" in md
 
 
 def test_excluded_models_have_reasons(snapshot):
@@ -130,18 +135,12 @@ def test_exclusion_reasons_unpriced_and_unlimited():
         cost=TokenCost(output=1),
         monthly_allowance=5.0,
     )
-    assert (
-        "consent to train"
-        in exclusion_reasons(consent, SelectionCriteria(allow_paid_training=True))[0]
-    )
+    # Contributor status no longer adds a separate consent gate.
+    assert exclusion_reasons(consent, SelectionCriteria(allow_paid_training=True)) == []
     contrib_paid = NormalizedModel(
         id="cp", is_contributor=True, cost=TokenCost(output=1), monthly_allowance=10.0
     )
     assert exclusion_reasons(contrib_paid, c) == []
-    assert (
-        "contributor tier excluded"
-        in exclusion_reasons(contrib_paid, SelectionCriteria(allow_contributor=False))[0]
-    )
     global_model = NormalizedModel(
         id="g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
     )
@@ -153,7 +152,7 @@ def test_exclusion_reasons_unpriced_and_unlimited():
         cost=TokenCost(output=0.0),
         monthly_allowance=10.0,
     )
-    assert exclusion_reasons(contrib, SelectionCriteria(allow_contributor=True)) == []
+    assert exclusion_reasons(contrib, c) == []
     no_priv = NormalizedModel(
         id="np",
         privacy=None,
