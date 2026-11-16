@@ -90,17 +90,9 @@ jobs:
             exit 0
           fi
 
-          comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/${PR_NUMBER}/comments" 2>/dev/null | uv run python -c '
-          import json, os, sys
-          marker = os.environ["MARKER"]
-          try:
-              pages = json.load(sys.stdin)
-              items = [c for page in pages for c in (page if isinstance(page, list) else [page])]
-              ids = [c["id"] for c in items if isinstance(c, dict) and marker in (c.get("body") or "")]
-              print(ids[-1] if ids else "")
-          except Exception:
-              print("")
-          ' || true)"
+          comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
+            --jq 'flatten | map(select(.body | contains(env.MARKER))) | last | .id // empty' \
+            2>/dev/null || true)"
 
           if [[ -n "$comment_id" ]]; then
             if ! gh api "repos/$GH_REPO/issues/comments/${comment_id}" \
