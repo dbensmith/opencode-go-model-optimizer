@@ -114,15 +114,18 @@ def _pick_paid_tiers(
 ) -> None:
     for tier in _PAID_TIERS:
         if tier not in selected and clusters[tier]:
-            m = _pick_unused(clusters[tier], used)
-            if m:
-                _claim(selected, used, tier, m)
+            _claim(selected, used, tier, clusters[tier][0])
 
 
 def _pareto_clusters(
     evaluated: list[NormalizedModel], c: SelectionCriteria
 ) -> dict[str, list[NormalizedModel]]:
-    """Cluster the competitive benchmarked pool by quality into ranked per-tier lists."""
+    """Cluster the Pareto frontier by quality into ranked per-tier lists.
+
+    Only Pareto-optimal models are eligible: a model that is dominated on both quality and
+    quota burn can never be a sensible tier pick. The allocator shares frontier models
+    across tiers when the frontier is smaller than the number of paid tiers.
+    """
     empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
     if not benchmarked:
@@ -131,11 +134,8 @@ def _pareto_clusters(
     def quality(m: NormalizedModel) -> float:
         return effective_quality(m, profile=c.profile, weights=c.weights)
 
-    min_pareto_q = min((quality(m) for m in benchmarked if m.is_pareto), default=0.0)
-    competitive = [
-        m for m in benchmarked if (m.bpe or 0.0) >= 0.05 and quality(m) >= min_pareto_q * 0.8
-    ]
-    pool = competitive if len(competitive) >= 3 else benchmarked
+    frontier = [m for m in benchmarked if m.is_pareto]
+    pool = frontier or benchmarked
     return {
         tier: sorted(
             cluster,
@@ -217,7 +217,12 @@ def _evaluate(models: list[NormalizedModel], c: SelectionCriteria) -> list[Norma
 def _allocate_pareto(
     models: list[NormalizedModel], c: SelectionCriteria, evaluated: list[NormalizedModel]
 ) -> tuple[dict[str, str], dict[str, list[NormalizedModel]], list[NormalizedModel]]:
-    """Pareto allocation over already-filtered, already-evaluated models."""
+    """Pareto allocation over already-filtered, already-evaluated models.
+
+    Tiers are allowed to share a model. If the Pareto frontier has fewer models than paid
+    tiers, the missing tiers reuse the nearest selected paid tier instead of dropping to a
+    dominated model.
+    """
     free_ranked = rank_free_models(
         evaluated, skip_models=c.skip_models, allow_contributor=c.allow_contributor
     )
@@ -225,8 +230,20 @@ def _allocate_pareto(
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
     _pick_paid_tiers(selected, used, clusters)
 
-    # Fall back to allowance allocation if any tier is missing
-    if len(selected) < len(STANDARD_TIERS):
+    for tier in _PAID_TIERS:
+        if selected.get(tier):
+            continue
+        if tier == "light":
+            shared = selected.get("balanced") or selected.get("heavy") or ""
+        elif tier == "balanced":
+            shared = selected.get("heavy") or selected.get("light") or ""
+        else:
+            shared = selected.get("balanced") or selected.get("light") or ""
+        if shared:
+            selected[tier] = shared
+
+    # No benchmarked/Pareto model at all: fall back to allowance allocation.
+    if not any(selected.get(t) for t in _PAID_TIERS):
         picks, _, _, _ = _allocate_allowance(
             models,
             replace(c, preferred_tiers={**c.preferred_tiers, **selected}),
@@ -234,13 +251,14 @@ def _allocate_pareto(
         )
         for t in STANDARD_TIERS:
             selected.setdefault(t, picks.get(t, ""))
+    for t in STANDARD_TIERS:
+        selected.setdefault(t, "")
     return selected, clusters, free_ranked
 
 
 def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSelection:
     """Pick one model per tier plus up to ``c.top_n`` ordered candidates, evaluating once."""
     filtered = _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
-    skips = c.skip_models
     if c.mode == "pareto":
         pool = _evaluate(filtered, c)
         selected, clusters, free_ranked = _allocate_pareto(filtered, c, pool)
@@ -259,7 +277,17 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         )
 
     if general_paid is None:
-        general_paid = rank_paid_models(filtered, skip_models=skips)
+        frontier = [m for m in pool if m.is_pareto]
+        general_paid = sorted(
+            frontier,
+            key=lambda m: (
+                -(m.bpe or 0.0),
+                -effective_quality(m, profile=c.profile, weights=c.weights),
+                m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
+                -(m.speed_tps or 0.0),
+                tie_break_key(m),
+            ),
+        )
 
     def fill(tier: str, pools: list[list[NormalizedModel]]) -> list[str]:
         candidates = [primary[tier]] if primary[tier] else []
@@ -306,7 +334,10 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
             key=lambda m: m.id,
         )
         ranked = paid + free + remaining
-    tier_by_full_id = {full_id: tier_name for tier_name, full_id in tiers_map.items() if full_id}
+    tier_by_full_id: dict[str, str] = {}
+    for tier_name, full_id in tiers_map.items():
+        if full_id and full_id not in tier_by_full_id:
+            tier_by_full_id[full_id] = tier_name
 
     return [
         m.model_copy(update={"rank": idx, "tier": tier_by_full_id.get(m.full_id)})

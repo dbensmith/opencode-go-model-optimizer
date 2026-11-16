@@ -45,7 +45,7 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ### Operating Modes
 
-- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Coding Indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks natural breaks.
+- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE) and Fisher-Jenks natural breaks. Only Pareto-optimal models are clustered into tiers, so a tier is never filled with a model dominated on both quality and quota burn; when the frontier has fewer models than paid tiers, tiers may share a model rather than falling back to a dominated one.
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
 - **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
 
@@ -202,7 +202,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--mode {auto,pareto,allowance}`**: Ranking mode (default: `auto`).
 - **`--snapshot <file>`**: Use a local snapshot JSON instead of fetching (see [Offline Usage](#offline-usage)).
 - **`-o, --output <file>`**: Write output to a file instead of stdout.
-- **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights AA Coding Index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).
+- **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights the AA Engineering capability index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).
 - **`--price-basis {now,blended,worst,list}`**: How catalogue price multipliers (peak-hour surcharges, expiring promos) are applied to input/output/cache prices before ranking, clustering, `--max-output-cost`, and burn calculations (default: `blended`).
   - `now`: the multiplier in effect at `--at`.
   - `blended`: the time-weighted average multiplier over the 7 days starting at `--at`. This is the default because a selection typically persists for days, and it accounts for imminent promo expiry (e.g. a 50%-off promo ending in 3 days counts as roughly 1.57x of the promo price).
@@ -223,7 +223,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 
   Why: the docs estimates reflect each model's real token profile (cache-heavy models differ a lot from the one-size synthetic mix). They also expose the 5-hour window (20% of monthly), which is the limit users usually hit first: `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column (only when estimates are present). Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`), old snapshots without them still load, and `diff` reports estimate changes under pricing changes.
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
-- **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and Coding weights (e.g. `--weights 0.5,0.5`).
+- **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and coding/engineering weights (e.g. `--weights 0.5,0.5`).
 - **`--no-contributor`**: Exclude contributor-tier models from free tier allocation.
 - **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (e.g. a free model hosted outside your allowed regions). Excluded by default, because default workspace settings block these models and selecting one would fail at request time.
 - **`--no-training`**: Exclude models whose provider trains on your prompts and completions (e.g. contributor-tier models).

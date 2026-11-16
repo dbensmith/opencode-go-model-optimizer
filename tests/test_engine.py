@@ -644,11 +644,15 @@ def test_rank_catalog_both_modes():
     for idx, m in enumerate(models):
         m.aa_iq = 50.0 - idx
 
-    # Test pareto mode without skips (all 4 tiers populated)
+    # Test pareto mode without skips: every tier is populated, but tiers may share a model
+    # when the Pareto frontier has fewer models than paid tiers.
     ranked_pareto_all = _rank(models, mode="pareto")
     pareto_tiers = {m.tier for m in ranked_pareto_all if m.tier is not None}
-    assert pareto_tiers == {"heavy", "balanced", "light", "free"}
+    assert {"heavy", "balanced", "free"} <= pareto_tiers
     assert any(m.tier is None for m in ranked_pareto_all)
+    selection = _tiers_pareto(models)
+    assert set(selection) == {"heavy", "balanced", "light", "free"}
+    assert all(selection.values())
 
     # Test pareto mode with skip_models
     ranked_pareto = _rank(models, mode="pareto", skip_models={"beta-flash"})
@@ -1040,8 +1044,9 @@ def test_evaluate_pareto_skipped_model_does_not_dominate():
     assert r_dom.is_pareto is None
 
 
-def test_allocate_tiers_pareto_fallback_respects_already_selected():
-    # Only 1 benchmarked paid model, 2 other active paid models without benchmarks, and 1 free model
+def test_allocate_tiers_pareto_reuses_frontier_when_smaller_than_tiers():
+    # Only 1 benchmarked paid model, 2 other active paid models without benchmarks, and 1 free model.
+    # Pareto tiers may share a model rather than dropping to an unbenchmarked/dominated one.
     m_heavy = NormalizedModel(
         id="m-heavy",
         aa_iq=90.0,
@@ -1065,13 +1070,43 @@ def test_allocate_tiers_pareto_fallback_respects_already_selected():
 
     tiers = _tiers_pareto([m_heavy, m_paid_other1, m_paid_other2, m_free])
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
-
-    # All 4 tiers must be assigned distinct models without reusing m_heavy
-    assigned = [v for v in tiers.values() if v]
-    assert len(assigned) == 4
-    assert len(set(assigned)) == 4
     assert tiers["heavy"] == "opencode-go/m-heavy"
-    assert "opencode-go/m-heavy" not in (tiers["balanced"], tiers["light"], tiers["free"])
+    assert tiers["balanced"] == "opencode-go/m-heavy"
+    assert tiers["light"] == "opencode-go/m-heavy"
+    assert tiers["free"] == "opencode-go/m-free"
+
+
+def test_pareto_light_tier_ignores_dominated_models():
+    # Regression: a non-Pareto model must not win a tier just because the better Pareto
+    # model was already claimed by a neighbouring tier. Tiers may share a model instead.
+    def model(mid, iq, *, is_pareto, bpe, burn, output):
+        return NormalizedModel(
+            id=mid,
+            aa_iq=iq,
+            is_pareto=is_pareto,
+            bpe=bpe,
+            composite_burn_pct=burn,
+            monthly_allowance=100.0,
+            cost=TokenCost(output=output),
+        )
+
+    m_heavy = model("m-heavy", 90.0, is_pareto=True, bpe=1.0, burn=50.0, output=10.0)
+    m_bal = model("m-bal", 60.0, is_pareto=True, bpe=1.0, burn=5.0, output=5.0)
+    m_light = model("m-light", 59.0, is_pareto=True, bpe=1.0, burn=1.0, output=1.0)
+    # Dominated by m_light on both quality and burn, and not on the Pareto frontier.
+    m_dominated = model("m-dominated", 20.0, is_pareto=False, bpe=0.2, burn=2.0, output=0.5)
+    m_free = NormalizedModel(id="m-free", is_zero_cost=True)
+
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        tiers = _tiers_pareto([m_heavy, m_bal, m_light, m_dominated, m_free])
+
+    assert tiers["heavy"] == "opencode-go/m-heavy"
+    assert tiers["balanced"] == "opencode-go/m-bal"
+    assert tiers["light"] == "opencode-go/m-light"
+    assert "opencode-go/m-dominated" not in tiers.values()
 
 
 def test_desc_str_key_sorts_strings_descending():
