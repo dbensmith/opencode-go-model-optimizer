@@ -10,6 +10,50 @@ Evaluates the active OpenCode Go model catalog and computes optimal model assign
 
 `opencode-go-model-optimizer` provides a clean, decoupled engine that evaluates the OpenCode Go catalog without being bound to any specific consumer framework or agent runner.
 
+```mermaid
+flowchart LR
+    subgraph Ingestors["Data Ingestors"]
+        I1["OpenCode API / CLI"]
+        I2["OpenCode MDX Docs"]
+        I3["models.dev"]
+        I4["Artificial Analysis v2"]
+    end
+
+    subgraph Pipeline["Normalized Snapshot & Local Cache"]
+        SNAP["Snapshot Normalizer & Disk Cache"]
+        FILT["Privacy & Constraint Filters"]
+    end
+
+    subgraph Engine["Dual-Mode Ranking Engine"]
+        PARETO["Pareto Mode: BPE + Quality/Burn Bands"]
+        ALLOWANCE["Allowance Mode: Fisher-Jenks 3 Log-Cost Clusters"]
+    end
+
+    subgraph Surfaces["Outputs & Surfaces"]
+        CLI["CLI: select / rank / diff / report"]
+        GH_ISSUE["GitHub Issue & Step Summary"]
+        PAGES["Docsify GitHub Pages"]
+        RESULTS_BR["Orphan results Branch"]
+    end
+
+    I1 --> SNAP
+    I2 --> SNAP
+    I3 --> SNAP
+    I4 -. "Optional (AA_API_KEY)" .-> SNAP
+
+    SNAP --> FILT
+    FILT --> PARETO
+    FILT --> ALLOWANCE
+
+    PARETO --> CLI
+    PARETO --> GH_ISSUE
+    PARETO --> PAGES
+
+    ALLOWANCE --> CLI
+    ALLOWANCE --> RESULTS_BR
+    ALLOWANCE --> PAGES
+```
+
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
 │                      opencode-go-model-optimizer                       │
@@ -49,6 +93,46 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
 - **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
 
+```mermaid
+flowchart TD
+    START["Start: select or rank execution"] --> MODE_CHECK{"Evaluate --mode"}
+
+    MODE_CHECK -- "auto (default)" --> HAS_BENCHMARKS{"AA Benchmarks Present?"}
+    HAS_BENCHMARKS -- "Yes (AA_API_KEY set)" --> PARETO_MODE["Pareto Mode"]
+    HAS_BENCHMARKS -- "No (Keyless)" --> ALLOWANCE_MODE["Allowance Mode"]
+
+    MODE_CHECK -- "pareto" --> PARETO_MODE
+    MODE_CHECK -- "allowance" --> ALLOWANCE_MODE
+
+    subgraph ParetoSelection["Pareto Mode Tier Selection"]
+        PARETO_MODE --> ELIG_PAID["Filter Eligible Paid Models (Privacy, Limits, Skip)"]
+        ELIG_PAID --> FRONTIER["Compute Quality vs Quota Burn (Filter Dominated Models -> BPE = 1.000)"]
+        FRONTIER --> CALC_VAL["Calculate Value Metric (value = quality / burn)"]
+        CALC_VAL --> T_HEAVY["heavy: Top value with quality >= 90% of best frontier quality"]
+        CALC_VAL --> T_BALANCED["balanced: Top value with quality >= 60% of best frontier quality"]
+        CALC_VAL --> T_LIGHT["light: Lowest quota burn on Pareto frontier"]
+    end
+
+    subgraph AllowanceSelection["Allowance Mode Cluster Allocation"]
+        ALLOWANCE_MODE --> ELIG_ALLOW["Filter Eligible Models"]
+        ELIG_ALLOW --> JENKS["Fisher-Jenks 3 Natural Log-Cost Clusters"]
+        JENKS --> CLUST_MAP["Map Clusters to Tiers (heavy: top, balanced: mid, light: low)"]
+    end
+
+    subgraph FreeSelection["Free Tier Selection (Both Modes)"]
+        ELIG_FREE["Filter Zero-Cost & Contributor Endpoints"]
+        ELIG_FREE --> T_FREE["free: Newest eligible release date, then largest context"]
+    end
+
+    START --> ELIG_FREE
+
+    T_HEAVY --> TIERS["Final Tier Selections (heavy, balanced, light, free)"]
+    T_BALANCED --> TIERS
+    T_LIGHT --> TIERS
+    CLUST_MAP --> TIERS
+    T_FREE --> TIERS
+```
+
 #### How Pareto tiers are chosen
 
 1. **Eligibility.** Start from active, non-free models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. OpenCode Go privacy defaults apply: Global-region models, paid endpoints that train, and free endpoints that train are all blocked unless the corresponding `--allow-*` flag is passed. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
@@ -63,6 +147,24 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
    - **`free`** — the newest eligible zero-cost model.
    - Tiers may share a model. If the same model is the best answer for balanced and light, both point to it; the tool does not manufacture a distinct but dominated pick.
 7. **Fallbacks.** Remaining frontier models, ordered by BPE, quality, burn and speed. Use `--top-n` to include them.
+
+##### Workload Profiles & Capability Weights
+
+| Profile | Intelligence Weight | Engineering Weight | Speed Scaling | Standard Turn Token Mix (In / Cache / Out) |
+| --- | --- | --- | --- | --- |
+| `general` | 70% | 30% | None | 750 / 60,000 / 250 |
+| `coding` | 40% | 60% | None | 1,500 / 100,000 / 800 |
+| `reasoning` | 85% | 15% | None | 1,000 / 40,000 / 2,000 |
+| `fast` | 70% | 30% | `0.85 + 0.15 * min(2.0, speed_tps / 100.0)` | 500 / 20,000 / 150 |
+
+```mermaid
+xychart-beta
+    title "Workload Profile Weights: Intelligence (Bar) vs Engineering (Line)"
+    x-axis ["general", "coding", "reasoning", "fast"]
+    y-axis "Weight (%)" 0 --> 100
+    bar [70, 40, 85, 70]
+    line [30, 60, 15, 30]
+```
 
 **Worked example** (illustrative `go` snapshot; live examples and frontier band cutoffs are rendered dynamically on the GitHub Pages site under **Live Pareto Analysis & Plans**):
 
@@ -91,6 +193,37 @@ Live example selections across privacy and training flag combinations are render
 | --- | --- | --- | --- |
 | Allow paid endpoints that train | `--allow-paid-training` | off | Paid models with `trains_on_data=true` |
 | Allow free endpoints that train | `--allow-free-training` | off | Free models with `trains_on_data=true` |
+
+```mermaid
+flowchart TD
+    MODEL["Candidate Model"] --> CHK_GLOBAL{"Requires Global Region?"}
+
+    CHK_GLOBAL -- "Yes" --> ALLOW_GLOBAL{"--allow-global-region?"}
+    ALLOW_GLOBAL -- "No (default)" --> EXCLUDE["Excluded by Privacy Filters"]
+    ALLOW_GLOBAL -- "Yes" --> CHK_TRAIN{"Trains on Data?"}
+    CHK_GLOBAL -- "No" --> CHK_TRAIN
+
+    CHK_TRAIN -- "Yes" --> PRICING_TYPE{"Endpoint Pricing Type"}
+    CHK_TRAIN -- "No" --> CHK_ZDR{"--require-zdr Set?"}
+
+    PRICING_TYPE -- "Paid Model" --> ALLOW_PAID{"--allow-paid-training?"}
+    ALLOW_PAID -- "No (default)" --> EXCLUDE
+    ALLOW_PAID -- "Yes" --> CHK_ZDR
+
+    PRICING_TYPE -- "Free / Contributor" --> ALLOW_FREE{"--allow-free-training?"}
+    ALLOW_FREE -- "No (default)" --> EXCLUDE
+    ALLOW_FREE -- "Yes" --> CHK_ZDR
+
+    CHK_ZDR -- "Yes" --> HAS_ZDR{"Zero Data Retention (ZDR)?"}
+    HAS_ZDR -- "No" --> EXCLUDE
+    HAS_ZDR -- "Yes" --> CHK_RETENTION{"--max-retention-days Set?"}
+    CHK_ZDR -- "No" --> CHK_RETENTION
+
+    CHK_RETENTION -- "Yes" --> RETENTION_DAYS{"Retention <= N Days?"}
+    RETENTION_DAYS -- "No or Unknown" --> EXCLUDE
+    RETENTION_DAYS -- "Yes" --> ELIGIBLE["Eligible for Selection & Ranking"]
+    CHK_RETENTION -- "No" --> ELIGIBLE
+```
 
 Examples:
 
@@ -198,6 +331,24 @@ A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.
 
 - Machine-readable: <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/results.json>
 - Human-readable (tables, how it was decided, warnings, provenance, test results): <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/README.md>
+
+```mermaid
+flowchart LR
+    subgraph W1["publish-results.yml (Keyless Allowance Report)"]
+        CRON1["Twice Daily Schedule (05:17, 17:17 UTC)"] --> TEST1["Contract & Offline Tests"]
+        TEST1 --> REP1["report Command (Keyless Allowance Mode)"]
+        REP1 --> ARTIFACT1["Generate results.json & README.md"]
+        ARTIFACT1 --> PUSH1["Force Push Orphan Commit to results Branch"]
+    end
+
+    subgraph W2["run-optimizer.yml (1Password Pareto Optimizer)"]
+        CRON2["8-Hourly Schedule (07:00, 15:00, 23:00 UTC)"] --> OP2["Load AA_API_KEY via 1Password Service Account"]
+        OP2 --> OPT2["run-optimizer.sh (Pareto Mode & Benchmarks)"]
+        OPT2 --> RENDER2["scripts/render_optimizer_issue.py"]
+        RENDER2 --> ISSUE2["Update Open GitHub Issue #optimizer-results"]
+        RENDER2 --> PAGES2["Deploy Live Analysis & Docs to Docsify GitHub Pages"]
+    end
+```
 
 ### Data policy
 

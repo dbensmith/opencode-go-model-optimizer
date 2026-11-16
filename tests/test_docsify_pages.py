@@ -30,6 +30,8 @@ def test_docsify_files_exist() -> None:
     assert "pagination:" in index_content
     assert "docsify@5.1.0" in index_content
     assert "docsify-copy-code@3.0.2" in index_content
+    assert "mermaid@" in index_content
+    assert "window.mermaid.run" in index_content
     assert 'name="referrer" content="strict-origin-when-cross-origin"' in index_content
     assert 'crossorigin="anonymous"' in index_content
 
@@ -162,6 +164,8 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "--rank-json out/rank.json" in workflow_text
     assert "--plan-json" in workflow_text
     assert "--free-matrix-json" in workflow_text
+    assert "--charts-dir out/charts" in workflow_text
+    assert "out/site/charts" in workflow_text
 
     # Check DRY staging commands and sed replacement
     assert "out/site" in workflow_text
@@ -189,6 +193,10 @@ def test_readme_clean_hardcoded_examples() -> None:
     assert "Gemini 4 Argon" not in readme_text
     assert "Worked example (live" not in readme_text
     assert "analysis.md" not in readme_text
+    assert "```mermaid" in readme_text
+    assert "flowchart LR" in readme_text
+    assert "flowchart TD" in readme_text
+    assert "xychart-beta" in readme_text
 
 
 def test_composite_action_and_hardening() -> None:

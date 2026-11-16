@@ -172,6 +172,7 @@ jobs:
             --plan-json go-plus=out/plans/go-plus.json \
             --plan-json go-teams=out/plans/go-teams.json \
             --free-matrix-json out/free-matrix.json \
+            --charts-dir out/charts \
             --analysis-output out/analysis.md
 
           cat out/issue.md >> "$GITHUB_STEP_SUMMARY"
@@ -183,6 +184,7 @@ jobs:
           cp README.md out/site/usage.md
           cp out/select.json out/site/select.json
           cp out/rank.json out/site/rank.json
+          cp -a out/charts out/site/charts
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
           issues_url="${repo_url}/issues?q=is%3Aissue+is%3Aopen+label%3Aoptimizer-results"

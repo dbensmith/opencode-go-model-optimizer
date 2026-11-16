@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -194,6 +196,133 @@ def render_issue_markdown(
             f"| {_fmt_multiplier(ex)} |"
         )
 
+    has_active_model = any(
+        (explanations.get(t, {}).get("model_id") or tiers.get(t) or "None") != "None"
+        for t in ordered_tiers
+    )
+    if ordered_tiers and has_active_model:
+        lines.extend(
+            [
+                "",
+                "#### Visual Tier Summary",
+                "",
+                "```mermaid",
+                "flowchart LR",
+                f'    Root["{plan} ({mode})"]',
+            ]
+        )
+        for t in ordered_tiers:
+            ex = explanations.get(t) or {}
+            m_id = ex.get("model_id") or tiers.get(t) or "None"
+            clean_id = m_id.removeprefix("opencode-go/") if m_id != "None" else "None"
+            if clean_id == "None":
+                node_label = f"{t}: None"
+            else:
+                allow_str = _fmt_allowance(ex.get("monthly_allowance"))
+                burn_val = ex.get("quota_burn_pct")
+                burn_part = (
+                    f"{burn_val:.1f}% burn" if isinstance(burn_val, (int, float)) else "- burn"
+                )
+                node_label = f"{t}: {clean_id} ({allow_str}, {burn_part})"
+            node_label = node_label.replace('"', "'")
+            t_node = f"T_{t.replace('-', '_')}"
+            lines.append(f'    Root --> {t_node}["{node_label}"]')
+        lines.append("```")
+
+        has_benchmarks = any(
+            (
+                explanations.get(t, {}).get("aa_iq") is not None
+                or explanations.get(t, {}).get("aa_coding") is not None
+            )
+            for t in ordered_tiers
+        )
+        has_burn_or_allow = any(
+            (
+                isinstance(explanations.get(t, {}).get("quota_burn_pct"), (int, float))
+                or isinstance(explanations.get(t, {}).get("monthly_allowance"), (int, float))
+            )
+            for t in ordered_tiers
+        )
+
+        if has_benchmarks:
+            chart_tiers = [
+                t
+                for t in ordered_tiers
+                if (
+                    explanations.get(t, {}).get("aa_iq") is not None
+                    or explanations.get(t, {}).get("aa_coding") is not None
+                    or (
+                        isinstance(explanations.get(t, {}).get("quota_burn_pct"), (int, float))
+                        and t != "free"
+                    )
+                )
+                and (explanations.get(t, {}).get("model_id") or tiers.get(t) or "None") != "None"
+            ]
+            if not chart_tiers:
+                chart_tiers = [
+                    t
+                    for t in ordered_tiers
+                    if (explanations.get(t, {}).get("model_id") or tiers.get(t) or "None") != "None"
+                ]
+            if chart_tiers:
+                iq_vals = [
+                    round(float(explanations.get(t, {}).get("aa_iq") or 0.0), 1)
+                    for t in chart_tiers
+                ]
+                coding_vals = [
+                    round(float(explanations.get(t, {}).get("aa_coding") or 0.0), 1)
+                    for t in chart_tiers
+                ]
+                burn_vals = [
+                    round(float(explanations.get(t, {}).get("quota_burn_pct") or 0.0), 1)
+                    for t in chart_tiers
+                ]
+                x_str = ", ".join(f'"{t}"' for t in chart_tiers)
+                lines.extend(
+                    [
+                        "",
+                        "```mermaid",
+                        "xychart-beta",
+                        '    title "Tier Comparison: Benchmark Scores vs Quota Burn %"',
+                        f"    x-axis [{x_str}]",
+                        '    y-axis "Score / Burn %" 0 --> 100',
+                        f"    bar [{', '.join(str(v) for v in iq_vals)}]",
+                        f"    bar [{', '.join(str(v) for v in coding_vals)}]",
+                        f"    line [{', '.join(str(v) for v in burn_vals)}]",
+                        "```",
+                    ]
+                )
+        elif has_burn_or_allow:
+            paid_tiers = [
+                t
+                for t in ordered_tiers
+                if t != "free"
+                and (explanations.get(t, {}).get("model_id") or tiers.get(t) or "None") != "None"
+            ]
+            if paid_tiers:
+                allow_vals = [
+                    round(float(explanations.get(t, {}).get("monthly_allowance") or 0.0), 1)
+                    for t in paid_tiers
+                ]
+                cost_vals = [
+                    round(float(explanations.get(t, {}).get("output_cost_per_1m") or 0.0), 1)
+                    for t in paid_tiers
+                ]
+                x_str = ", ".join(f'"{t}"' for t in paid_tiers)
+                lines.extend(
+                    [
+                        "",
+                        "```mermaid",
+                        "xychart-beta",
+                        '    title "Paid Tier Allowance vs Output Cost"',
+                        f"    x-axis [{x_str}]",
+                        '    y-axis "Allowance ($) / Cost ($/1M)"',
+                        f"    bar [{', '.join(str(v) for v in allow_vals)}]",
+                        f"    line [{', '.join(str(v) for v in cost_vals)}]",
+                        "```",
+                    ]
+                )
+
     lines.extend(["", "### Update Explanation", ""])
     if mode == "pareto":
         lines.append(
@@ -277,12 +406,353 @@ def render_issue_markdown(
     return "\n".join(lines) + "\n"
 
 
+def generate_analysis_svgs(
+    charts_dir: Path,
+    pareto_models: list[dict[str, Any]],
+    rank_models: list[dict[str, Any]],
+    plan_payloads: dict[str, dict[str, Any]] | None,
+    top_quality: float,
+    heavy_cutoff: float,
+    balanced_cutoff: float,
+) -> list[str]:
+    """Generate crisp, self-contained SVG charts for live Pareto analysis."""
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    generated: list[str] = []
+
+    css_styles = """
+    :root {
+      --bg: #ffffff;
+      --card-bg: #f8fafc;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --grid: #f1f5f9;
+      --c-blue: #2563eb;
+      --c-green: #10b981;
+      --c-amber: #f59e0b;
+      --c-purple: #8b5cf6;
+      --c-slate: #94a3b8;
+      --band-heavy: rgba(16, 185, 129, 0.12);
+      --band-balanced: rgba(37, 99, 235, 0.08);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --card-bg: #161b22;
+        --text: #f0f6fc;
+        --text-muted: #8b949e;
+        --border: #30363d;
+        --grid: #21262d;
+        --c-blue: #58a6ff;
+        --c-green: #3fb950;
+        --c-amber: #d29922;
+        --c-purple: #bc8cff;
+        --c-slate: #6e7681;
+        --band-heavy: rgba(63, 185, 80, 0.16);
+        --band-balanced: rgba(88, 166, 255, 0.12);
+      }
+    }
+    text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    """
+
+    # 1. pareto-frontier.svg
+    ml, mr, mt, mb = 65, 35, 55, 55
+    pw = 800 - ml - mr
+    ph = 420 - mt - mb
+
+    all_burns = [
+        float(
+            m.get("composite_burn_pct")
+            if m.get("composite_burn_pct") is not None
+            else (m.get("quota_burn_pct") or 0.0)
+        )
+        for m in rank_models
+        if (m.get("composite_burn_pct") is not None or m.get("quota_burn_pct") is not None)
+    ]
+    max_burn = max([*all_burns, 100.0])
+    x_max = max_burn * 1.08
+    max_q = max([top_quality, *(float(m.get("_quality", 0.0)) for m in pareto_models), 100.0])
+    y_max = max_q * 1.08
+
+    def to_x(b: float) -> float:
+        return ml + (b / x_max) * pw
+
+    def to_y(q: float) -> float:
+        return mt + ph - (q / y_max) * ph
+
+    frontier_svg = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" width="100%" height="100%">',
+        f"<style>{css_styles}</style>",
+        '<rect width="800" height="420" rx="8" fill="var(--bg)"/>',
+        '<text x="400" y="30" text-anchor="middle" font-size="15" font-weight="bold" fill="var(--text)">Live Pareto Frontier: Effective Quality vs Quota Burn %</text>',
+    ]
+
+    # Shaded bands
+    y_top = to_y(y_max)
+    y_h = to_y(heavy_cutoff)
+    y_b = to_y(balanced_cutoff)
+    if heavy_cutoff > 0:
+        frontier_svg.append(
+            f'<rect x="{ml}" y="{y_top:.1f}" width="{pw}" height="{max(0.0, y_h - y_top):.1f}" fill="var(--band-heavy)"/>'
+        )
+        frontier_svg.append(
+            f'<text x="{ml + 10}" y="{y_top + 16:.1f}" font-size="11" font-weight="600" fill="var(--c-green)">Heavy Band (≥90%: {heavy_cutoff:.1f})</text>'
+        )
+    if balanced_cutoff > 0:
+        frontier_svg.append(
+            f'<rect x="{ml}" y="{y_h:.1f}" width="{pw}" height="{max(0.0, y_b - y_h):.1f}" fill="var(--band-balanced)"/>'
+        )
+        frontier_svg.append(
+            f'<text x="{ml + 10}" y="{y_h + 16:.1f}" font-size="11" font-weight="600" fill="var(--c-blue)">Balanced Band (≥60%: {balanced_cutoff:.1f})</text>'
+        )
+
+    # Grid lines & ticks
+    for frac in (0.2, 0.4, 0.6, 0.8, 1.0):
+        gy = to_y(frac * y_max)
+        frontier_svg.append(
+            f'<line x1="{ml}" y1="{gy:.1f}" x2="{ml + pw}" y2="{gy:.1f}" stroke="var(--grid)" stroke-width="1"/>'
+        )
+        frontier_svg.append(
+            f'<text x="{ml - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="10" fill="var(--text-muted)">{int(frac * y_max)}</text>'
+        )
+        gx = to_x(frac * x_max)
+        frontier_svg.append(
+            f'<line x1="{gx:.1f}" y1="{mt}" x2="{gx:.1f}" y2="{mt + ph}" stroke="var(--grid)" stroke-width="1"/>'
+        )
+        frontier_svg.append(
+            f'<text x="{gx:.1f}" y="{mt + ph + 16}" text-anchor="middle" font-size="10" fill="var(--text-muted)">{int(frac * x_max)}%</text>'
+        )
+
+    # Axes
+    frontier_svg.append(
+        f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + ph}" stroke="var(--border)" stroke-width="1.5"/>'
+    )
+    frontier_svg.append(
+        f'<line x1="{ml}" y1="{mt + ph}" x2="{ml + pw}" y2="{mt + ph}" stroke="var(--border)" stroke-width="1.5"/>'
+    )
+    frontier_svg.append(
+        f'<text x="{ml + pw / 2:.1f}" y="405" text-anchor="middle" font-size="12" fill="var(--text-muted)">Quota Burn %</text>'
+    )
+    frontier_svg.append(
+        f'<text x="18" y="{mt + ph / 2:.1f}" text-anchor="middle" font-size="12" fill="var(--text-muted)" transform="rotate(-90, 18, {mt + ph / 2:.1f})">Effective Quality</text>'
+    )
+
+    # Dominated models
+    for m in rank_models:
+        if m.get("is_pareto"):
+            continue
+        iq = m.get("aa_iq")
+        coding = m.get("aa_coding")
+        if iq is None and coding is None:
+            continue
+        q = 0.7 * float(iq or 0) + 0.3 * float(coding or 0)
+        b = m.get("composite_burn_pct")
+        if b is None:
+            b = m.get("quota_burn_pct")
+        if not isinstance(b, (int, float)):
+            continue
+        cx = to_x(float(b))
+        cy = to_y(q)
+        frontier_svg.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4" fill="var(--c-slate)" opacity="0.45"/>'
+        )
+
+    # Pareto frontier models
+    sorted_frontier = sorted(
+        pareto_models,
+        key=lambda x: float(
+            x.get("composite_burn_pct")
+            if x.get("composite_burn_pct") is not None
+            else (x.get("quota_burn_pct") or 0.0)
+        ),
+    )
+    if sorted_frontier:
+        pts: list[tuple[float, float, float, float, dict[str, Any]]] = []
+        for m in sorted_frontier:
+            b = float(
+                m.get("composite_burn_pct")
+                if m.get("composite_burn_pct") is not None
+                else (m.get("quota_burn_pct") or 0.0)
+            )
+            q = float(m.get("_quality", 0.0))
+            pts.append((to_x(b), to_y(q), b, q, m))
+
+        path_d = f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"
+        for i in range(1, len(pts)):
+            path_d += f" L {pts[i][0]:.1f} {pts[i - 1][1]:.1f} L {pts[i][0]:.1f} {pts[i][1]:.1f}"
+        frontier_svg.append(
+            f'<path d="{path_d}" fill="none" stroke="var(--c-blue)" stroke-width="2.5" stroke-dasharray="4,3"/>'
+        )
+
+        for cx, cy, b, q, m in pts:
+            raw_id = m.get("full_id") or m.get("id") or m.get("model_id") or "model"
+            short_id = raw_id.removeprefix("opencode-go/")
+            frontier_svg.append(
+                f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5.5" fill="var(--bg)" stroke="var(--c-blue)" stroke-width="2.5"/>'
+            )
+            frontier_svg.append(
+                f'<text x="{cx + 8:.1f}" y="{cy - 6:.1f}" font-size="11" font-weight="600" fill="var(--text)">'
+                f"{html.escape(short_id)} ({b:.1f}%, {q:.1f})</text>"
+            )
+
+    frontier_svg.append("</svg>")
+    (charts_dir / "pareto-frontier.svg").write_text("\n".join(frontier_svg), encoding="utf-8")
+    generated.append("pareto-frontier.svg")
+
+    # 2. catalog-ranking.svg
+    top_models = rank_models[:12]
+    row_h = 42
+    header_h = 55
+    footer_h = 35
+    svg_h = header_h + len(top_models) * row_h + footer_h
+    c_ml, c_mr = 190, 70
+    bar_max_w = 800 - c_ml - c_mr
+    max_val = 100.0
+
+    catalog_svg = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 {svg_h}" width="100%" height="100%">',
+        f"<style>{css_styles}</style>",
+        f'<rect width="800" height="{svg_h}" rx="8" fill="var(--bg)"/>',
+        '<text x="30" y="28" font-size="15" font-weight="bold" fill="var(--text)">Ranked Model Catalog: Benchmark Scores &amp; Quota Burn</text>',
+        '<rect x="480" y="18" width="10" height="10" rx="2" fill="var(--c-blue)"/>',
+        '<text x="495" y="27" font-size="11" fill="var(--text-muted)">AA IQ</text>',
+        '<rect x="560" y="18" width="10" height="10" rx="2" fill="var(--c-green)"/>',
+        '<text x="575" y="27" font-size="11" fill="var(--text-muted)">Engineering</text>',
+        '<rect x="665" y="18" width="10" height="10" rx="2" fill="var(--c-amber)"/>',
+        '<text x="680" y="27" font-size="11" fill="var(--text-muted)">Quota Burn %</text>',
+    ]
+
+    for i, m in enumerate(top_models):
+        y_base = header_h + i * row_h
+        raw_id = m.get("full_id") or m.get("id") or m.get("model_id") or "unknown"
+        short_id = raw_id.removeprefix("opencode-go/")
+        rank_val = m.get("rank")
+        rank_s = f"#{rank_val}" if rank_val is not None else f"#{i + 1}"
+
+        catalog_svg.append(
+            f'<text x="{c_ml - 12}" y="{y_base + 22}" text-anchor="end" font-size="12" font-weight="500" fill="var(--text)">'
+            f"{rank_s} {html.escape(short_id)}</text>"
+        )
+
+        iq = float(m.get("aa_iq") or 0.0)
+        coding = float(m.get("aa_coding") or 0.0)
+        burn_val = m.get("composite_burn_pct")
+        if burn_val is None:
+            burn_val = m.get("quota_burn_pct")
+        burn = float(burn_val) if isinstance(burn_val, (int, float)) else 0.0
+
+        w_iq = max(0.0, min(bar_max_w, (iq / max_val) * bar_max_w))
+        w_cod = max(0.0, min(bar_max_w, (coding / max_val) * bar_max_w))
+        w_burn = max(0.0, min(bar_max_w, (min(burn, 100.0) / max_val) * bar_max_w))
+
+        # Bars
+        catalog_svg.append(
+            f'<rect x="{c_ml}" y="{y_base + 6}" width="{w_iq:.1f}" height="7" rx="3" fill="var(--c-blue)"/>'
+        )
+        catalog_svg.append(
+            f'<text x="{c_ml + w_iq + 6:.1f}" y="{y_base + 13}" font-size="9" fill="var(--text-muted)">{iq:.1f}</text>'
+        )
+
+        catalog_svg.append(
+            f'<rect x="{c_ml}" y="{y_base + 16}" width="{w_cod:.1f}" height="7" rx="3" fill="var(--c-green)"/>'
+        )
+        catalog_svg.append(
+            f'<text x="{c_ml + w_cod + 6:.1f}" y="{y_base + 23}" font-size="9" fill="var(--text-muted)">{coding:.1f}</text>'
+        )
+
+        catalog_svg.append(
+            f'<rect x="{c_ml}" y="{y_base + 26}" width="{w_burn:.1f}" height="7" rx="3" fill="var(--c-amber)"/>'
+        )
+        catalog_svg.append(
+            f'<text x="{c_ml + w_burn + 6:.1f}" y="{y_base + 33}" font-size="9" fill="var(--text-muted)">{burn:.1f}%</text>'
+        )
+
+    catalog_svg.append("</svg>")
+    (charts_dir / "catalog-ranking.svg").write_text("\n".join(catalog_svg), encoding="utf-8")
+    generated.append("catalog-ranking.svg")
+
+    # 3. multi-plan-comparison.svg
+    if plan_payloads:
+        plans = list(plan_payloads.keys())
+        paid_tiers = ["heavy", "balanced", "light"]
+        p_ml, p_mr, p_mt, p_mb = 60, 30, 60, 55
+        p_pw = 800 - p_ml - p_mr
+        p_ph = 360 - p_mt - p_mb
+
+        all_vals: list[float] = [100.0]
+        for p_name in plans:
+            explanations = plan_payloads[p_name].get("explanations") or {}
+            for t in paid_tiers:
+                ex = explanations.get(t) or {}
+                allow = ex.get("monthly_allowance")
+                if isinstance(allow, (int, float)):
+                    all_vals.append(float(allow))
+                burn = ex.get("quota_burn_pct") or ex.get("composite_burn_pct")
+                if isinstance(burn, (int, float)):
+                    all_vals.append(float(burn))
+        p_max_val = max(all_vals) * 1.1
+
+        multi_svg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" width="100%" height="100%">',
+            f"<style>{css_styles}</style>",
+            '<rect width="800" height="360" rx="8" fill="var(--bg)"/>',
+            '<text x="400" y="28" text-anchor="middle" font-size="15" font-weight="bold" fill="var(--text)">Multi-Plan Comparison: Monthly Allowance ($) vs Quota Burn (%)</text>',
+            '<rect x="280" y="40" width="10" height="10" rx="2" fill="var(--c-blue)"/>',
+            '<text x="295" y="49" font-size="11" fill="var(--text-muted)">Allowance ($)</text>',
+            '<rect x="420" y="40" width="10" height="10" rx="2" fill="var(--c-amber)"/>',
+            '<text x="435" y="49" font-size="11" fill="var(--text-muted)">Quota Burn %</text>',
+        ]
+
+        tier_w = p_pw / len(paid_tiers)
+        for t_idx, tier in enumerate(paid_tiers):
+            tier_x = p_ml + t_idx * tier_w
+            multi_svg.append(
+                f'<text x="{tier_x + tier_w / 2:.1f}" y="345" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text)">{tier}</text>'
+            )
+
+            num_p = max(1, len(plans))
+            plan_slot_w = (tier_w * 0.88) / num_p
+            for p_idx, p_name in enumerate(plans):
+                ex = (plan_payloads[p_name].get("explanations") or {}).get(tier) or {}
+                allow_val = ex.get("monthly_allowance")
+                allow_f = float(allow_val) if isinstance(allow_val, (int, float)) else 0.0
+                burn_val = ex.get("quota_burn_pct") or ex.get("composite_burn_pct")
+                burn_f = float(burn_val) if isinstance(burn_val, (int, float)) else 0.0
+
+                slot_x = tier_x + (tier_w * 0.06) + p_idx * plan_slot_w
+                bw = (plan_slot_w * 0.8) / 2
+
+                h_allow = max(0.0, (allow_f / p_max_val) * p_ph)
+                h_burn = max(0.0, (min(burn_f, p_max_val) / p_max_val) * p_ph)
+
+                multi_svg.append(
+                    f'<rect x="{slot_x:.1f}" y="{p_mt + p_ph - h_allow:.1f}" width="{bw:.1f}" height="{h_allow:.1f}" rx="2" fill="var(--c-blue)"/>'
+                )
+                multi_svg.append(
+                    f'<rect x="{slot_x + bw + 2:.1f}" y="{p_mt + p_ph - h_burn:.1f}" width="{bw:.1f}" height="{h_burn:.1f}" rx="2" fill="var(--c-amber)"/>'
+                )
+                multi_svg.append(
+                    f'<text x="{slot_x + bw:.1f}" y="{p_mt + p_ph + 14}" text-anchor="middle" font-size="9" fill="var(--text-muted)">{html.escape(p_name)}</text>'
+                )
+
+        multi_svg.append("</svg>")
+        (charts_dir / "multi-plan-comparison.svg").write_text(
+            "\n".join(multi_svg), encoding="utf-8"
+        )
+        generated.append("multi-plan-comparison.svg")
+
+    return generated
+
+
 def render_analysis_markdown(
     select_payload: dict[str, Any],
     rank_models: list[dict[str, Any]],
     plan_payloads: dict[str, dict[str, Any]] | None = None,
     free_matrix: list[dict[str, Any]] | None = None,
     run_url: str | None = None,
+    charts_dir: str | Path | None = None,
 ) -> str:
     """Render comprehensive live Pareto analysis and catalog markdown (analysis.md)."""
     plan = select_payload.get("plan", "go")
@@ -342,6 +812,19 @@ def render_analysis_markdown(
     heavy_cutoff = 0.9 * top_quality
     balanced_cutoff = 0.6 * top_quality
 
+    generated_svgs: list[str] = []
+    if charts_dir:
+        c_path = Path(charts_dir)
+        generated_svgs = generate_analysis_svgs(
+            charts_dir=c_path,
+            pareto_models=pareto_models,
+            rank_models=rank_models,
+            plan_payloads=plan_payloads,
+            top_quality=top_quality,
+            heavy_cutoff=heavy_cutoff,
+            balanced_cutoff=balanced_cutoff,
+        )
+
     lines.extend(
         [
             f"- **Top Frontier Quality**: `{top_quality:.1f}`",
@@ -376,6 +859,130 @@ def render_analysis_markdown(
             f"| `{model_id}` | {iq_s} | {eng_s} | `{q:.1f}` | {burn_s} | {allowance_s} | {val_s} | {bands_str} |"
         )
 
+    if pareto_models:
+        slice_pareto = pareto_models[:12]
+        x_ids = [
+            (m.get("full_id") or m.get("id") or m.get("model_id") or "unknown")
+            .removeprefix("opencode-go/")
+            .replace('"', "")
+            for m in slice_pareto
+        ]
+        q_vals = [round(float(m["_quality"]), 1) for m in slice_pareto]
+        b_vals = []
+        for m in slice_pareto:
+            b = m.get("composite_burn_pct")
+            if b is None:
+                b = m.get("quota_burn_pct") or 0.0
+            b_vals.append(round(float(b), 1))
+
+        x_axis_str = ", ".join(f'"{x}"' for x in x_ids)
+        q_str = ", ".join(str(q) for q in q_vals)
+        b_str = ", ".join(str(b) for b in b_vals)
+
+        lines.extend(
+            [
+                "",
+                "```mermaid",
+                "xychart-beta",
+                '    title "Pareto Frontier: Effective Quality vs Quota Burn %"',
+                f"    x-axis [{x_axis_str}]",
+                '    y-axis "Quality / Burn %"',
+                f"    bar [{q_str}]",
+                f"    line [{b_str}]",
+                "```",
+            ]
+        )
+
+        benchmarked_models: list[tuple[str, float, float]] = []
+        for m in rank_models:
+            if m.get("is_zero_cost"):
+                continue
+            iq = m.get("aa_iq")
+            coding = m.get("aa_coding")
+            if iq is None and coding is None:
+                continue
+            if iq is not None and coding is not None:
+                q = 0.7 * float(iq) + 0.3 * float(coding)
+            elif iq is not None:
+                q = float(iq)
+            else:
+                q = float(coding)
+
+            b = m.get("composite_burn_pct")
+            if b is None:
+                b = m.get("quota_burn_pct")
+            if not isinstance(b, (int, float)):
+                continue
+
+            raw_id = m.get("full_id") or m.get("id") or m.get("model_id") or "model"
+            clean_id = raw_id.removeprefix("opencode-go/")
+            safe_label = re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-")
+            if not safe_label:
+                safe_label = f"m-{len(benchmarked_models) + 1}"
+            benchmarked_models.append((safe_label, float(b), q))
+
+        if not benchmarked_models:
+            for m in rank_models:
+                iq = m.get("aa_iq")
+                coding = m.get("aa_coding")
+                if iq is None and coding is None:
+                    continue
+                q = 0.7 * float(iq or 0) + 0.3 * float(coding or 0)
+                b = float(
+                    m.get("composite_burn_pct")
+                    if m.get("composite_burn_pct") is not None
+                    else (m.get("quota_burn_pct") or 0.0)
+                )
+                raw_id = m.get("full_id") or m.get("id") or m.get("model_id") or "model"
+                clean_id = raw_id.removeprefix("opencode-go/")
+                safe_label = (
+                    re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-")
+                    or f"m-{len(benchmarked_models) + 1}"
+                )
+                benchmarked_models.append((safe_label, b, q))
+
+        seen_labels: dict[str, int] = {}
+        deduped_models: list[tuple[str, float, float]] = []
+        for lbl, b, q in benchmarked_models[:12]:
+            if lbl in seen_labels:
+                seen_labels[lbl] += 1
+                lbl = f"{lbl}-{seen_labels[lbl]}"
+            else:
+                seen_labels[lbl] = 1
+            deduped_models.append((lbl, b, q))
+
+        if deduped_models:
+            max_burn = max(b for _, b, _ in deduped_models)
+            max_quality = max(q for _, _, q in deduped_models)
+            if max_burn <= 0:
+                max_burn = 100.0
+            if max_quality <= 0:
+                max_quality = 100.0
+
+            quad_lines = [
+                "",
+                "```mermaid",
+                "quadrantChart",
+                '    title "Capability vs Quota Efficiency"',
+                '    x-axis "Higher Burn" --> "Higher Quota Efficiency"',
+                '    y-axis "Lower Capability" --> "Higher Capability"',
+                '    quadrant-1 "Sweet Spot (High Quality, Low Burn)"',
+                '    quadrant-2 "Heavy Compute (High Quality, High Burn)"',
+                '    quadrant-3 "Dominated / High Cost"',
+                '    quadrant-4 "Lightweight / Low Burn"',
+            ]
+            for lbl, b, q in deduped_models:
+                norm_x = 1.0 - (b / max_burn)
+                norm_y = q / max_quality
+                clamped_x = max(0.05, min(0.95, round(norm_x, 2)))
+                clamped_y = max(0.05, min(0.95, round(norm_y, 2)))
+                quad_lines.append(f"    {lbl}: [{clamped_x:.2f}, {clamped_y:.2f}]")
+            quad_lines.append("```")
+            lines.extend(quad_lines)
+
+    if "pareto-frontier.svg" in generated_svgs:
+        lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
+
     # 3. Live Free-Tier Picks Across Privacy/Region Flags
     if free_matrix:
         lines.extend(
@@ -394,6 +1001,20 @@ def render_analysis_markdown(
             flags = row.get("flags", "")
             model_id = row.get("model_id", "None")
             lines.append(f"| {label} | `{flags}` | `{model_id}` |")
+
+        flow_lines = [
+            "",
+            "```mermaid",
+            "flowchart LR",
+        ]
+        for i, row in enumerate(free_matrix):
+            lbl = (row.get("label") or f"Setting {i + 1}").replace('"', "'")
+            mid = (row.get("model_id") or "None").removeprefix("opencode-go/").replace('"', "'")
+            s_node = f"S{i}"
+            m_node = f"M_{re.sub(r'[^a-zA-Z0-9_]', '_', mid)}"
+            flow_lines.append(f'    {s_node}["{lbl}"] --> {m_node}["{mid}"]')
+        flow_lines.append("```")
+        lines.extend(flow_lines)
 
     # 4. Multi-Plan Tier Selections & Top-3 Fallbacks
     if plan_payloads:
@@ -446,6 +1067,75 @@ def render_analysis_markdown(
                     f"| `{p_name}` | **{tier}** | `{pick}` | {fallback_str} | {allowance_s} | {output_s} | {burn_s} |"
                 )
 
+        flow_lines = [
+            "",
+            "```mermaid",
+            "flowchart LR",
+        ]
+        for p_name, p_data in plan_payloads.items():
+            tiers_dict = p_data.get("tiers") or {}
+            explanations = p_data.get("explanations") or {}
+            fallbacks_map = p_data.get("fallbacks") or {}
+            p_node = f"Plan_{p_name.replace('-', '_')}"
+            flow_lines.append(f'    {p_node}["{p_name}"]')
+            for tier in TIER_ORDER:
+                if (
+                    tier not in tiers_dict
+                    and tier not in explanations
+                    and tier not in fallbacks_map
+                ):
+                    continue
+                ex = explanations.get(tier) or {}
+                pick = (
+                    (ex.get("model_id") or tiers_dict.get(tier) or "None")
+                    .removeprefix("opencode-go/")
+                    .replace('"', "'")
+                )
+                raw_fb = fallbacks_map.get(tier) or ex.get("fallbacks") or []
+                fb_id = None
+                if raw_fb:
+                    first = raw_fb[0]
+                    fb_id = (
+                        (first.get("model_id") if isinstance(first, dict) else str(first))
+                        .removeprefix("opencode-go/")
+                        .replace('"', "'")
+                    )
+                tier_label = f"{tier}: {pick} (fb: {fb_id})" if fb_id else f"{tier}: {pick}"
+                t_node = f"T_{p_name.replace('-', '_')}_{tier}"
+                flow_lines.append(f'    {p_node} --> {t_node}["{tier_label}"]')
+        flow_lines.append("```")
+        lines.extend(flow_lines)
+
+        burn_items: list[tuple[str, float]] = []
+        for p_name, p_data in plan_payloads.items():
+            explanations = p_data.get("explanations") or {}
+            for tier in TIER_ORDER:
+                ex = explanations.get(tier) or {}
+                burn = ex.get("quota_burn_pct")
+                if burn is None:
+                    burn = ex.get("composite_burn_pct")
+                if isinstance(burn, (int, float)):
+                    burn_items.append((f"{p_name}:{tier}", round(float(burn), 1)))
+
+        if len(burn_items) >= 2:
+            x_cats = ", ".join(f'"{item[0]}"' for item in burn_items)
+            b_vals = ", ".join(str(item[1]) for item in burn_items)
+            lines.extend(
+                [
+                    "",
+                    "```mermaid",
+                    "xychart-beta",
+                    '    title "Quota Burn % Across Plans and Tiers"',
+                    f"    x-axis [{x_cats}]",
+                    '    y-axis "Quota Burn %" 0 --> 100',
+                    f"    bar [{b_vals}]",
+                    "```",
+                ]
+            )
+
+        if "multi-plan-comparison.svg" in generated_svgs:
+            lines.extend(["", "![Multi-Plan Comparison](charts/multi-plan-comparison.svg)"])
+
     # 5. Full Ranked Catalog
     lines.extend(
         [
@@ -496,10 +1186,60 @@ def render_analysis_markdown(
             f"| {rank_s} | `{model_id}` | {tier} | {bpe_s} | {iq_s} | {eng_s} | {burn_s} | {allowance_s} | {output_s} | {ctx_s} | {release} | {priv} |"
         )
 
+    if rank_models:
+        pareto_count = 0
+        paid_non_frontier_count = 0
+        free_count = 0
+        unbenchmarked_count = 0
+
+        for m in rank_models:
+            is_pareto = bool(m.get("is_pareto"))
+            is_zero = bool(m.get("is_zero_cost"))
+            has_bm = m.get("aa_iq") is not None or m.get("aa_coding") is not None
+
+            if is_pareto:
+                pareto_count += 1
+            elif is_zero:
+                free_count += 1
+            elif has_bm:
+                paid_non_frontier_count += 1
+            else:
+                unbenchmarked_count += 1
+
+        pie_lines = [
+            "",
+            "```mermaid",
+            "pie showData",
+            '    title "Catalog Composition by Eligibility & Frontier Status"',
+        ]
+        slices = [
+            ("Pareto Frontier", pareto_count),
+            ("Paid (Non-Frontier)", paid_non_frontier_count),
+            ("Free / Zero-Cost", free_count),
+            ("Unbenchmarked Paid", unbenchmarked_count),
+        ]
+        for name, count in slices:
+            if count > 0:
+                pie_lines.append(f'    "{name}" : {count}')
+        pie_lines.append("```")
+        lines.extend(pie_lines)
+
+    if "catalog-ranking.svg" in generated_svgs:
+        lines.extend(["", "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)"])
+
     if has_aa:
         lines.extend(["", "---", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
 
     return "\n".join(lines) + "\n"
+
+
+def _ci_status_class(outcome: str) -> str:
+    low = outcome.strip().lower()
+    if low == "success":
+        return "success"
+    if low in ("failure", "failed", "error"):
+        return "failure"
+    return "other"
 
 
 def render_ci_comment_markdown(
@@ -541,6 +1281,18 @@ def render_ci_comment_markdown(
             f"| Lint with ruff (`ruff check`) | `{lint_outcome}` |",
             f"| Run test suite with coverage (`pytest`) | `{pytest_outcome}` |",
             f"| Verify package build (`uv build`) | `{build_outcome}` |",
+            "",
+            "```mermaid",
+            "flowchart LR",
+            f'    Format["ruff format: {format_outcome}"] --> Lint["ruff check: {lint_outcome}"] --> Pytest["pytest: {pytest_outcome}"] --> Build["uv build: {build_outcome}"]',
+            "    classDef success fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46;",
+            "    classDef failure fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b;",
+            "    classDef other fill:#f3f4f6,stroke:#9ca3af,stroke-width:2px,color:#374151;",
+            f"    class Format {_ci_status_class(format_outcome)};",
+            f"    class Lint {_ci_status_class(lint_outcome)};",
+            f"    class Pytest {_ci_status_class(pytest_outcome)};",
+            f"    class Build {_ci_status_class(build_outcome)};",
+            "```",
             "",
         ]
     )
@@ -612,6 +1364,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--analysis-output", default=None, help="Optional path to write analysis.md"
     )
+    parser.add_argument(
+        "--charts-dir",
+        default=None,
+        help="Optional directory to output generated SVG analysis charts",
+    )
     return parser.parse_args(argv)
 
 
@@ -671,6 +1428,7 @@ def main(argv: list[str] | None = None) -> int:
             plan_payloads=plan_payloads if plan_payloads else None,
             free_matrix=free_matrix,
             run_url=args.run_url or None,
+            charts_dir=args.charts_dir,
         )
         out_analysis = Path(args.analysis_output)
         out_analysis.parent.mkdir(parents=True, exist_ok=True)
