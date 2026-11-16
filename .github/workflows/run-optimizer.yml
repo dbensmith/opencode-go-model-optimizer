@@ -129,19 +129,60 @@ jobs:
             printf '\n--- stderr ---\n' >> out/full_output.txt
             cat out/script.log out/table.err >> out/full_output.txt
           fi
+          mkdir -p out/plans
+          uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode "$OPTIMIZER_MODE" --cache-ttl 300 --format json --allow-global-region --allow-free-training > out/rank.json
+          for p in go go-plus go-teams; do
+            uv run opencode-go-model-optimizer select --plan "$p" --mode "$OPTIMIZER_MODE" --cache-ttl 300 --top-n 3 --format json --explain --allow-global-region --allow-free-training > "out/plans/${p}.json"
+          done
+
+          python3 - << 'EOF'
+          import json, subprocess, os
+          plan = os.environ.get("OPTIMIZER_PLAN", "go")
+          mode = os.environ.get("OPTIMIZER_MODE", "pareto")
+          matrix = [
+              {"label": "Default (no training, region locked)", "flags": "", "model_id": ""},
+              {"label": "Allow free training", "flags": "--allow-free-training", "model_id": ""},
+              {"label": "Allow global region", "flags": "--allow-global-region", "model_id": ""},
+              {"label": "Allow both (CI setting)", "flags": "--allow-global-region --allow-free-training", "model_id": ""}
+          ]
+          for row in matrix:
+              cmd = ["uv", "run", "opencode-go-model-optimizer", "select", "--plan", plan, "--mode", mode, "--cache-ttl", "300", "--format", "json"] + row["flags"].split()
+              cmd = [c for c in cmd if c]
+              res = subprocess.run(cmd, capture_output=True, text=True)
+              if res.returncode != 0:
+                  row["model_id"] = "Error"
+              elif res.stdout.strip():
+                  try:
+                      data = json.loads(res.stdout)
+                      row["model_id"] = data.get("tiers", {}).get("free", "None")
+                  except Exception:
+                      row["model_id"] = "Error"
+          import pathlib
+          pathlib.Path("out/free-matrix.json").write_text(json.dumps(matrix, indent=2), encoding="utf-8")
+          EOF
+
           run_url="${GITHUB_SERVER_URL}/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}"
           uv run python scripts/render_optimizer_issue.py \
             --json out/select.json \
             --script-output out/full_output.txt \
             --run-url "$run_url" \
-            --output out/issue.md
+            --output out/issue.md \
+            --rank-json out/rank.json \
+            --plan-json go=out/plans/go.json \
+            --plan-json go-plus=out/plans/go-plus.json \
+            --plan-json go-teams=out/plans/go-teams.json \
+            --free-matrix-json out/free-matrix.json \
+            --analysis-output out/analysis.md
+
           cat out/issue.md >> "$GITHUB_STEP_SUMMARY"
 
           mkdir -p out/site
           cp -a docs/. out/site/
           cp out/issue.md out/site/README.md
+          cp out/analysis.md out/site/analysis.md
           cp README.md out/site/usage.md
           cp out/select.json out/site/select.json
+          cp out/rank.json out/site/rank.json
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
           issues_url="${repo_url}/issues?q=is%3Aissue+is%3Aopen+label%3Aoptimizer-results"

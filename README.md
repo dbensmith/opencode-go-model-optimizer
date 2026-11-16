@@ -64,21 +64,14 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
    - Tiers may share a model. If the same model is the best answer for balanced and light, both point to it; the tool does not manufacture a distinct but dominated pick.
 7. **Fallbacks.** Remaining frontier models, ordered by BPE, quality, burn and speed. Use `--top-n` to include them.
 
-**Worked example** (live `go` snapshot, 2026-11-16):
+**Worked example** (illustrative `go` snapshot; live examples and frontier band cutoffs are rendered dynamically on the GitHub Pages site under **Live Pareto Analysis & Plans**):
 
-| Model | AA IQ | Engineering | Burn % | Allowance | Value |
-| --- | --- | --- | --- | --- | --- |
-| Gemini 4 Argon | 50.4 | 57.3 | 47.2% | $30 | 1.07 |
-| Qwen4 Max | 42.9 | 50.1 | 43.3% | $15 | 0.99 |
-| Claude Haiku 5.5 | 36.5 | 42.5 | 5.2% | $15 | 7.0 |
-| DeepSeek V4.1 Flash 1017 | 32.6 | 37.6 | 0.6% | $100 | 54.3 |
+- **Heavy band** (quality ≥ 90% of best frontier quality): heavy pick is the top-value model meeting or exceeding the 90% capability threshold.
+- **Balanced band** (quality ≥ 60% of best frontier quality): balanced pick is the top-value model meeting or exceeding the 60% capability threshold.
+- **Light**: lowest-burn frontier model.
+- **Free**: newest eligible zero-cost model.
 
-- **Heavy band** (quality ≥ 45.4): Gemini only; Qwen4 Max at 42.9 is just below the 10% cutoff. Gemini is the heavy pick, and Qwen4 is the first heavy fallback.
-- **Balanced band** (quality ≥ 30.2): all four. DeepSeek has by far the best value, so `balanced = DeepSeek V4.1 Flash 1017`.
-- **Light**: DeepSeek also has the lowest burn, so `light = DeepSeek V4.1 Flash 1017`.
-- Haiku buys 3.9 more IQ points for roughly **9×** the burn; the default value metric does not consider that worthwhile. Pin it with `--prefer balanced=claude-haiku-5-5` if you want a smarter mid-tier.
-
-OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`DeepSeek V4.1 Flash 1017`, canonical `deepseek/deepseek-v4.1-flash-1017`). AA also lists a separate non-1017 model; the matcher prioritises the exact release name and canonical ID, so the 1017 AA score is the one used.
+OpenCode's catalogue IDs prioritize exact release matching (e.g., matching version tags or specific release dates/numbers in Artificial Analysis data) to ensure the correct benchmark score is used.
 
 #### How the free tier is chosen
 
@@ -86,11 +79,11 @@ The free tier uses the same filtered pool as the paid tiers, so privacy/region, 
 
 Eligible free models are ranked by release date (newest first), then context window (largest), then model id. `--prefer free=<model>` overrides the pick.
 
-Live example: with the OpenCode Go defaults (Global blocked, free training blocked), `Beam Free` (2026-10-05) is the only eligible free model. `--allow-free-training` selects `Iceman Contributor Free` (2026-10-24); `--allow-global-region` selects `LongCat 2.5 Free` (2026-11-02); both together (the CI setting) select `LongCat 2.5 Free`.
+Live example selections across privacy and training flag combinations are rendered dynamically on the GitHub Pages site under **Live Pareto Analysis & Plans**.
 
 #### Contributor vs. training
 
-**Contributor is a pricing tier, not a privacy rule.** It is inferred from the model id/name (for example `Muse Spark 1.3 Contributor` or `Iceman Contributor Free`). A contributor model is discounted or free in exchange for permission to use your data, which is why it usually also has `trains_on_data=true`. There is no separate contributor filter; contributor models are enabled or blocked by the training flags below.
+**Contributor is a pricing tier, not a privacy rule.** It is inferred from the model id/name (for example `Model Contributor Free` or `Model Contributor Paid`). A contributor model is discounted or free in exchange for permission to use your data, which is why it usually also has `trains_on_data=true`. There is no separate contributor filter; contributor models are enabled or blocked by the training flags below.
 
 **Training is the privacy control.** Two independent toggles, both off by default:
 
@@ -101,10 +94,10 @@ Live example: with the OpenCode Go defaults (Global blocked, free training block
 
 Examples:
 
-- `iceman-contributor-free`: contributor, free, trains → `--allow-free-training`.
-- `muse-spark-1.3-contributor`: contributor, paid, trains → `--allow-paid-training`.
-- `longcat-2.5-free`: not contributor, free, no training, ZDR → `--allow-global-region`.
-- `beam-free`: not contributor, free, no training → eligible by default.
+- `model-contributor-free`: contributor, free, trains → `--allow-free-training`.
+- `model-contributor-paid`: contributor, paid, trains → `--allow-paid-training`.
+- `model-global-free`: not contributor, free, no training, ZDR → `--allow-global-region`.
+- `model-default-free`: not contributor, free, no training → eligible by default.
 
 **Preview/experimental** models are included by default. The `is_preview` flag remains for display/filtering, but it does not prevent selection.
 
