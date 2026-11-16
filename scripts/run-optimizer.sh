@@ -66,6 +66,14 @@ elif [[ -n "${OP_CONNECT_HOST:-}" || -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
   die "1Password auth env vars are set but the op CLI is not installed"
 fi
 
+# Connect takes precedence over service-account credentials in the CLI too,
+# but leaving both set makes op's behaviour depend on its internal precedence.
+# Drop the loser so there is exactly one auth method in play.
+if [[ "$auth" == "connect" && -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+  printf 'run-optimizer: Connect and service-account credentials both set; using Connect\n' >&2
+  unset OP_SERVICE_ACCOUNT_TOKEN
+fi
+
 if [[ -n "$auth" ]]; then
   [[ -n "$SECRET_REF" ]] || die "1Password auth detected ($auth) but AA_SECRET_REF is not set (expected op://<vault>/<item>/AA_API_KEY)"
   printf 'run-optimizer: reading AA_API_KEY from 1Password (%s)\n' "$auth" >&2
