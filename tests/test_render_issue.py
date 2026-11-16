@@ -165,6 +165,115 @@ def test_render_ci_comment_markdown(tmp_path: Path) -> None:
     assert "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside" in comment
 
 
+def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
+    from opencode_go_model_optimizer.cli import format_rank_json
+    from opencode_go_model_optimizer.ingest.models import NormalizedModel
+
+    m1 = NormalizedModel(
+        id="model-a",
+        full_id="opencode-go/model-a",
+        tier="heavy",
+        bpe=1.0,
+        aa_iq=90.0,
+        aa_coding=95.0,
+        composite_burn_pct=50.0,
+        monthly_allowance=30.0,
+        cost={"output": 10.0},
+        limit={"context": 1048576},
+        release_date="2026-11-01",
+        privacy={"zdr": True, "trains_on_data": False},
+        is_pareto=True,
+        rank=1,
+    )
+    m2 = NormalizedModel(
+        id="model-b",
+        full_id="opencode-go/model-b",
+        tier="balanced",
+        bpe=0.9,
+        aa_iq=60.0,
+        aa_coding=65.0,
+        composite_burn_pct=20.0,
+        monthly_allowance=15.0,
+        cost={"output": 0.0},
+        is_zero_cost=True,
+        limit={"context": 131072},
+        release_date="2026-10-15",
+        privacy={"zdr": False, "trains_on_data": True},
+        is_pareto=True,
+        rank=2,
+    )
+
+    rank_dict = json.loads(format_rank_json([m1, m2]))
+
+    select_data = {
+        "plan": "go",
+        "mode": "pareto",
+        "evaluated_at": "2026-11-16T00:00:00+00:00",
+        "snapshot": {
+            "source": "live",
+            "fetched_at": "2026-11-16T00:00:00+00:00",
+            "benchmark_source": "aa_live",
+        },
+        "tiers": {"heavy": "opencode-go/model-a", "balanced": "opencode-go/model-b"},
+        "fallbacks": {"heavy": ["opencode-go/model-fallback"]},
+        "explanations": {
+            "heavy": {
+                "model_id": "opencode-go/model-a",
+                "monthly_allowance": 30.0,
+                "output_cost_per_1m": 10.0,
+                "quota_burn_pct": 50.0,
+            }
+        },
+    }
+    select_path = tmp_path / "select.json"
+    select_path.write_text(json.dumps(select_data), encoding="utf-8")
+
+    rank_path = tmp_path / "rank.json"
+    rank_path.write_text(json.dumps(rank_dict), encoding="utf-8")
+
+    plan_file = tmp_path / "go.json"
+    plan_file.write_text(json.dumps(select_data), encoding="utf-8")
+
+    free_matrix_file = tmp_path / "free_matrix.json"
+    free_matrix_file.write_text(
+        json.dumps(
+            [
+                {"label": "Default", "flags": "", "model_id": "opencode-go/free-default"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    analysis_out = tmp_path / "analysis.md"
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--json",
+            str(select_path),
+            "--rank-json",
+            str(rank_path),
+            "--plan-json",
+            f"go={plan_file}",
+            "--free-matrix-json",
+            str(free_matrix_file),
+            "--analysis-output",
+            str(analysis_out),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    assert analysis_out.is_file()
+    content = analysis_out.read_text(encoding="utf-8")
+    assert "Live Pareto Analysis & Catalog" in content
+    assert "opencode-go/model-a" in content
+    assert "opencode-go/model-fallback" in content
+    assert "opencode-go/free-default" in content
+
+
 def test_render_ci_comment_cli(tmp_path: Path) -> None:
     ci_dir = tmp_path / "ci"
     ci_dir.mkdir()

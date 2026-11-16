@@ -156,10 +156,39 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "actions/upload-pages-artifact@v5" in workflow_text
     assert "actions/deploy-pages@v5" in workflow_text
 
+    # Check generation of analysis.md and rank.json
+    assert "out/site/analysis.md" in workflow_text
+    assert "out/site/rank.json" in workflow_text
+    assert "--rank-json out/rank.json" in workflow_text
+    assert "--plan-json" in workflow_text
+    assert "--free-matrix-json" in workflow_text
+
     # Check DRY staging commands and sed replacement
     assert "out/site" in workflow_text
     assert "sed -i" in workflow_text
     assert "{{REPO_URL}}" in workflow_text
+
+
+def test_docsify_analysis_page_and_sidebar() -> None:
+    docs_dir = _ROOT / "docs"
+    analysis_md = docs_dir / "analysis.md"
+    assert analysis_md.is_file()
+    text = analysis_md.read_text(encoding="utf-8")
+    assert "Live Pareto Analysis & Catalog" in text
+
+    sidebar_md = docs_dir / "_sidebar.md"
+    assert sidebar_md.is_file()
+    sidebar_text = sidebar_md.read_text(encoding="utf-8")
+    assert "analysis.md" in sidebar_text
+    assert "rank.json" in sidebar_text
+
+
+def test_readme_clean_hardcoded_examples() -> None:
+    readme_text = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "2026-11-16" not in readme_text
+    assert "Gemini 4 Argon" not in readme_text
+    assert "Worked example (live" not in readme_text
+    assert "analysis.md" not in readme_text
 
 
 def test_composite_action_and_hardening() -> None:

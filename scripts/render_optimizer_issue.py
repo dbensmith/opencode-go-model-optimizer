@@ -99,6 +99,40 @@ def _fence_for(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[str]:
+    """Render Run Settings lines when effective settings are present in payload."""
+    settings = payload.get("settings") or {}
+    if not settings:
+        return []
+    lines = [
+        "",
+        "### Run Settings",
+        "",
+        f"- **Mode**: `{settings.get('mode', default_mode)}` | **Profile**: `{settings.get('profile', 'general')}` "
+        f"| **Price basis**: `{settings.get('price_basis', '-')}` | **Burn basis**: `{settings.get('burn_basis', '-')}` "
+        f"| **Top N**: `{settings.get('top_n', 1)}`",
+        f"- **Global regions**: {'allowed' if settings.get('allow_global_region') else 'blocked'} "
+        f"| **Paid training**: {'allowed' if settings.get('allow_paid_training') else 'blocked'} "
+        f"| **Free training**: {'allowed' if settings.get('allow_free_training') else 'blocked'}",
+        f"- **Filters**: max retention `{settings.get('max_retention_days') or 'none'}` "
+        f"| ZDR required `{settings.get('require_zdr', False)}` "
+        f"| min context `{settings.get('min_context', 0)}` "
+        f"| min output `{settings.get('min_output', 0)}` "
+        f"| max output cost `{settings.get('max_output_cost') or 'none'}` "
+        f"| max burn `{settings.get('max_burn') or 'none'}`",
+    ]
+    skip = settings.get("skip") or []
+    prefer = settings.get("prefer") or {}
+    if skip or prefer:
+        extras = []
+        if skip:
+            extras.append(f"skip `{', '.join(skip)}`")
+        if prefer:
+            extras.append("prefer " + ", ".join(f"`{k}={v}`" for k, v in prefer.items()))
+        lines.append("- **Overrides**: " + " | ".join(extras))
+    return lines
+
+
 def render_issue_markdown(
     payload: dict[str, Any],
     script_output: str = "",
@@ -129,36 +163,7 @@ def render_issue_markdown(
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
 
-    settings = payload.get("settings") or {}
-    if settings:
-        lines.extend(
-            [
-                "",
-                "### Run Settings",
-                "",
-                f"- **Mode**: `{settings.get('mode', mode)}` | **Profile**: `{settings.get('profile', 'general')}` "
-                f"| **Price basis**: `{settings.get('price_basis', '-')}` | **Burn basis**: `{settings.get('burn_basis', '-')}` "
-                f"| **Top N**: `{settings.get('top_n', 1)}`",
-                f"- **Global regions**: {'allowed' if settings.get('allow_global_region') else 'blocked'} "
-                f"| **Paid training**: {'allowed' if settings.get('allow_paid_training') else 'blocked'} "
-                f"| **Free training**: {'allowed' if settings.get('allow_free_training') else 'blocked'}",
-                f"- **Filters**: max retention `{settings.get('max_retention_days') or 'none'}` "
-                f"| ZDR required `{settings.get('require_zdr', False)}` "
-                f"| min context `{settings.get('min_context', 0)}` "
-                f"| min output `{settings.get('min_output', 0)}` "
-                f"| max output cost `{settings.get('max_output_cost') or 'none'}` "
-                f"| max burn `{settings.get('max_burn') or 'none'}`",
-            ]
-        )
-        skip = settings.get("skip") or []
-        prefer = settings.get("prefer") or {}
-        if skip or prefer:
-            extras = []
-            if skip:
-                extras.append(f"skip `{', '.join(skip)}`")
-            if prefer:
-                extras.append("prefer " + ", ".join(f"`{k}={v}`" for k, v in prefer.items()))
-            lines.append("- **Overrides**: " + " | ".join(extras))
+    lines.extend(_format_settings_lines(payload, mode))
 
     lines.extend(
         [
@@ -272,6 +277,231 @@ def render_issue_markdown(
     return "\n".join(lines) + "\n"
 
 
+def render_analysis_markdown(
+    select_payload: dict[str, Any],
+    rank_models: list[dict[str, Any]],
+    plan_payloads: dict[str, dict[str, Any]] | None = None,
+    free_matrix: list[dict[str, Any]] | None = None,
+    run_url: str | None = None,
+) -> str:
+    """Render comprehensive live Pareto analysis and catalog markdown (analysis.md)."""
+    plan = select_payload.get("plan", "go")
+    mode = select_payload.get("mode", "pareto")
+    evaluated_at = select_payload.get("evaluated_at", "-")
+    snapshot = select_payload.get("snapshot") or {}
+    snap_source = snapshot.get("source", "-")
+    fetched_at = snapshot.get("fetched_at", "-")
+    benchmark_source = snapshot.get("benchmark_source", "none")
+
+    lines: list[str] = [
+        "## OpenCode Go Model Optimizer — Live Pareto Analysis & Catalog",
+        "",
+        f"- **Updated**: `{evaluated_at}`",
+        f"- **Plan**: `{plan}` | **Mode**: `{mode}` | **Snapshot**: `{snap_source}` (`{fetched_at}`) | **Benchmarks**: `{benchmark_source}`",
+    ]
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+
+    lines.extend(_format_settings_lines(select_payload, mode))
+
+    lines.extend(["", "---", "", "### 1. Live Pareto Frontier & Quality/Value Bands", ""])
+
+    # Filter Pareto models from rank_models
+    pareto_models: list[dict[str, Any]] = []
+    has_aa = False
+    for m in rank_models:
+        iq = m.get("aa_iq")
+        coding = m.get("aa_coding")
+        if iq is not None or coding is not None:
+            has_aa = True
+        if iq is not None and coding is not None:
+            quality = 0.7 * float(iq) + 0.3 * float(coding)
+        elif iq is not None:
+            quality = float(iq)
+        elif coding is not None:
+            quality = float(coding)
+        else:
+            quality = 0.0
+
+        burn = m.get("composite_burn_pct")
+        if burn is None:
+            burn = m.get("quota_burn_pct")
+        computed_value = (
+            (quality / float(burn)) if isinstance(burn, (int, float)) and burn > 0 else 0.0
+        )
+
+        if m.get("is_pareto"):
+            paretop = dict(m)
+            paretop["_quality"] = quality
+            paretop["_value"] = computed_value
+            pareto_models.append(paretop)
+
+    pareto_models.sort(key=lambda x: x["_quality"], reverse=True)
+
+    top_quality = pareto_models[0]["_quality"] if pareto_models else 0.0
+    heavy_cutoff = 0.9 * top_quality
+    balanced_cutoff = 0.6 * top_quality
+
+    lines.extend(
+        [
+            f"- **Top Frontier Quality**: `{top_quality:.1f}`",
+            f"- **Heavy Band Cutoff (≥ 90%)**: `{heavy_cutoff:.1f}`",
+            f"- **Balanced Band Cutoff (≥ 60%)**: `{balanced_cutoff:.1f}`",
+            "",
+            "| Model ID | AA IQ | Engineering | Quality | Burn % | Allowance | Value | Eligible Bands |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+
+    for m in pareto_models:
+        q = m["_quality"]
+        bands: list[str] = []
+        if q >= heavy_cutoff:
+            bands.append("heavy")
+        if q >= balanced_cutoff:
+            bands.append("balanced")
+        bands.append("light")
+        bands_str = ", ".join(bands)
+        model_id = m.get("full_id") or m.get("id") or m.get("model_id") or "unknown"
+        iq_s = _fmt_float(m.get("aa_iq"), 1)
+        eng_s = _fmt_float(m.get("aa_coding"), 1)
+        burn_pct = m.get("composite_burn_pct")
+        if burn_pct is None:
+            burn_pct = m.get("quota_burn_pct")
+        burn_s = f"{burn_pct:.1f}%" if isinstance(burn_pct, (int, float)) else "-"
+        allowance_s = _fmt_allowance(m.get("monthly_allowance"))
+        val_s = _fmt_float(m.get("_value"), 2)
+
+        lines.append(
+            f"| `{model_id}` | {iq_s} | {eng_s} | `{q:.1f}` | {burn_s} | {allowance_s} | {val_s} | {bands_str} |"
+        )
+
+    # 3. Live Free-Tier Picks Across Privacy/Region Flags
+    if free_matrix:
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "### 2. Live Free-Tier Picks Across Privacy/Region Flags",
+                "",
+                "| Setting | CLI Flags | Selected Free Model |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for row in free_matrix:
+            label = row.get("label", "Default")
+            flags = row.get("flags", "")
+            model_id = row.get("model_id", "None")
+            lines.append(f"| {label} | `{flags}` | `{model_id}` |")
+
+    # 4. Multi-Plan Tier Selections & Top-3 Fallbacks
+    if plan_payloads:
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "### 3. Multi-Plan Tier Selections & Top-3 Fallbacks",
+                "",
+                "| Plan | Tier | Pick | Fallbacks | Allowance | Output Cost | Burn % |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for p_name, p_data in plan_payloads.items():
+            tiers_dict = p_data.get("tiers") or {}
+            explanations = p_data.get("explanations") or {}
+            fallbacks_map = p_data.get("fallbacks") or {}
+            for tier in TIER_ORDER:
+                if (
+                    tier not in tiers_dict
+                    and tier not in explanations
+                    and tier not in fallbacks_map
+                ):
+                    continue
+                ex = explanations.get(tier) or {}
+                pick = ex.get("model_id") or tiers_dict.get(tier) or "None"
+
+                # fallbacks can be list of strings (from format_select_json) or list of dicts (from explanations)
+                raw_fallbacks = fallbacks_map.get(tier) or ex.get("fallbacks") or []
+                fallback_ids: list[str] = []
+                for f in raw_fallbacks:
+                    if isinstance(f, str):
+                        fallback_ids.append(f)
+                    elif isinstance(f, dict) and f.get("model_id"):
+                        fallback_ids.append(str(f["model_id"]))
+                fallback_str = (
+                    ", ".join([f"`{fid}`" for fid in fallback_ids]) if fallback_ids else "-"
+                )
+
+                # Allowance / output cost / burn can be in ex or resolved from top pick / metadata
+                allowance_val = ex.get("monthly_allowance")
+                output_val = ex.get("output_cost_per_1m")
+                burn = ex.get("quota_burn_pct") or ex.get("composite_burn_pct")
+
+                allowance_s = _fmt_allowance(allowance_val)
+                output_s = _fmt_output_cost(output_val)
+                burn_s = f"{burn:.1f}%" if isinstance(burn, (int, float)) else "-"
+                lines.append(
+                    f"| `{p_name}` | **{tier}** | `{pick}` | {fallback_str} | {allowance_s} | {output_s} | {burn_s} |"
+                )
+
+    # 5. Full Ranked Catalog
+    lines.extend(
+        [
+            "",
+            "---",
+            "",
+            "### 4. Full Ranked Catalog (`rank --mode pareto`)",
+            "",
+            "| Rank | Model ID | Tier | BPE | AA IQ | Engineering | Burn % | Allowance | Output Cost | Context | Release | Privacy |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+
+    for m in rank_models:
+        model_id = m.get("full_id") or m.get("id") or m.get("model_id") or "unknown"
+        tier = m.get("tier", "-")
+        bpe_s = _fmt_float(m.get("bpe"), 3)
+        iq_s = _fmt_float(m.get("aa_iq"), 1)
+        eng_s = _fmt_float(m.get("aa_coding"), 1)
+        burn = m.get("composite_burn_pct")
+        if burn is None:
+            burn = m.get("quota_burn_pct")
+        burn_s = f"{burn:.1f}%" if isinstance(burn, (int, float)) else "-"
+        allowance_s = _fmt_allowance(m.get("monthly_allowance"))
+
+        if m.get("is_zero_cost"):
+            output_s = "Free"
+        else:
+            cost_dict = m.get("cost") or {}
+            output_cost = cost_dict.get("output")
+            if output_cost is not None:
+                output_s = _fmt_output_cost(output_cost)
+            else:
+                output_s = _fmt_output_cost(m.get("output_cost_per_1m"))
+
+        limit_dict = m.get("limit") or {}
+        ctx_val = limit_dict.get("context") if limit_dict else None
+        if ctx_val is None:
+            ctx_val = m.get("context")
+        ctx_s = _fmt_int(ctx_val)
+
+        rank_val = m.get("rank")
+        rank_s = str(rank_val) if rank_val is not None else "-"
+
+        release = m.get("release_date") or "-"
+        priv = _fmt_privacy(m.get("privacy"))
+        lines.append(
+            f"| {rank_s} | `{model_id}` | {tier} | {bpe_s} | {iq_s} | {eng_s} | {burn_s} | {allowance_s} | {output_s} | {ctx_s} | {release} | {priv} |"
+        )
+
+    if has_aa:
+        lines.extend(["", "---", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
+
+    return "\n".join(lines) + "\n"
+
+
 def render_ci_comment_markdown(
     ci_dir: str | Path,
     run_url: str | None = None,
@@ -365,13 +595,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pytest-outcome", default="unknown", help="Pytest step outcome")
     parser.add_argument("--build-outcome", default="unknown", help="Build step outcome")
     parser.add_argument(
+        "--rank-json", default=None, help="Optional path to rank --format json file"
+    )
+    parser.add_argument(
+        "--plan-json",
+        action="append",
+        default=[],
+        help="Repeatable PLAN=PATH for select --format json --explain payloads",
+    )
+    parser.add_argument(
+        "--free-matrix-json", default=None, help="Optional path to free matrix JSON list file"
+    )
+    parser.add_argument(
         "-o", "--output", default=None, help="Output markdown path (default: stdout)"
+    )
+    parser.add_argument(
+        "--analysis-output", default=None, help="Optional path to write analysis.md"
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    markdown = ""
     if args.ci_dir:
         markdown = render_ci_comment_markdown(
             ci_dir=args.ci_dir,
@@ -397,6 +643,38 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stderr.write("Error: either --json or --ci-dir must be specified.\n")
         return 1
+
+    if args.analysis_output and args.json:
+        select_payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
+        rank_models: list[dict[str, Any]] = []
+        if args.rank_json:
+            rank_data = json.loads(Path(args.rank_json).read_text(encoding="utf-8"))
+            if isinstance(rank_data, list):
+                rank_models = rank_data
+            elif isinstance(rank_data, dict):
+                rank_models = rank_data.get("models") or rank_data.get("rankings") or []
+
+        plan_payloads: dict[str, dict[str, Any]] = {}
+        for item in args.plan_json:
+            if "=" in item:
+                p_name, p_path = item.split("=", 1)
+                if Path(p_path).is_file():
+                    plan_payloads[p_name] = json.loads(Path(p_path).read_text(encoding="utf-8"))
+
+        free_matrix: list[dict[str, Any]] | None = None
+        if args.free_matrix_json and Path(args.free_matrix_json).is_file():
+            free_matrix = json.loads(Path(args.free_matrix_json).read_text(encoding="utf-8"))
+
+        analysis_md = render_analysis_markdown(
+            select_payload=select_payload,
+            rank_models=rank_models,
+            plan_payloads=plan_payloads if plan_payloads else None,
+            free_matrix=free_matrix,
+            run_url=args.run_url or None,
+        )
+        out_analysis = Path(args.analysis_output)
+        out_analysis.parent.mkdir(parents=True, exist_ok=True)
+        out_analysis.write_text(analysis_md, encoding="utf-8")
 
     if args.output:
         out_path = Path(args.output)
