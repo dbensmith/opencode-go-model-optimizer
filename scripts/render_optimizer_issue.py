@@ -241,17 +241,98 @@ def render_issue_markdown(
     return "\n".join(lines) + "\n"
 
 
+def render_ci_comment_markdown(
+    ci_dir: str | Path,
+    run_url: str | None = None,
+    sha: str | None = None,
+    outcomes: dict[str, str] | None = None,
+) -> str:
+    """Render CI comment markdown using out/ci/ log files and outcomes."""
+    ci_path = Path(ci_dir)
+    outcomes = outcomes or {}
+    format_outcome = outcomes.get("format") or "unknown"
+    lint_outcome = outcomes.get("lint") or "unknown"
+    pytest_outcome = outcomes.get("pytest") or "unknown"
+    build_outcome = outcomes.get("build") or "unknown"
+
+    marker = (
+        f"<!-- ci-job-results-comment:commit={sha} -->"
+        if sha
+        else "<!-- ci-job-results-comment -->"
+    )
+    lines = [
+        marker,
+        "## CI Job Results",
+        "",
+    ]
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+    if sha:
+        lines.append(f"- **Commit**: `{sha}`")
+    if run_url or sha:
+        lines.append("")
+
+    lines.extend(
+        [
+            "| Step | Status |",
+            "| --- | --- |",
+            f"| Check code formatting (`ruff format --check`) | `{format_outcome}` |",
+            f"| Lint with ruff (`ruff check`) | `{lint_outcome}` |",
+            f"| Run test suite with coverage (`pytest`) | `{pytest_outcome}` |",
+            f"| Verify package build (`uv build`) | `{build_outcome}` |",
+            "",
+        ]
+    )
+
+    steps_map = [
+        ("format", "ruff format --check", format_outcome),
+        ("lint", "ruff check", lint_outcome),
+        ("pytest", "pytest --cov", pytest_outcome),
+        ("build", "uv build", build_outcome),
+    ]
+    for key, label, outcome in steps_map:
+        log_file = ci_path / f"{key}.txt"
+        if log_file.is_file():
+            text = log_file.read_text(encoding="utf-8", errors="replace")
+            if text.strip():
+                fence = _fence_for(text)
+                details_tag = "<details open>" if outcome != "success" else "<details>"
+                lines.extend(
+                    [
+                        details_tag,
+                        f"<summary><code>{label}</code> output</summary>",
+                        "",
+                        f"{fence}text",
+                        text.strip(),
+                        fence,
+                        "",
+                        "</details>",
+                        "",
+                    ]
+                )
+
+    return "\n".join(lines).strip() + "\n"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render GitHub-pretty markdown from optimizer JSON and script output."
+        description="Render GitHub-pretty markdown from optimizer JSON and script output or CI results."
     )
-    parser.add_argument("--json", required=True, help="Path to select --format json --explain file")
+    parser.add_argument("--json", default=None, help="Path to select --format json --explain file")
     parser.add_argument(
         "--script-output",
         default=None,
         help="Optional path to full script output (stdout/stderr)",
     )
     parser.add_argument("--run-url", default=None, help="Optional GitHub Actions run URL")
+    parser.add_argument(
+        "--ci-dir", default=None, help="Optional path to CI logs directory (out/ci)"
+    )
+    parser.add_argument("--sha", default=None, help="Optional commit SHA for CI report")
+    parser.add_argument("--format-outcome", default="unknown", help="Format step outcome")
+    parser.add_argument("--lint-outcome", default="unknown", help="Lint step outcome")
+    parser.add_argument("--pytest-outcome", default="unknown", help="Pytest step outcome")
+    parser.add_argument("--build-outcome", default="unknown", help="Build step outcome")
     parser.add_argument(
         "-o", "--output", default=None, help="Output markdown path (default: stdout)"
     )
@@ -260,15 +341,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
-    script_output = (
-        Path(args.script_output).read_text(encoding="utf-8") if args.script_output else ""
-    )
-    markdown = render_issue_markdown(
-        payload,
-        script_output=script_output,
-        run_url=args.run_url or None,
-    )
+    if args.ci_dir:
+        markdown = render_ci_comment_markdown(
+            ci_dir=args.ci_dir,
+            run_url=args.run_url,
+            sha=args.sha,
+            outcomes={
+                "format": args.format_outcome,
+                "lint": args.lint_outcome,
+                "pytest": args.pytest_outcome,
+                "build": args.build_outcome,
+            },
+        )
+    elif args.json:
+        payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
+        script_output = (
+            Path(args.script_output).read_text(encoding="utf-8") if args.script_output else ""
+        )
+        markdown = render_issue_markdown(
+            payload,
+            script_output=script_output,
+            run_url=args.run_url or None,
+        )
+    else:
+        sys.stderr.write("Error: either --json or --ci-dir must be specified.\n")
+        return 1
+
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)

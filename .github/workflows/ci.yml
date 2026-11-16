@@ -1,39 +1,122 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   test:
     name: Test & Lint
     runs-on: ubuntu-latest
+    env:
+      UV_NO_SYNC: "1"
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.3
-        with:
-          version: "0.13.7"
-          enable-cache: true
+      - name: Set up environment
+        uses: ./.github/actions/setup-env
 
-      - name: Set up Python
-        run: uv python install
-
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+      - name: Prepare CI logs directory
+        run: mkdir -p out/ci
 
       - name: Check code formatting
-        run: uv run ruff format --check
+        id: format
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run ruff format --check 2>&1 | tee out/ci/format.txt
 
       - name: Lint with ruff
-        run: uv run ruff check
+        id: lint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run ruff check 2>&1 | tee out/ci/lint.txt
 
       - name: Run test suite with coverage
-        run: uv run pytest --cov=opencode_go_model_optimizer --cov-report=term-missing
+        id: pytest
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run pytest --cov=opencode_go_model_optimizer --cov-report=term-missing 2>&1 | tee out/ci/pytest.txt
 
       - name: Verify package build
-        run: uv build
+        id: build
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv build 2>&1 | tee out/ci/build.txt
+
+      - name: Render CI results comment
+        if: always()
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          PYTEST_OUTCOME: ${{ steps.pytest.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          run_url="${SERVER_URL}/${GH_REPO}/actions/runs/${RUN_ID}"
+          uv run python scripts/render_optimizer_issue.py \
+            --ci-dir out/ci \
+            --run-url "$run_url" \
+            --sha "$COMMIT_SHA" \
+            --format-outcome "$FORMAT_OUTCOME" \
+            --lint-outcome "$LINT_OUTCOME" \
+            --pytest-outcome "$PYTEST_OUTCOME" \
+            --build-outcome "$BUILD_OUTCOME" \
+            --output out/ci/comment.md
+          cat out/ci/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or update PR comment with CI results
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          export MARKER="<!-- ci-job-results-comment:commit=${COMMIT_SHA} -->"
+
+          if [[ ! -s out/ci/comment.md ]]; then
+            echo "Warning: out/ci/comment.md is empty"
+            exit 0
+          fi
+
+          comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/${PR_NUMBER}/comments" 2>/dev/null | uv run python -c '
+import json, os, sys
+marker = os.environ["MARKER"]
+try:
+    pages = json.load(sys.stdin)
+    items = [c for page in pages for c in (page if isinstance(page, list) else [page])]
+    ids = [c["id"] for c in items if isinstance(c, dict) and marker in (c.get("body") or "")]
+    print(ids[-1] if ids else "")
+except Exception:
+    print("")
+' || true)"
+
+          if [[ -n "$comment_id" ]]; then
+            if ! gh api "repos/$GH_REPO/issues/comments/${comment_id}" \
+              -X PATCH -F body=@out/ci/comment.md >/dev/null 2>&1; then
+              echo "::notice::Skipping PR comment update (read-only token on fork PR); see Job Summary."
+            fi
+          else
+            if ! gh pr comment "$PR_NUMBER" \
+              --repo "$GH_REPO" \
+              --body-file out/ci/comment.md >/dev/null 2>&1; then
+              echo "::notice::Skipping PR comment creation (read-only token on fork PR); see Job Summary."
+            fi
+          fi
+
+      - name: Fail if any CI check failed
+        if: steps.format.outcome != 'success' || steps.lint.outcome != 'success' || steps.pytest.outcome != 'success' || steps.build.outcome != 'success'
+        run: |
+          echo "::error::One or more CI checks failed."
+          exit 1

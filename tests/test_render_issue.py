@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "render_optimizer_issue.py"
@@ -115,3 +117,59 @@ def test_render_with_script_output_and_backticks() -> None:
     assert "````text" in md
     assert "No eligible model available for this tier." in md
     assert "Artificial Analysis" not in md
+
+
+def test_render_ci_comment_markdown(tmp_path: Path) -> None:
+    ci_dir = tmp_path / "ci"
+    ci_dir.mkdir()
+    (ci_dir / "format.txt").write_text("All checks passed!", encoding="utf-8")
+    (ci_dir / "pytest.txt").write_text(
+        "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside", encoding="utf-8"
+    )
+
+    comment = _MOD.render_ci_comment_markdown(
+        ci_dir=ci_dir,
+        run_url="https://github.com/example/repo/actions/runs/12345",
+        sha="abcdef123456",
+        outcomes={"format": "success", "lint": "success", "pytest": "failure", "build": "success"},
+    )
+    assert "<!-- ci-job-results-comment" in comment
+    assert "## CI Job Results" in comment
+    assert "https://github.com/example/repo/actions/runs/12345" in comment
+    assert "`abcdef123456`" in comment
+    assert "| Check code formatting (`ruff format --check`) | `success` |" in comment
+    assert "| Run test suite with coverage (`pytest`) | `failure` |" in comment
+    assert "````text" in comment
+    assert "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside" in comment
+
+
+def test_render_ci_comment_cli(tmp_path: Path) -> None:
+    ci_dir = tmp_path / "ci"
+    ci_dir.mkdir()
+    (ci_dir / "format.txt").write_text("OK", encoding="utf-8")
+    out_path = tmp_path / "comment.md"
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--ci-dir",
+            str(ci_dir),
+            "--run-url",
+            "https://github.com/example/repo/actions/runs/99",
+            "--sha",
+            "1234567890ab",
+            "--format-outcome",
+            "success",
+            "--output",
+            str(out_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "<!-- ci-job-results-comment" in content
+    assert "`1234567890ab`" in content
+    assert "| Check code formatting (`ruff format --check`) | `success` |" in content

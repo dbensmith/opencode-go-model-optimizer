@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OpenCode Go Optimizer</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="OpenCode Go Model Optimizer Tier Selections and Documentation">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/themes/core.min.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/themes/addons/core-dark.min.css" media="(prefers-color-scheme: dark)" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/themes/prism.min.css" crossorigin="anonymous">
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    (function () {
+      var repoUrl = '{{REPO_URL}}';
+      if (repoUrl.indexOf('{{') === 0) {
+        var host = window.location.hostname;
+        var parts = window.location.pathname.split('/').filter(Boolean);
+        repoUrl = (host.endsWith('.github.io') && parts.length > 0)
+          ? 'https://github.com/' + host.replace(/\.github\.io$/, '') + '/' + parts[0]
+          : '';
+      }
+      var issuesUrl = repoUrl
+        ? repoUrl + '/issues?q=is%3Aissue+is%3Aopen+label%3Aoptimizer-results'
+        : '#';
+      window.$docsify = {
+        name: 'OpenCode Go Optimizer',
+        repo: repoUrl,
+        loadSidebar: true,
+        auto2top: true,
+        maxLevel: 4,
+        subMaxLevel: 3,
+        search: {
+          maxAge: 86400000,
+          paths: 'auto',
+          placeholder: 'Search tiers, models, docs...',
+          noData: 'No matching results',
+          depth: 4
+        },
+        copyCode: {
+          buttonText: 'Copy',
+          errorText: 'Error',
+          successText: 'Copied'
+        },
+        pagination: {
+          crossChapter: true,
+          crossChapterText: true
+        },
+        plugins: [
+          function (hook) {
+            hook.beforeEach(function (md) {
+              return md
+                .replace(/\{\{REPO_URL\}\}/g, repoUrl || '#')
+                .replace(/\{\{ISSUES_URL\}\}/g, issuesUrl);
+            });
+          }
+        ]
+      };
+    })();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/docsify.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/plugins/search.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@5.1.0/dist/plugins/zoom-image.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@3.0.2/dist/docsify-copy-code.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-pagination@2.10.1/dist/docsify-pagination.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/prism.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-bash.min.js" defer crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-json.min.js" defer crossorigin="anonymous"></script>
+</body>
+</html>
