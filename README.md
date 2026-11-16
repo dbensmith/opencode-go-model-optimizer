@@ -80,6 +80,14 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`DeepSeek V4.1 Flash 1017`, canonical `deepseek/deepseek-v4.1-flash-1017`). AA also lists a separate non-1017 model; the matcher prioritises the exact release name and canonical ID, so the 1017 AA score is the one used.
 
+#### How the free tier is chosen
+
+The free tier uses the same filtered pool as the paid tiers, so privacy/region, context, output, output-cost, quota-burn and `--skip` filters all apply. A model is eligible when it is active, not preview, and either zero-cost or a contributor model with unlimited/zero-cost output. `--no-contributor` excludes contributor models, `--no-training` excludes models that train on your data, and `--require-zdr` / `--max-retention-days` apply as usual.
+
+Eligible free models are ranked by release date (newest first), then context window (largest), then model id. `--prefer free=<model>` overrides the pick.
+
+Live example: `LongCat 2.5 Free` (2026-11-02) is the newest free model but requires a Global workspace region, so it is excluded by default. `Iceman Contributor Free` (2026-10-24) is the newest eligible model and wins. `--no-training` or `--no-contributor` selects `Beam Free`; `--allow-global-region` selects `LongCat 2.5 Free`.
+
 ---
 
 ## Installation & Usage
