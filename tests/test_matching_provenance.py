@@ -162,7 +162,10 @@ def test_aa_fetch_error_detail_is_included_in_warning():
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=models),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=MDX),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks", side_effect=fake_fetch),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
+            side_effect=fake_fetch,
+        ),
     ):
         snap = fetch_and_build_snapshot(plan="go")
 

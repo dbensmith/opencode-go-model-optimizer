@@ -90,11 +90,18 @@ jobs:
         env:
           OPTIMIZER_MODE: ${{ inputs.mode || 'pareto' }}
           OPTIMIZER_PLAN: ${{ inputs.plan || 'go' }}
+          UV_NO_SYNC: "1"
         run: |
           mkdir -p out
           # Run JSON first with --cache-ttl so the subsequent table run shares the exact snapshot.
-          scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json > out/select.json 2> out/script.log
-          scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 > out/table.txt 2>> out/script.log
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json > out/select.json 2> out/script.log; then
+            cat out/script.log >&2
+            exit 1
+          fi
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 > out/table.txt 2> out/table.err; then
+            cat out/table.err >&2
+            exit 1
+          fi
           cp out/table.txt out/full_output.txt
           if [[ -s out/script.log ]]; then
             printf '\n--- stderr ---\n' >> out/full_output.txt

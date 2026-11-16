@@ -112,9 +112,7 @@ def fetch_aa_benchmarks(
                     models = payload.get("data", [])
                     pagination = payload.get("pagination")
                     has_more = (
-                        bool(pagination.get("has_more"))
-                        if isinstance(pagination, dict)
-                        else False
+                        bool(pagination.get("has_more")) if isinstance(pagination, dict) else False
                     )
                 else:
                     raise ValueError("unexpected Artificial Analysis response")
@@ -583,9 +581,7 @@ def _fetch_and_build(
         fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
         fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
         fut_aa = (
-            executor.submit(
-                fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors
-            )
+            executor.submit(fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors)
             if aa_key
             else None
         )
