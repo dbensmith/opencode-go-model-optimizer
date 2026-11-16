@@ -163,10 +163,10 @@ def render_issue_markdown(
         lines.append(
             "Selected in **Pareto mode** using Bidirectional Pareto Efficiency (BPE) "
             "over Artificial Analysis benchmarks vs. monthly quota burn. Only Pareto-optimal "
-            "models are eligible: `heavy` takes the highest-quality frontier model, "
-            "`balanced` the best quality per unit of burn among models at least 60% as "
-            "capable as `heavy`, and `light` the lowest-burn frontier model; tiers may share "
-            "a model. Plus the newest eligible zero-cost `free` model."
+            "models are eligible: `heavy` is the value winner among frontier models within "
+            "10% of the best quality, `balanced` the value winner among models at least 60% "
+            "as capable as the best, and `light` the lowest-burn frontier model; tiers may "
+            "share a model. Plus the newest eligible zero-cost `free` model."
         )
     else:
         lines.append(

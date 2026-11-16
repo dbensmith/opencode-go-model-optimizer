@@ -633,7 +633,7 @@ def test_rank_catalog_both_modes():
     # when the Pareto frontier has fewer models than paid tiers.
     ranked_pareto_all = _rank(models, mode="pareto")
     pareto_tiers = {m.tier for m in ranked_pareto_all if m.tier is not None}
-    assert {"heavy", "balanced", "free"} <= pareto_tiers
+    assert {"heavy", "free"} <= pareto_tiers
     assert any(m.tier is None for m in ranked_pareto_all)
     selection = _tiers_pareto(models)
     assert set(selection) == {"heavy", "balanced", "light", "free"}
@@ -1094,6 +1094,37 @@ def test_pareto_light_tier_ignores_dominated_models():
     assert tiers["balanced"] == "opencode-go/m-light"
     assert tiers["light"] == "opencode-go/m-light"
     assert "opencode-go/m-dominated" not in tiers.values()
+
+
+def test_pareto_heavy_picks_value_winner_within_top_quality_band():
+    # Heavy is not simply max IQ: among frontier models within 10% of the best quality,
+    # the best quality-per-burn wins. Balanced uses the 60% floor and its own value ranking.
+    def model(mid, iq, burn):
+        return NormalizedModel(
+            id=mid,
+            aa_iq=iq,
+            is_pareto=True,
+            bpe=1.0,
+            composite_burn_pct=burn,
+            monthly_allowance=100.0,
+            cost=TokenCost(output=10.0),
+        )
+
+    m_max = model("m-max", 100.0, 100.0)
+    m_heavy_value = model("m-heavy-value", 92.0, 30.0)
+    m_mid = model("m-mid", 70.0, 5.0)
+    m_light = model("m-light", 40.0, 1.0)
+    m_free = NormalizedModel(id="m-free", is_zero_cost=True)
+
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        tiers = _tiers_pareto([m_max, m_heavy_value, m_mid, m_light, m_free])
+
+    assert tiers["heavy"] == "opencode-go/m-heavy-value"
+    assert tiers["balanced"] == "opencode-go/m-mid"
+    assert tiers["light"] == "opencode-go/m-light"
 
 
 def test_desc_str_key_sorts_strings_descending():

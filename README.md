@@ -45,9 +45,40 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ### Operating Modes
 
-- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE). Only Pareto-optimal models are eligible: `heavy` takes the highest-quality frontier model, `balanced` the best quality per unit of burn among models at least 60% as capable as `heavy`, and `light` the lowest-burn frontier model. Tiers may share a model rather than falling back to a dominated one.
+- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE). Only Pareto-optimal models are eligible: `heavy` is the value winner among frontier models within 10% of the best quality, `balanced` the value winner among models at least 60% as capable as the best, and `light` the lowest-burn frontier model. Tiers may share a model rather than falling back to a dominated one.
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
 - **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
+
+#### How Pareto tiers are chosen
+
+1. **Eligibility.** Start from active, non-free, non-preview, non-contributor models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
+2. **Pareto frontier.** Compare quality against monthly quota burn. A model is dominated when another eligible model has at least as much quality and no more burn, with at least one strict improvement. Dominated models are never picked; every remaining frontier model has BPE `1.000`.
+3. **Quality.** Quality is the AA Intelligence Index, blended with the AA Engineering capability index (the replacement for the retired Coding Index) using the `--profile` or `--weights` weights. `general` is 70% intelligence / 30% engineering, `coding` is 40/60, `reasoning` is 85/15, and `fast` also scales by output tokens per second.
+4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the docs' published requests per month (scaled by the price multiplier); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
+5. **Value.** `value = quality / burn`. Higher is better: more capability per percentage point of quota.
+6. **Tier objectives.**
+   - **`heavy`** — the value winner among frontier models whose quality is at least **90%** of the best frontier quality. Ties: quality, burn, BPE, speed, release date, model id.
+   - **`balanced`** — the value winner among frontier models whose quality is at least **60%** of the best. Ties: quality, burn, BPE, release date, model id.
+   - **`light`** — the lowest-burn frontier model. Ties: quality, BPE, speed, release date, model id.
+   - **`free`** — the newest eligible zero-cost model.
+   - Tiers may share a model. If the same model is the best answer for balanced and light, both point to it; the tool does not manufacture a distinct but dominated pick.
+7. **Fallbacks.** Remaining frontier models, ordered by BPE, quality, burn and speed. Use `--top-n` to include them.
+
+**Worked example** (live `go` snapshot, 2026-11-16):
+
+| Model | AA IQ | Engineering | Burn % | Allowance | Value |
+| --- | --- | --- | --- | --- | --- |
+| Gemini 4 Argon | 50.4 | 57.3 | 47.2% | $30 | 1.07 |
+| Qwen4 Max | 42.9 | 50.1 | 43.3% | $15 | 0.99 |
+| Claude Haiku 5.5 | 36.5 | 42.5 | 5.2% | $15 | 7.0 |
+| DeepSeek V4.1 Flash 1017 | 32.6 | 37.6 | 0.6% | $100 | 54.3 |
+
+- **Heavy band** (quality ≥ 45.4): Gemini only; Qwen4 Max at 42.9 is just below the 10% cutoff. Gemini is the heavy pick, and Qwen4 is the first heavy fallback.
+- **Balanced band** (quality ≥ 30.2): all four. DeepSeek has by far the best value, so `balanced = DeepSeek V4.1 Flash 1017`.
+- **Light**: DeepSeek also has the lowest burn, so `light = DeepSeek V4.1 Flash 1017`.
+- Haiku buys 3.9 more IQ points for roughly **9×** the burn; the default value metric does not consider that worthwhile. Pin it with `--prefer balanced=claude-haiku-5-5` if you want a smarter mid-tier.
+
+OpenCode's catalogue ID `deepseek-v4.1-flash` serves the **1017** release (`DeepSeek V4.1 Flash 1017`, canonical `deepseek/deepseek-v4.1-flash-1017`). AA also lists a separate non-1017 model; the matcher prioritises the exact release name and canonical ID, so the 1017 AA score is the one used.
 
 ---
 

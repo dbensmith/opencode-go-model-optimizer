@@ -122,10 +122,10 @@ def _pareto_clusters(
 ) -> dict[str, list[NormalizedModel]]:
     """Rank the Pareto frontier for each tier's objective.
 
-    ``heavy`` takes the highest-quality frontier model, ``balanced`` the best quality per
-    unit of quota burn (the cost-effective workhorse), and ``light`` the lowest-burn frontier
-    model. Only Pareto-optimal models are eligible. Tiers may share a model; when the
-    frontier is smaller than the paid tiers, the missing tiers reuse a pick.
+    ``heavy`` is the value winner among frontier models within 10% of the best quality,
+    ``balanced`` the value winner among models at least 60% as capable as the best, and
+    ``light`` the lowest-burn frontier model. Only Pareto-optimal models are eligible. Tiers
+    may share a model.
     """
     empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
     benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
@@ -147,12 +147,17 @@ def _pareto_clusters(
 
     frontier = [m for m in benchmarked if m.is_pareto] or benchmarked
     heavy_quality = max((quality(m) for m in frontier), default=0.0)
+    # Heavy is the value winner among models within 10% of the best quality; balanced is the
+    # value winner among models at least 60% as capable as the best. The bands keep a cheap,
+    # much weaker model from being promoted just because it has a high quality/burn ratio.
+    heavy_pool = [m for m in frontier if quality(m) >= heavy_quality * 0.9] or frontier
     balanced_pool = [m for m in frontier if quality(m) >= heavy_quality * 0.6] or frontier
     return {
         "heavy": sorted(
-            frontier,
+            heavy_pool,
             key=lambda m: (
                 *base(m),
+                -value(m),
                 -quality(m),
                 burn(m),
                 -(m.bpe or 0.0),
