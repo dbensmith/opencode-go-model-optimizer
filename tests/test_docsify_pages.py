@@ -231,7 +231,7 @@ def test_no_hardcoded_personal_or_repo_identifiers() -> None:
             )
 
 
-def test_no_interpolation_in_run_blocks() -> None:
+def test_no_interpolation_in_run_blocks_and_valid_multiline_indent() -> None:
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
     publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
@@ -240,21 +240,31 @@ def test_no_interpolation_in_run_blocks() -> None:
     for path in (ci_path, optimizer_path, publish_path, action_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
-        in_run_block = False
-        for line in text.splitlines():
+        run_indent: int | None = None
+        for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
-            if (
-                stripped.startswith("env:")
-                or stripped.startswith("with:")
-                or stripped.startswith("if:")
-            ):
-                in_run_block = False
-                continue
-            if stripped.startswith("run:"):
-                in_run_block = True
-                continue
-            if in_run_block:
-                if stripped and not line.startswith(" ") and not line.startswith("\t"):
-                    in_run_block = False
+            indent = len(line) - len(line.lstrip(" "))
+            if run_indent is not None:
+                if not stripped:
+                    continue
+                # Any non-empty line in a YAML block scalar must stay indented past `run: |`,
+                # unless the YAML block scalar has ended at a sibling/parent key.
+                if indent <= run_indent:
+                    assert (
+                        stripped.startswith("- ")
+                        or stripped.startswith("#")
+                        or stripped.endswith(":")
+                        or re.match(r"^[A-Za-z0-9_-]+:\s*", stripped) is not None
+                    ), f"Unindented line inside `run: |` block of {path.name}:{lineno}: {line!r}"
+                    run_indent = None
                 else:
-                    assert "${{" not in line, f"Found ${{ }} in run block of {path.name}: {line}"
+                    assert "${{" not in line, (
+                        f"Found ${{ }} in run block of {path.name}:{lineno}: {line}"
+                    )
+                    continue
+            if stripped.startswith("run: |"):
+                run_indent = indent
+            elif stripped.startswith("run:"):
+                assert "${{" not in line, (
+                    f"Found ${{ }} in run line of {path.name}:{lineno}: {line}"
+                )
