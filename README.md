@@ -90,20 +90,25 @@ Live example: with the OpenCode Go defaults (Global blocked, free training block
 
 #### Contributor vs. training
 
-These are not the same thing:
+**Contributor is a pricing tier, not a privacy rule.** It is inferred from the model id/name (for example `Muse Spark 1.3 Contributor` or `Iceman Contributor Free`). A contributor model is discounted or free in exchange for permission to use your data, which is why it usually also has `trains_on_data=true`. `--no-contributor` is an optional tier filter; it is not the privacy control.
 
-- **Contributor** is a commercial/pricing tier. The model is discounted or free in exchange for permission to use your data. It is inferred from the model id/name (`is_contributor`) and used for tier placement. `--no-contributor` excludes the tier as a convenience.
-- **Training** is a privacy permission (`privacy.trains_on_data`) from the Go docs. OpenCode Go exposes three separate toggles, all off by default:
-  1. **Allow paid endpoints that train** — `--allow-paid-training`.
-  2. **Allow Go models that require consent to train** — `--allow-consent-training`.
-  3. **Allow free endpoints that train** — `--allow-free-training` (turning it off disables those free models).
-- A contributor model usually trains, which is why the two concepts look similar. But the flags act on different things: `--no-contributor` removes the tier; the `--allow-*training` flags decide whether a model that trains is eligible.
-- Examples:
-  - `iceman-contributor-free`: contributor, free, trains → needs `--allow-free-training`.
-  - `longcat-2.5-free`: not contributor, free, no training, ZDR → needs `--allow-global-region`.
-  - `muse-spark-1.3-contributor`: contributor, paid, trains → needs `--allow-paid-training` **and** `--allow-consent-training`.
-  - `beam-free`: not contributor, free, no training → eligible by default.
-- **Preview/experimental** models are included by default. The `is_preview` flag remains for display/filtering, but it does not prevent selection.
+**Training is the privacy control.** OpenCode Go exposes three independent toggles, all off by default:
+
+| OpenCode Go setting | CLI flag | Default | Enables |
+| --- | --- | --- | --- |
+| Allow paid endpoints that train | `--allow-paid-training` | off | Paid models with `trains_on_data=true` |
+| Allow Go models that require consent | `--allow-consent-training` | off | Contributor paid models that require consent (also needs `--allow-paid-training`) |
+| Allow free endpoints that train | `--allow-free-training` | off | Free models with `trains_on_data=true` |
+
+Examples:
+
+- `iceman-contributor-free`: contributor, free, trains → `--allow-free-training`.
+- `muse-spark-1.3-contributor`: contributor, paid, trains → `--allow-paid-training --allow-consent-training`.
+- `longcat-2.5-free`: not contributor, free, no training, ZDR → `--allow-global-region`.
+- `beam-free`: not contributor, free, no training → eligible by default.
+- `--no-contributor` still excludes any contributor model even after training is allowed.
+
+**Preview/experimental** models are included by default. The `is_preview` flag remains for display/filtering, but it does not prevent selection.
 
 ---
 
