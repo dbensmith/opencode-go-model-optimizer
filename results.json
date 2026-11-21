@@ -1,0 +1,951 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-21T13:29:53+00:00",
+  "tool_version": "0.1.0",
+  "git_sha": "5a5491de961706b677a33052b9fa8fae61874dbf",
+  "plans": {
+    "go": {
+      "plan": "go",
+      "mode": "allowance",
+      "criteria": {
+        "top_n": 3,
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "profile": "general",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "at": "2026-11-21T13:29:53+00:00"
+      },
+      "tiers": {
+        "heavy": "",
+        "balanced": "",
+        "light": "",
+        "free": "opencode-go/hy4-flash-free"
+      },
+      "fallbacks": {
+        "heavy": [],
+        "balanced": [],
+        "light": [],
+        "free": [
+          "opencode-go/longcat-2.5-free",
+          "opencode-go/iceman-contributor-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the heavy cluster"
+        },
+        "balanced": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the balanced cluster"
+        },
+        "light": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the light cluster"
+        },
+        "free": {
+          "model_id": "opencode-go/hy4-flash-free",
+          "fallbacks": [
+            "opencode-go/longcat-2.5-free",
+            "opencode-go/iceman-contributor-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hy4-flash-free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1048576,
+            "requests_per_5h": null,
+            "requests_per_month": null,
+            "burn_basis_used": "tokens"
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/longcat-2.5-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-02",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/iceman-contributor-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-24",
+              "context": 262144
+            }
+          ],
+          "why": "opencode-go/hy4-flash-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/claude-haiku-5-5",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-4-argon",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-5.6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/grok-4.7",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k2.7-code",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.0",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.7-plus",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen4-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/step-5-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        }
+      ]
+    },
+    "go-plus": {
+      "plan": "go-plus",
+      "mode": "allowance",
+      "criteria": {
+        "top_n": 3,
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "profile": "general",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "at": "2026-11-21T13:29:53+00:00"
+      },
+      "tiers": {
+        "heavy": "",
+        "balanced": "",
+        "light": "",
+        "free": "opencode-go/hy4-flash-free"
+      },
+      "fallbacks": {
+        "heavy": [],
+        "balanced": [],
+        "light": [],
+        "free": [
+          "opencode-go/longcat-2.5-free",
+          "opencode-go/iceman-contributor-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the heavy cluster"
+        },
+        "balanced": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the balanced cluster"
+        },
+        "light": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the light cluster"
+        },
+        "free": {
+          "model_id": "opencode-go/hy4-flash-free",
+          "fallbacks": [
+            "opencode-go/longcat-2.5-free",
+            "opencode-go/iceman-contributor-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hy4-flash-free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1048576,
+            "requests_per_5h": null,
+            "requests_per_month": null,
+            "burn_basis_used": "tokens"
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/longcat-2.5-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-02",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/iceman-contributor-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-24",
+              "context": 262144
+            }
+          ],
+          "why": "opencode-go/hy4-flash-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/claude-haiku-5-5",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-4-argon",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-5.6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/grok-4.7",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k2.7-code",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.0",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.7-plus",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen4-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/step-5-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        }
+      ]
+    },
+    "go-teams": {
+      "plan": "go-teams",
+      "mode": "allowance",
+      "criteria": {
+        "top_n": 3,
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "profile": "general",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "at": "2026-11-21T13:29:53+00:00"
+      },
+      "tiers": {
+        "heavy": "",
+        "balanced": "",
+        "light": "",
+        "free": "opencode-go/hy4-flash-free"
+      },
+      "fallbacks": {
+        "heavy": [],
+        "balanced": [],
+        "light": [],
+        "free": [
+          "opencode-go/longcat-2.5-free",
+          "opencode-go/iceman-contributor-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the heavy cluster"
+        },
+        "balanced": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the balanced cluster"
+        },
+        "light": {
+          "model_id": null,
+          "fallbacks": [],
+          "explanation": {
+            "model_id": "None"
+          },
+          "candidates": [],
+          "cluster": {
+            "size": 0,
+            "output_cost_per_1m_range": null
+          },
+          "why": "no eligible model in the light cluster"
+        },
+        "free": {
+          "model_id": "opencode-go/hy4-flash-free",
+          "fallbacks": [
+            "opencode-go/longcat-2.5-free",
+            "opencode-go/iceman-contributor-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hy4-flash-free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1048576,
+            "requests_per_5h": null,
+            "requests_per_month": null,
+            "burn_basis_used": "tokens"
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/longcat-2.5-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-02",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/iceman-contributor-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-24",
+              "context": 262144
+            }
+          ],
+          "why": "opencode-go/hy4-flash-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/claude-haiku-5-5",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/deepseek-v4.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-4-argon",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/glm-5.3-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-5.6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/grok-4.7",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/hy4-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k2.7-code",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.0",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/mimo-v2.6-pro",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/minimax-m3.1-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.7-plus",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-flash",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3.8-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen4-max",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        },
+        {
+          "model_id": "opencode-go/step-5-preview",
+          "reasons": [
+            "unpriced: no docs pricing row for this plan"
+          ]
+        }
+      ]
+    }
+  },
+  "warnings": [
+    "no rows parsed from the go-pricing table in the docs; the docs format may have changed and no pricing was applied",
+    "no rows parsed from the docs Privacy table; privacy/region filters have no data",
+    "no rows parsed from the docs go-requests table; quota burn uses synthetic token costs",
+    "[go] no model available for tier heavy",
+    "[go] no model available for tier balanced",
+    "[go] no model available for tier light",
+    "[go-plus] no model available for tier heavy",
+    "[go-plus] no model available for tier balanced",
+    "[go-plus] no model available for tier light",
+    "[go-teams] no model available for tier heavy",
+    "[go-teams] no model available for tier balanced",
+    "[go-teams] no model available for tier light"
+  ],
+  "provenance": {
+    "sources": {
+      "docs": {
+        "url": "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/site/src/docs/content/console/go.mdx",
+        "status": 200,
+        "fetched_at": "2026-11-21T13:29:53+00:00",
+        "sha256": "757ab6271160ddea9c100c7dd7072ddc92d20d5c41e8ecdcb52b05610d2c7fe1",
+        "bytes": 17636
+      },
+      "catalogue": {
+        "url": "https://opencode.ai/inference/go/v1/models",
+        "status": 200,
+        "fetched_at": "2026-11-21T13:29:53+00:00",
+        "sha256": "553f89a9b3becf870c59eee260bd1b2a5daa3ec4a405835d80a71b7d2d4831cf",
+        "bytes": 42361
+      },
+      "models_dev": {
+        "url": "https://models.dev/api.json",
+        "status": 200,
+        "fetched_at": "2026-11-21T13:29:54+00:00",
+        "sha256": "c9c52b676045a7454843ce05cfba003467ce7e6e53c0fcdfb18bcf3ab44c6397",
+        "bytes": 6789127
+      }
+    },
+    "note": "sha256 and byte length of each raw response body; bodies are not published"
+  },
+  "how_decided": [
+    "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance and price only.",
+    "Eligibility: only active models are considered. Models without a positive finite allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: Global-region models are blocked, paid endpoints that train on request data are blocked, and free endpoints that train are blocked. Preview models are included. Retention is unrestricted unless a retention/ZDR flag is set.",
+    "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, promo expiry) using the 7-day time-weighted average starting at generation time.",
+    "Tiers: eligible paid models are split into three clusters by log effective output price (natural breaks): the dearest cluster is heavy, the middle balanced, the cheapest light.",
+    "Ranking inside a cluster: highest monthly allowance first, then lowest effective output price, then newest release date, then largest context window, then model id.",
+    "Free tier: zero-cost (or contributor/unlimited) models, newest release first, then largest context window, then model id.",
+    "Quota burn: percent of the monthly allowance consumed per 1,000 turns, from the docs request estimates when published (scaled by the price multiplier), otherwise from a synthetic token mix. Shown for context; it is not a ranking key in allowance mode.",
+    "Fallbacks: the next 2 candidates per tier, drawn from the same cluster and then from the general paid ranking."
+  ],
+  "tests": {
+    "result": "fail",
+    "runs": [
+      {
+        "name": "offline",
+        "passed": 285,
+        "failed": 0,
+        "skipped": 0,
+        "failing": []
+      },
+      {
+        "name": "live",
+        "passed": 2,
+        "failed": 12,
+        "skipped": 0,
+        "failing": [
+          "tests.live.test_contract::test_pricing_table_parses_rows[go]",
+          "tests.live.test_contract::test_pricing_table_parses_rows[go-plus]",
+          "tests.live.test_contract::test_pricing_table_parses_rows[go-teams]",
+          "tests.live.test_contract::test_request_estimates_parse_rows[go]",
+          "tests.live.test_contract::test_request_estimates_parse_rows[go-plus]",
+          "tests.live.test_contract::test_request_estimates_parse_rows[go-teams]",
+          "tests.live.test_contract::test_endpoints_table_is_non_empty",
+          "tests.live.test_contract::test_privacy_table_is_non_empty",
+          "tests.live.test_contract::test_active_models_get_pricing_privacy_and_estimates",
+          "tests.live.test_contract::test_select_yields_paid_tiers[go]",
+          "tests.live.test_contract::test_select_yields_paid_tiers[go-plus]",
+          "tests.live.test_contract::test_select_yields_paid_tiers[go-teams]"
+        ]
+      }
+    ]
+  }
+}
