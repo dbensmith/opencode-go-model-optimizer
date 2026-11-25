@@ -2,15 +2,14 @@
 
 The console page renders its model table client-side: the served HTML carries a
 build-time snapshot (rows stay ``hidden`` with stale numbers even after hydration),
-and the visible cells count up through an animation. Only the settled, rendered cells
-are comparable — never ``innerText``, tooltips (``sr-only`` spans) or hidden rows, all
-of which can carry known-bad pre-hydration numbers.
+and the visible cells count up through an animation. The build-time snapshot and hidden
+rows are therefore not valid evidence.
 
 This tool drives a real headless browser to the console's ``#limits`` anchor (which
 renders every model row directly — no featured subset, no count-labelled button),
 waits for hydration, and reads the final values from the rendered rows'
-screen-reader (``sr-only``) spans — React updates them in the same render that
-reveals a row, so no animation wait is needed. It then checks that our
+screen-reader (``sr-only``) spans via ``innerText`` — React updates them in the same render
+that reveals a row, so no animation wait is needed. It then checks that our
 computed estimates (Go models API allowances + the profiles scraped from the console's
 JS bundle) reproduce those numbers exactly, and requires **full coverage**: the console
 hydrates every model the API publishes, so any API model missing from the rendered rows
@@ -48,7 +47,11 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     apply_request_estimates,
     fetch_catalogue,
 )
-from opencode_go_model_optimizer.ingest.console import CONSOLE_PAGE_URL, fetch_console_profiles
+from opencode_go_model_optimizer.ingest.console import (
+    CONSOLE_PAGE_URL,
+    RequestProfiles,
+    fetch_console_profiles,
+)
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 
 # The #limits anchor deep-links to the full model table: every API model row renders
@@ -89,6 +92,15 @@ def _missing_shared_libs(executable: str) -> list[str]:
     return sorted({m.group(1) for m in re.finditer(r"(\S+) => not found", proc.stdout)})
 
 
+def _unresolved_shared_libs(missing: Sequence[str], lib_dirs: Sequence[str]) -> list[str]:
+    """Return missing sonames that are not present in any of the library directories."""
+    return [
+        lib
+        for lib in missing
+        if not any((Path(directory) / lib).is_file() for directory in lib_dirs)
+    ]
+
+
 def _bootstrap_lib_dirs(executable: str) -> list[str]:
     """Return LD_LIBRARY_PATH dirs that resolve the browser's missing shared libraries.
 
@@ -100,10 +112,11 @@ def _bootstrap_lib_dirs(executable: str) -> list[str]:
     if not missing:
         return []
     cached = [str(d) for d in _LIB_CACHE.glob("*/usr/lib/*-linux-gnu") if d.is_dir()]
-    if cached:
+    if cached and not _unresolved_shared_libs(missing, cached):
         return cached
 
-    unmapped = [lib for lib in missing if lib not in _LIB_DEB_PACKAGES]
+    unresolved = _unresolved_shared_libs(missing, cached)
+    unmapped = [lib for lib in unresolved if lib not in _LIB_DEB_PACKAGES]
     if unmapped:
         raise VerifyError(
             "browser binary is missing system libraries this tool cannot fetch rootlessly "
@@ -112,13 +125,13 @@ def _bootstrap_lib_dirs(executable: str) -> list[str]:
         )
     if not (shutil.which("apt-get") and shutil.which("dpkg-deb")):
         raise VerifyError(
-            f"missing browser system libraries ({', '.join(missing)}) and no rootless "
+            f"missing browser system libraries ({', '.join(unresolved)}) and no rootless "
             "apt/dpkg available; install them system-wide "
             "(e.g. `playwright install-deps chromium`)"
         )
     _LIB_CACHE.mkdir(parents=True, exist_ok=True)
-    lib_dirs: list[str] = []
-    for lib in missing:
+    lib_dirs = list(cached)
+    for lib in unresolved:
         for pkg in _LIB_DEB_PACKAGES[lib]:
             try:
                 subprocess.run(
@@ -141,9 +154,10 @@ def _bootstrap_lib_dirs(executable: str) -> list[str]:
                 break
             except subprocess.SubprocessError:
                 continue  # try the next candidate package name
-    if not lib_dirs:
+    still_unresolved = _unresolved_shared_libs(missing, lib_dirs)
+    if still_unresolved:
         raise VerifyError(
-            f"could not fetch the missing browser libraries ({', '.join(missing)}) "
+            f"could not fetch the missing browser libraries ({', '.join(still_unresolved)}) "
             "rootlessly; install them system-wide (e.g. `playwright install-deps chromium`)"
         )
     print(f"bootstrapped browser libraries rootlessly into {_LIB_CACHE}", file=sys.stderr)
@@ -222,7 +236,7 @@ def _parse_sr_values(text: str | None) -> tuple[float | None, float | None]:
 
 def _finalize_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Parse the sr-only texts into the same row shape the comparison consumes."""
-    rows: list[dict[str, str | None]] = []
+    rows: list[dict[str, Any]] = []
     for entry in raw:
         r_go, r_plus = _parse_sr_values(entry.get("requests_sr"))
         u_go, u_plus = _parse_sr_values(entry.get("usage_sr"))
@@ -293,6 +307,7 @@ def _cross_check(finals: list[dict[str, Any]], displayed: list[dict[str, Any]]) 
     for final in finals:
         shown = by_model.get(final["model"])
         if shown is None:
+            diverged.append(f"{final['model']}: missing from settled visible rows")
             continue
         for field in ("requests_go", "requests_plus", "usage_go", "usage_plus"):
             if final[field] != _parse_display_number(shown.get(field)):
@@ -301,7 +316,7 @@ def _cross_check(finals: list[dict[str, Any]], displayed: list[dict[str, Any]]) 
                 )
     if diverged:
         raise VerifyError(
-            "the settled visible cells disagree with the sr-only final values "
+            "the settled visible cells do not match the sr-only final values "
             f"({'; '.join(diverged)}); the page structure changed — inspect manually"
         )
 
@@ -333,6 +348,17 @@ def _start_playwright():
                 os.environ[key] = value
 
 
+def _browser_env(lib_dirs: Sequence[str]) -> dict[str, str] | None:
+    """Build the browser launch environment without empty library-path entries."""
+    if not lib_dirs:
+        return None
+    library_path = [*lib_dirs, *os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)]
+    return {
+        **os.environ,
+        "LD_LIBRARY_PATH": ":".join(path for path in library_path if path),
+    }
+
+
 def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
     try:
         from playwright.sync_api import Error as PlaywrightError
@@ -343,16 +369,7 @@ def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
         try:
             executable = p.chromium.executable_path
             lib_dirs = _bootstrap_lib_dirs(executable)
-            env = (
-                {
-                    **os.environ,
-                    "LD_LIBRARY_PATH": ":".join(
-                        [*lib_dirs, os.environ.get("LD_LIBRARY_PATH", "")]
-                    ),
-                }
-                if lib_dirs
-                else None
-            )
+            env = _browser_env(lib_dirs)
             browser = p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"],
@@ -401,8 +418,8 @@ def _lim_ok(displayed: float, allowance: float | None) -> bool:
     return allowance is not None and abs(allowance - displayed) < 0.5
 
 
-def _compare(rows: list[dict[str, Any]], min_rows: int) -> int:
-    models = apply_request_estimates(fetch_catalogue(), fetch_console_profiles())
+def _compare(rows: list[dict[str, Any]], min_rows: int, profiles: RequestProfiles) -> int:
+    models = apply_request_estimates(fetch_catalogue(), profiles)
     by_plan = {
         plan: {m.id: m for m in apply_plan([m.model_copy(deep=True) for m in models], plan)}
         for plan in ("go", "go-plus")
@@ -525,7 +542,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _fail(f"browser verification failed: {type(exc).__name__}: {exc}")
     if not rows:
         return _fail("the hydrated console rendered no model rows")
-    return _compare(rows, args.min_rows)
+    return _compare(rows, args.min_rows, profiles)
 
 
 if __name__ == "__main__":
