@@ -22,7 +22,7 @@ CONSOLE_PAGE_URL = "https://opencode.ai/console/go"
 _ASSET_JS_RE = re.compile(r'"(/[^"]*_build/assets/[^"]+\.js)"')
 _NUM = r"[0-9]+(?:\.[0-9]+)?(?:e[0-9]+)?"
 _ENTRY_RE = re.compile(
-    rf'(?:"([^"]+)"|([A-Za-z0-9_.-]+)):'
+    rf"""(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+)):"""
     rf"\{{input:({_NUM}),cached:({_NUM}),output:({_NUM})\}}"
 )
 _DEFAULT_RE = re.compile(rf"(?<!:){{input:({_NUM}),cached:({_NUM}),output:({_NUM})}}")
@@ -46,27 +46,28 @@ def parse_console_profiles(js: str, source_url: str = "") -> RequestProfiles | N
 
     Minified identifiers are not stable, so this matches the profile object shape rather
     than the variable names. The map is the set of keyed `{input,cached,output}` objects;
-    the default is the standalone object of the same shape.
+    the default is the first standalone object of the same shape with positive token counts.
     """
-    default_match = _DEFAULT_RE.search(js)
-    if not default_match:
+    default: tuple[int, int, int] | None = None
+    for match in _DEFAULT_RE.finditer(js):
+        profile = (_number(match.group(1)), _number(match.group(2)), _number(match.group(3)))
+        if all(part > 0 for part in profile):
+            default = profile
+            break
+    if default is None:
         return None
     by_model: dict[str, tuple[int, int, int]] = {}
     for match in _ENTRY_RE.finditer(js):
-        model_id = match.group(1) or match.group(2)
+        model_id = match.group(1) or match.group(2) or match.group(3)
         if not model_id:
             continue
-        profile = (_number(match.group(3)), _number(match.group(4)), _number(match.group(5)))
+        profile = (_number(match.group(4)), _number(match.group(5)), _number(match.group(6)))
         if all(part > 0 for part in profile):
             by_model[model_id] = profile
     if not by_model:
         return None
     return RequestProfiles(
-        default=(
-            _number(default_match.group(1)),
-            _number(default_match.group(2)),
-            _number(default_match.group(3)),
-        ),
+        default=default,
         by_model=by_model,
         source_url=source_url,
     )

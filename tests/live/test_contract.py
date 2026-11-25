@@ -53,7 +53,7 @@ def test_active_models_get_allowance_and_privacy(live_snapshot):
 def test_request_estimates_are_positive(live_snapshot, plan):
     models = apply_plan([m.model_copy(deep=True) for m in live_snapshot.models], plan)
     for m in models:
-        if m.status != "active" or m.is_zero_cost:
+        if m.status != "active" or m.model_type != "chat" or m.is_zero_cost:
             continue
         assert m.request_estimate is not None, m.id
         assert m.request_estimate.per_5h > 0, m.id

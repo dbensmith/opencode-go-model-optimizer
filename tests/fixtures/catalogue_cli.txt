@@ -16,7 +16,16 @@ opencode-go/alpha-max
     "context": 512000,
     "output": 40000
   },
-  "release_date": "2026-08-20"
+  "release_date": "2026-08-20",
+  "go": {
+    "monthly_usage": {
+      "go": 12,
+      "go-plus": 120,
+      "go-teams": 24
+    },
+    "training": false,
+    "zdr": true
+  }
 }
 opencode-go/theta-pro
 {
