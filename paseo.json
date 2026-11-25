@@ -1,0 +1,13 @@
+{
+  "worktree": {
+    "setup": "set -e\nif ! command -v uv >/dev/null 2>&1; then\n  if command -v curl >/dev/null 2>&1; then\n    echo \"setup: uv not found; installing uv 0.13.7 (the version CI uses) to ~/.local/bin\" >&2\n    curl -LsSf https://astral.sh/uv/0.13.7/install.sh | env UV_NO_MODIFY_PATH=1 sh || true\n    export PATH=\"$HOME/.local/bin:$PATH\"\n  elif command -v wget >/dev/null 2>&1; then\n    echo \"setup: uv not found; installing uv 0.13.7 (the version CI uses) to ~/.local/bin\" >&2\n    UV_NO_MODIFY_PATH=1 wget -qO- https://astral.sh/uv/0.13.7/install.sh | env UV_NO_MODIFY_PATH=1 sh || true\n    export PATH=\"$HOME/.local/bin:$PATH\"\n  fi\nfi\ncommand -v uv >/dev/null 2>&1 || {\n  echo \"error: uv is required to set up this worktree and could not be installed automatically; install it from https://docs.astral.sh/uv/getting-started/installation/ and re-run worktree setup\" >&2\n  exit 1\n}\nuv sync --locked\nuv run opencode-go-model-optimizer --version\nuv run pytest --collect-only -qq\necho \"Worktree ready: deps + dev tools installed into .venv, CLI entry point OK, tests collect cleanly.\""
+  },
+  "scripts": {
+    "test": { "command": "uv run pytest" },
+    "test-live": { "command": "OCGO_LIVE=1 uv run pytest tests/live -m live" },
+    "lint": { "command": "uv run ruff check" },
+    "format": { "command": "uv run ruff format" },
+    "select": { "command": "uv run opencode-go-model-optimizer select --format table" },
+    "docs": { "type": "service", "command": "uv run python -m http.server $PASEO_PORT --directory docs" }
+  }
+}
