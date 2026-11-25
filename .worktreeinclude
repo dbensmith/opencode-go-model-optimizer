@@ -1,0 +1,4 @@
+# Copied into new worktrees only if present in your source checkout.
+# A locally fetched snapshot (uv run opencode-go-model-optimizer fetch) enables
+# offline --snapshot runs without network or the shared consumer cache.
+snapshot.json

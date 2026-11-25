@@ -57,6 +57,18 @@
       ],
       "depNameTemplate": "astral-sh/uv",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Track uv version pinned in the Paseo worktree setup hook installer URL",
+      "managerFilePatterns": [
+        "/^paseo\\.json$/"
+      ],
+      "matchStrings": [
+        "https://astral\\.sh/uv/(?<currentValue>[^/\"'\\s]+)/install\\.sh"
+      ],
+      "depNameTemplate": "astral-sh/uv",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
