@@ -9,5 +9,19 @@
     "format": { "command": "uv run ruff format" },
     "select": { "command": "uv run opencode-go-model-optimizer select --format table" },
     "docs": { "type": "service", "command": "uv run python -m http.server $PASEO_PORT --directory docs" }
+  },
+  "metadataGeneration": {
+    "title": {
+      "instructions": "Short task-shaped label, a few words, no leading verb."
+    },
+    "branchName": {
+      "instructions": "Conventional Branch format <type>/<short-kebab-desc>; types: feat, fix, docs, chore."
+    },
+    "commitMessage": {
+      "instructions": "Conventional Commits with a lowercase scope, e.g. feat(paseo,ci): summary in imperative mood."
+    },
+    "pullRequest": {
+      "instructions": "Title mirrors the commit subject; body includes a Testing section."
+    }
   }
 }
