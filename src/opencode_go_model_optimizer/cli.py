@@ -509,7 +509,8 @@ def _load_or_fetch_models(
 ) -> tuple[list[NormalizedModel], str]:
     """Retrieve models from snapshot file if provided, otherwise fetch live."""
     snap = _load_or_fetch_snapshot(snapshot_path, plan=plan, cache_ttl=cache_ttl).snapshot
-    return apply_plan(snap.models, plan), _effective_plan(snap.plan, plan, snap.models)
+    effective_plan = _effective_plan(snap.plan, plan, snap.models)
+    return apply_plan(snap.models, effective_plan), effective_plan
 
 
 def _write_output(content: str, out_path: str | None = None) -> None:
@@ -566,8 +567,8 @@ def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
     loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
     snap = loaded.snapshot
-    models = apply_plan(snap.models, args.plan)
     plan = _effective_plan(snap.plan, args.plan, snap.models)
+    models = apply_plan(snap.models, plan)
     mode = resolve_mode(args.mode, models)
 
     criteria = _criteria_from_args(args, mode)

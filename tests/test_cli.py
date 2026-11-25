@@ -39,6 +39,25 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 from tests.conftest import CATALOGUE_HTTP_DATA, FIXTURES_DIR, create_temp_snapshot
 
 
+@pytest.fixture
+def go_only_snapshot(tmp_path: Path) -> Path:
+    snap = Snapshot(
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[
+            NormalizedModel(
+                id="paid",
+                cost={"input": 1.0, "output": 2.0},
+                limit={"context": 128000, "output": 8192},
+                plan_allowances={"go": 15.0},
+            )
+        ],
+    )
+    path = tmp_path / "go_only.json"
+    save_snapshot(snap, path)
+    return path
+
+
 def test_parse_args_select():
     args = parse_args(
         [
@@ -370,6 +389,46 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
     assert rc_json == 0
     json_out = json.loads(capsys.readouterr().out)
     assert json_out["plan"] == "go-plus"
+
+
+def test_cli_select_plan_fallback_reapplies_effective_plan(go_only_snapshot, capsys):
+    args = [
+        "select",
+        "--snapshot",
+        str(go_only_snapshot),
+        "--mode",
+        "allowance",
+        "--format",
+        "json",
+    ]
+    assert main([*args, "--plan", "go-plus"]) == 0
+    fallback = json.loads(capsys.readouterr().out)
+    assert main([*args, "--plan", "go"]) == 0
+    direct = json.loads(capsys.readouterr().out)
+
+    assert fallback["plan"] == direct["plan"] == "go"
+    assert fallback["tiers"] == direct["tiers"]
+    assert fallback["tiers"]["heavy"] == "opencode-go/paid"
+
+
+def test_cli_rank_plan_fallback_reapplies_effective_plan(go_only_snapshot, capsys):
+    args = [
+        "rank",
+        "--snapshot",
+        str(go_only_snapshot),
+        "--mode",
+        "allowance",
+        "--format",
+        "json",
+    ]
+    assert main([*args, "--plan", "go-plus"]) == 0
+    fallback = json.loads(capsys.readouterr().out)
+    assert main([*args, "--plan", "go"]) == 0
+    direct = json.loads(capsys.readouterr().out)
+
+    assert fallback == direct
+    assert fallback[0]["monthly_allowance"] == 15.0
+    assert fallback[0]["tier"] == "heavy"
 
 
 def test_cli_select_output_file(tmp_path):
