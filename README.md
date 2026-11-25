@@ -138,7 +138,7 @@ flowchart TD
 1. **Eligibility.** Start from active, non-free models that pass the privacy/region, context, output, output-cost and quota-burn filters and are not skipped with `--skip`. OpenCode Go privacy defaults apply: Global-region models, paid endpoints that train, and free endpoints that train are all blocked unless the corresponding `--allow-*` flag is passed. Pareto paid tiers only consider models that have an AA benchmark; unbenchmarked models are left to allowance mode.
 2. **Pareto frontier.** Compare quality against monthly quota burn. A model is dominated when another eligible model has at least as much quality and no more burn, with at least one strict improvement. Dominated models are never picked; every remaining frontier model has BPE `1.000`.
 3. **Quality.** Quality is the AA Intelligence Index, blended with the AA Engineering capability index (the replacement for the retired Coding Index) using the `--profile` or `--weights` weights. `general` is 70% intelligence / 30% engineering, `coding` is 40/60, `reasoning` is 85/15, and `fast` also scales by output tokens per second.
-4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the docs' published requests per month (scaled by the price multiplier); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
+4. **Burn.** Burn is the percentage of the plan's monthly allowance consumed per 1,000 turns. `--burn-basis estimate` uses the console's per-model request estimate (its token profile × token prices, with the 20% five-hour rule); `tokens` synthesises it from the token mix; `auto` uses `estimate` unless you pass `--tokens` or a non-`general` profile.
 5. **Value.** `value = quality / burn`. Higher is better: more capability per percentage point of quota.
 6. **Tier objectives.**
    - **`heavy`** — the value winner among frontier models whose quality is at least **90%** of the best frontier quality. Ties: quality, burn, BPE, speed, release date, model id.
@@ -313,11 +313,16 @@ uvx opencode-go-model-optimizer select --format json
   ```bash
   opencode-go-model-optimizer fetch --out snapshot.json
   ```
-  Pricing rows are matched to catalogue models by model ID through the docs "Endpoints" table
-  (falling back to name matching for models it does not list). The catalogue comes from the HTTP
-  endpoint, with the `opencode` CLI as a fallback; models.dev metadata is read from its
-  `opencode-go` provider only. Ingest problems (unmatched models or pricing rows, an empty
-  pricing table, an AA key that returned no benchmarks) are stored in the snapshot's
+  Per-plan allowances (`go.monthly_usage`) and the training/ZDR flags come from the Go models
+  API (`https://opencode.ai/inference/go/v1/models`); token prices come from the same
+  catalogue. `go.limited_regions` is recorded as advisory (regional availability is not the
+  same as the workspace Global setting). The docs PRIVACY table supplies retention days and
+  agreement notes, and explicit docs text supplies the Global-region requirement. Request
+  estimates use `go.requests` when the API publishes it; otherwise the console's current
+  per-model token profiles are scraped from its JS bundle (cached in the snapshot) and
+  applied only to the models the API returned. models.dev metadata is read from its
+  `opencode-go` provider only. Ingest problems (no per-plan usage, unreachable console
+  profiles, an AA key that returned no benchmarks) are stored in the snapshot's
   `warnings` list and printed to stderr; they never fail the fetch.
 
 - **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (the effective criteria including Global/paid-training/free-training flags, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
@@ -425,13 +430,13 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--max-burn <pct>`**: Enforce a maximum monthly quota burn percentage per 1,000 standardized turns (e.g. `--max-burn 2.5`). Useful because raw token price does not account for each model's monthly allowance.
 - **`--burn-basis {auto,tokens,estimate}`**: Where quota burn (% of the monthly allowance per 1,000 requests) comes from; it drives `--max-burn`, Pareto/BPE scoring, `--explain` and `rank` (default: `auto`).
   - `tokens`: synthesise it from a token mix (750 in / 60k cached / 250 out, or the `--profile`/`--tokens` mix) times model price, divided by the allowance.
-  - `estimate`: use the request estimates the Go docs publish per plan (`Estimated requests`: per 5 hours, week and month). Burn is `1000 / requests_per_month * 100`; unlimited models burn 0. Published estimates are at list price, so the value is scaled by the model's effective price multiplier (`--price-basis`). A model with no published estimate falls back to `tokens`.
+  - `estimate`: use the console-style request estimate for the active plan. If the API publishes `go.requests`, that value is authoritative for the Go plan. Otherwise the console's per-model token profile (input/cached/output tokens), scraped from its JS bundle, is applied to the API model's token prices; requests per 5 hours are 20% of the monthly allowance divided by that cost, matching the `Est. requests / 5 hr` column on the Go console. Weekly and monthly counts use the docs' 50% and 100% windows. Burn is `1000 / requests_per_month * 100`, scaled by the model's effective price multiplier (`--price-basis`). A model with no estimate falls back to `tokens`.
   - `auto`: `estimate` unless you pass `--tokens` or a non-`general` `--profile`; those imply you want your own synthetic workload, so `tokens` is used.
 
-  Why: the docs estimates reflect each model's real token profile (cache-heavy models differ a lot from the one-size synthetic mix). They also expose the 5-hour window (20% of monthly), which is the limit users usually hit first: `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column (only when estimates are present). Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`), old snapshots without them still load, and `diff` reports estimate changes under pricing changes.
+  `select --explain` reports `requests_per_5h`, `requests_per_month` and `burn_basis_used`; `rank` shows `requests_per_month` in JSON and a `Req/month` table column. Estimates are stored per plan (`request_estimates`: `go`, `go-plus`, `go-teams`); `diff` reports their changes under pricing changes.
 - **`--tokens <in,cache,out>`**: Override the workload profile with an exact per-turn token mix (e.g. `--tokens 2000,120000,1000`).
 - **`--weights <iq,coding>`**: Override profile benchmark weighting with explicit AA Intelligence and coding/engineering weights (e.g. `--weights 0.5,0.5`).
-- **`--allow-global-region`**: Allow models that the docs say require **Global** regions in workspace privacy settings (blocked by default).
+- **`--allow-global-region`**: Allow models whose docs explicitly require **Global** regions in workspace privacy settings (blocked by default). The API's `go.limited_regions` is advisory regional availability, not the Global setting, and is reported without blocking on its own.
 - **`--allow-paid-training`**: Allow paid endpoints that train on request data (blocked by default).
 - **`--allow-free-training`**: Allow free endpoints that train on request data (blocked by default; turning this off disables those free models).
 - **`--max-retention-days <N>`**: Exclude models that retain data longer than N days. Models with unknown retention (`Not ZDR`, or no privacy data) fail.

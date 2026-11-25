@@ -18,12 +18,15 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     parse_catalogue_cli,
     parse_catalogue_http,
 )
+from opencode_go_model_optimizer.ingest.console import (
+    RequestProfiles,
+    fetch_console_profiles,
+    parse_console_profiles,
+)
 from opencode_go_model_optimizer.ingest.docs import (
-    extract_plan_section,
     fetch_docs_mdx,
     norm_name,
-    parse_go_pricing,
-    parse_price_value,
+    parse_privacy,
     parse_table_rows,
 )
 from opencode_go_model_optimizer.ingest.models import (
@@ -47,11 +50,11 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     get_cache_snapshot_path,
     load_cached_snapshot,
     load_snapshot,
-    merge_docs_pricing,
+    merge_catalogue_metadata,
     save_cached_snapshot,
     save_snapshot,
 )
-from tests.conftest import FIXTURES_DIR
+from tests.conftest import FIXTURES_DIR, TEST_CONSOLE_PROFILES
 
 
 def test_norm_name():
@@ -61,49 +64,6 @@ def test_norm_name():
     assert norm_name("Gamma-Flash") == "gammaflash"
     assert norm_name("<b>Zeta Pro</b>") == "zetapro"
     assert norm_name("Delta Contributor") == "deltacontributor"
-
-
-def test_parse_price_value():
-    assert parse_price_value("$0.50") == 0.50
-    assert parse_price_value("~~$20.00~~ $10.00") == 10.00
-    assert parse_price_value("Free") == 0.0
-    assert parse_price_value("-") == 0.0
-    assert parse_price_value("") == 0.0
-
-
-def test_extract_plan_section_and_parse_table():
-    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
-    section = extract_plan_section(mdx_text, plan_id="go-pricing", slot="go")
-    assert '<div slot="go">' in section
-    assert '<div slot="go-plus">' not in section
-
-    rows = parse_table_rows(section)
-    assert len(rows) > 0
-    # Header should be skipped
-    assert rows[0][0] != "Model"
-
-
-def test_parse_go_pricing():
-    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
-    pricing = parse_go_pricing(mdx_text)
-
-    # Gamma-Flash has two context-tier rows with the same allowance: the cheaper one wins
-    assert pricing["gammaflash"]["allowance"] == 50.0
-    assert pricing["gammaflash"]["output_cost"] == 0.4
-    assert pricing["gammaflash"]["raw_name"] == "Gamma-Flash (≤ 256K tokens)"
-
-    # Off-Peak and Peak rows share the allowance: the cheaper (off-peak) row wins
-    assert pricing["betaflash"]["allowance"] == 80.0
-    assert pricing["betaflash"]["output_cost"] == 0.7
-
-    # A struck-through promo price is ignored in favour of the current price
-    assert pricing["alphamax"]["input_cost"] == 3.0
-    assert pricing["alphamax"]["allowance"] == 12.0
-    assert parse_go_pricing(mdx_text, plan="go-plus")["alphamax"]["allowance"] == 120.0
-
-    # Delta should have infinite allowance (unlimited)
-    assert "deltacontributor" in pricing
-    assert pricing["deltacontributor"]["allowance"] == float("inf")
 
 
 def test_parse_catalogue_cli():
@@ -169,19 +129,18 @@ def test_parse_catalogue_http_uses_opencode_go_provider_not_owned_by():
 
 
 def test_snapshot_lifecycle(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
+    data = json.loads((FIXTURES_DIR / "catalogue_http.json").read_text(encoding="utf-8"))
 
-    models = parse_catalogue_cli(cli_text)
-    pricing = parse_go_pricing(mdx_text)
-
-    snap = create_snapshot(models, pricing)
+    models = parse_catalogue_http(data)
+    snap = create_snapshot(models, privacy=parse_privacy(mdx_text))
     assert snap.schema_version == 1
     assert snap.plan == "go"
     assert len(snap.models) == 14
 
     beta = next(m for m in snap.models if m.id == "beta-flash")
     assert beta.monthly_allowance == 80.0
+    assert beta.privacy is not None and beta.privacy.retention_days == 0
 
     out_file = tmp_path / "test_snapshot.json"
     save_snapshot(snap, out_file)
@@ -357,25 +316,6 @@ def test_fetch_catalogue_raises_http_error_when_cli_also_unusable():
         fetch_catalogue()
 
 
-def test_extract_plan_section_edge_cases():
-    # Missing PlanTabs tag
-    assert extract_plan_section("No plan tabs here", plan_id="go-pricing", slot="go") == ""
-
-    # Missing slot div tag
-    mdx_no_slot = '<PlanTabs id="go-pricing"><div>Some content</div></PlanTabs>'
-    assert extract_plan_section(mdx_no_slot, plan_id="go-pricing", slot="go") == ""
-
-    # Missing closing </div> tag
-    mdx_unclosed_div = '<PlanTabs id="go-pricing"><div slot="go">Unclosed content</PlanTabs>'
-    section = extract_plan_section(mdx_unclosed_div, plan_id="go-pricing", slot="go")
-    assert '<div slot="go">' in section
-
-    # Missing closing </PlanTabs> tag
-    mdx_unclosed_tabs = '<PlanTabs id="go-pricing"><div slot="go">Content</div>'
-    section2 = extract_plan_section(mdx_unclosed_tabs, plan_id="go-pricing", slot="go")
-    assert '<div slot="go">' in section2
-
-
 def test_parse_table_rows_edge_cases():
     table_text = """
     Line without pipe
@@ -389,30 +329,6 @@ def test_parse_table_rows_edge_cases():
     assert len(rows) == 2
     assert rows[0][0] == "Model A"
     assert rows[1][0] == "Model B"
-
-
-def test_parse_go_pricing_edge_cases():
-    # Missing slot falling back to 'go'
-    mdx_content = """
-    <PlanTabs id="go-pricing">
-      <div slot="go">
-        | Model | Input | Output | Cache Read | Cache Write | Monthly |
-        | :--- | :--- | :--- | :--- | :--- | :--- |
-        | Special Model | $1.00 | $2.00 | $0.10 | $0.50 | $75.00 |
-        | Model Tied | $1.00 | $4.00 | $0.10 | $0.50 | **$100** |
-        | Model Tied | $1.00 | $2.00 | $0.10 | $0.50 | **$100** |
-        | | $1.00 | $2.00 | $0.10 | $0.50 | $10.00 |
-      </div>
-    </PlanTabs>
-    """
-    # Requesting non-existent slot 'unknown' should fallback to 'go'
-    pricing = parse_go_pricing(mdx_content, plan="unknown")
-    assert "specialmodel" in pricing
-    assert pricing["specialmodel"]["allowance"] == 75.0
-    assert pricing["specialmodel"]["cached_write_cost"] == 0.50
-
-    # Model Tied should take the cheaper output ($2.00 instead of $4.00) when allowance is tied
-    assert pricing["modeltied"]["output_cost"] == 2.00
 
 
 def test_fetch_docs_mdx_retries_and_errors():
@@ -518,23 +434,15 @@ def test_fetch_aa_benchmarks():
         assert benchmarks_err == {}
 
 
-def test_merge_docs_pricing_and_benchmarks():
+def test_merge_catalogue_metadata_and_benchmarks():
     m = NormalizedModel(
         id="test-model",
         name="Test Model",
-        cost=TokenCost(input=0.0, output=0.0, cache_read=0.0, cache_write=0.0),
+        cost=TokenCost(input=1.25, output=3.5, cache_read=0.15, cache_write=0.4),
+        plan_allowances={"go": 80.0},
     )
-    assert m.is_zero_cost is True
+    assert m.is_zero_cost is False
 
-    pricing = {
-        "testmodel": {
-            "allowance": 80.0,
-            "input_cost": 1.25,
-            "output_cost": 3.50,
-            "cached_read_cost": 0.15,
-            "cached_write_cost": 0.40,
-        }
-    }
     benchmarks = {
         "testmodel": {
             "iq": 72.0,
@@ -542,31 +450,17 @@ def test_merge_docs_pricing_and_benchmarks():
             "tps": 50.0,
         }
     }
-    merged = merge_docs_pricing([m], pricing, aa_benchmarks=benchmarks)
-    assert merged[0].monthly_allowance == 80.0
-    assert merged[0].cost.input == 1.25
-    assert merged[0].cost.output == 3.50
-    assert merged[0].cost.cache_read == 0.15
-    assert merged[0].cost.cache_write == 0.40
-    assert merged[0].is_zero_cost is False
+    merged = merge_catalogue_metadata([m], aa_benchmarks=benchmarks)
     assert merged[0].aa_iq == 72.0
     assert merged[0].aa_coding == 68.0
     assert merged[0].speed_tps == 50.0
 
-    # Test benchmark lookup by norm_name(name) and is_zero_cost remains True for 0 cost
+    # Benchmark lookup by norm_name(name) and is_zero_cost remains True for 0 cost
     m2 = NormalizedModel(
         id="model-custom-id",
         name="Custom Display Name",
         cost=TokenCost(input=0.0, output=0.0),
     )
-    pricing2 = {
-        "modelcustomid": {
-            "allowance": 100.0,
-            "input_cost": 0.0,
-            "output_cost": 0.0,
-            "cached_read_cost": 0.0,
-        }
-    }
     benchmarks2 = {
         "customdisplayname": {
             "iq": 90.0,
@@ -574,7 +468,7 @@ def test_merge_docs_pricing_and_benchmarks():
             "tps": 60.0,
         }
     }
-    merged2 = merge_docs_pricing([m2], pricing2, aa_benchmarks=benchmarks2)
+    merged2 = merge_catalogue_metadata([m2], aa_benchmarks=benchmarks2)
     assert merged2[0].is_zero_cost is True
     assert merged2[0].aa_iq == 90.0
     assert merged2[0].aa_coding == 85.0
@@ -582,15 +476,7 @@ def test_merge_docs_pricing_and_benchmarks():
 
 def test_fetch_and_build_with_aa_key():
     # Test fetch_and_build_snapshot with AA_API_KEY env set
-    dummy_model = NormalizedModel(id="snap-m", name="Snap Model")
-    pricing = {
-        "snapmodel": {
-            "allowance": 50.0,
-            "output_cost": 2.0,
-            "input_cost": 1.0,
-            "cached_read_cost": 0.0,
-        }
-    }
+    dummy_model = NormalizedModel(id="snap-m", name="Snap Model", plan_allowances={"go": 50.0})
 
     with (
         patch.dict(os.environ, {"AA_API_KEY": "dummy-key"}),
@@ -601,10 +487,6 @@ def test_fetch_and_build_with_aa_key():
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx",
             return_value="",
-        ),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.parse_go_pricing",
-            return_value=pricing,
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
@@ -686,17 +568,13 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
 def test_fetch_and_build_snapshot_custom_client():
     # Test fetch_and_build_snapshot with user-provided client (should not close user client)
     custom_client = httpx.Client()
-    dummy_model = NormalizedModel(id="custom-m")
+    dummy_model = NormalizedModel(id="custom-m", plan_allowances={"go": 15.0})
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
             return_value=[dummy_model],
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.parse_go_pricing",
-            return_value={},
-        ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
             return_value={},
@@ -744,44 +622,6 @@ def test_plan_allowances_and_apply_plan():
     assert m.monthly_allowance == float("inf")
 
 
-def test_merge_docs_pricing_multi_plan():
-    m = NormalizedModel(id="mod-multi", name="Model Multi", monthly_allowance=15.0)
-    pricing_go = {
-        "mod-multi": {
-            "allowance": 15.0,
-            "output_cost": 1.0,
-            "input_cost": 0.5,
-            "cached_read_cost": 0.05,
-            "cached_write_cost": 0.2,
-        }
-    }
-    all_plan_pricing = {
-        "go": {"mod-multi": {"allowance": 15.0}},
-        "go-plus": {"mod-multi": {"allowance": 60.0}},
-        "go-teams": {"mod-multi": {"allowance": float("inf")}},
-    }
-
-    # With all_plan_pricing
-    merge_docs_pricing([m], pricing_go, all_plan_pricing=all_plan_pricing)
-    assert m.plan_allowances == {"go": 15.0, "go-plus": 60.0, "go-teams": float("inf")}
-
-    # Without all_plan_pricing, consistent with "go"
-    m2 = NormalizedModel(id="mod-single", name="Model Single")
-    merge_docs_pricing(
-        [m2],
-        {
-            "mod-single": {
-                "allowance": 25.0,
-                "output_cost": 0.5,
-                "input_cost": 0.2,
-                "cached_read_cost": 0.0,
-                "cached_write_cost": 0.0,
-            }
-        },
-    )
-    assert m2.plan_allowances.get("go") == 25.0
-
-
 def test_apply_plan_aliases_and_normalization():
     m = NormalizedModel(
         id="mod-plan",
@@ -811,8 +651,10 @@ def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
         "m_coding": {"iq": None, "coding": 85.0, "tps": 110.0},
         "prettymodelv1": {"iq": 92.0, "coding": None, "tps": None},
     }
-    target_mod1 = NormalizedModel(id="m_coding", name="Target 1")
-    target_mod2 = NormalizedModel(id="unmatched-id", name="Pretty Model v1")
+    target_mod1 = NormalizedModel(id="m_coding", name="Target 1", plan_allowances={"go": 15.0})
+    target_mod2 = NormalizedModel(
+        id="unmatched-id", name="Pretty Model v1", plan_allowances={"go": 15.0}
+    )
 
     with (
         patch(
@@ -821,7 +663,7 @@ def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx",
-            return_value="""# Pricing\n| Model | Monthly Allowance | Input | Output | Context |\n| --- | --- | --- | --- | --- |\n| Target 1 | $15.00 | $1.00 | $2.00 | 128K |\n| Pretty Model v1 | $15.00 | $1.00 | $2.00 | 128K |\n""",
+            return_value="",
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
@@ -949,11 +791,10 @@ def test_fetch_models_dev_success_and_failure():
     custom_client.close.assert_not_called()
 
 
-def test_merge_docs_pricing_models_dev_backfill():
+def test_merge_catalogue_metadata_models_dev_backfill():
     blank = NormalizedModel(id="blank-model", name="Blank Model")
-    merge_docs_pricing(
+    merge_catalogue_metadata(
         [blank],
-        {},
         models_dev_metadata={
             "blank-model": {
                 "release_date": "2026-06-01",
@@ -971,9 +812,8 @@ def test_merge_docs_pricing_models_dev_backfill():
         release_date="2025-01-01",
         limit=ModelLimit(context=1000, output=2000),
     )
-    merge_docs_pricing(
+    merge_catalogue_metadata(
         [existing],
-        {},
         models_dev_metadata={
             "existing-model": {"release_date": "2026-06-01", "context": 512000, "output": 128000}
         },
@@ -1072,13 +912,13 @@ def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
 def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
     # AA returns multiple effort rows per model family; canonical/flagship (Max) must not be
     # overwritten by later Low/High/Non-reasoning variants that normalize to the same name.
-    # Also covers creator-prefixed slugs (tencent-hy4 -> hy4), edition suffixes (-next -> base),
-    # engineering_index fallback for coding, and canonical_id lookup (reflection/beam-1.0-501b-a23b).
+    # Also covers creator-prefixed slugs (vendor-model-e -> model-e), edition suffixes
+    # (-next -> base), engineering_index fallback for coding, and canonical_id lookup.
     items = [
         {
-            "slug": "deepseek-v4-1-flash-1017",
-            "name": "DeepSeek V4.1 Flash 1017 (Max)",
-            "model_creator": {"name": "DeepSeek"},
+            "slug": "acme-model-a-1017",
+            "name": "Acme Model A 1017 (Max)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 32.6,
                 "artificial_analysis_coding_index": None,
@@ -1087,9 +927,9 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
             "performance_v3": {"mean_output_tokens_per_second": 174.35},
         },
         {
-            "slug": "deepseek-v4-1-flash-1017-high",
-            "name": "DeepSeek V4.1 Flash 1017 (High)",
-            "model_creator": {"name": "DeepSeek"},
+            "slug": "acme-model-a-1017-high",
+            "name": "Acme Model A 1017 (High)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 28.6,
                 "artificial_analysis_engineering_index": 34.4,
@@ -1097,9 +937,9 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
             "performance_v3": {"mean_output_tokens_per_second": 174.64},
         },
         {
-            "slug": "deepseek-v4-1-flash-1017-non-reasoning",
-            "name": "DeepSeek V4.1 Flash 1017 (Non-reasoning)",
-            "model_creator": {"name": "DeepSeek"},
+            "slug": "acme-model-a-1017-non-reasoning",
+            "name": "Acme Model A 1017 (Non-reasoning)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 18.5,
                 "artificial_analysis_engineering_index": 25.0,
@@ -1107,54 +947,54 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
             "performance_v3": {"mean_output_tokens_per_second": 152.85},
         },
         {
-            "slug": "grok-4-7",
-            "name": "Grok 4.7 (Xhigh)",
-            "model_creator": {"name": "SpaceXAI"},
+            "slug": "acme-model-b",
+            "name": "Acme Model B (Xhigh)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 35.5,
                 "artificial_analysis_engineering_index": 41.8,
             },
         },
         {
-            "slug": "grok-4-7-low",
-            "name": "Grok 4.7 (Low)",
-            "model_creator": {"name": "SpaceXAI"},
+            "slug": "acme-model-b-low",
+            "name": "Acme Model B (Low)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 31.1,
                 "artificial_analysis_engineering_index": 37.7,
             },
         },
         {
-            "slug": "qwen3-8-max",
-            "name": "Qwen3.8 Max (0902)",
-            "model_creator": {"name": "Alibaba"},
+            "slug": "acme-model-c",
+            "name": "Acme Model C (0902)",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 33.7,
                 "artificial_analysis_engineering_index": 39.3,
             },
         },
         {
-            "slug": "qwen3-8-flash-next",
-            "name": "Qwen3.8-Flash-Next",
-            "model_creator": {"name": "Alibaba"},
+            "slug": "acme-model-d-next",
+            "name": "Acme Model D-Next",
+            "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 28.6,
                 "artificial_analysis_engineering_index": 33.0,
             },
         },
         {
-            "slug": "tencent-hy4",
-            "name": "Tencent Hy4",
-            "model_creator": {"name": "Tencent"},
+            "slug": "vendor-model-e",
+            "name": "Vendor Model E",
+            "model_creator": {"name": "Vendor"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 34.6,
                 "artificial_analysis_engineering_index": 41.1,
             },
         },
         {
-            "slug": "reflection-beam",
-            "name": "Beam 1.0",
-            "model_creator": {"name": "Reflection"},
+            "slug": "maker-model-f",
+            "name": "Model F 1.0",
+            "model_creator": {"name": "Maker"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 17.7,
                 "artificial_analysis_engineering_index": 25.2,
@@ -1172,53 +1012,48 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
 
     models = [
         NormalizedModel(
-            id="deepseek-v4.1-flash",
-            name="DeepSeek V4.1 Flash 1017",
-            canonical_id="deepseek/deepseek-v4.1-flash-1017",
+            id="model-a",
+            name="Acme Model A 1017",
+            canonical_id="acme/model-a-1017",
         ),
-        NormalizedModel(id="grok-4.7", name="Grok 4.7", canonical_id="xai/grok-4.7"),
-        NormalizedModel(id="qwen3.8-max", name="Qwen3.8 Max", canonical_id="alibaba/qwen3.8-max"),
+        NormalizedModel(id="model-b", name="Model B", canonical_id="acme/model-b"),
+        NormalizedModel(id="model-c", name="Model C", canonical_id="acme/model-c"),
+        NormalizedModel(id="model-d", name="Model D", canonical_id="acme/model-d"),
+        NormalizedModel(id="model-e", name="Model E", canonical_id="vendor/model-e"),
         NormalizedModel(
-            id="qwen3.8-flash", name="Qwen3.8 Flash", canonical_id="alibaba/qwen3.8-flash"
-        ),
-        NormalizedModel(id="hy4", name="Hy4", canonical_id="tencent/hy4"),
-        NormalizedModel(
-            id="beam-free",
-            name="Beam Free",
-            canonical_id="reflection/beam-1.0-501b-a23b",
+            id="model-f",
+            name="Model F",
+            canonical_id="maker/model-f-1.0-501b",
             is_zero_cost=True,
         ),
     ]
-    merged = merge_docs_pricing(
+    merged = merge_catalogue_metadata(
         models,
-        {},
         aa_benchmarks=bench,
-        endpoints={"DeepSeek V4.1 Flash": "deepseek-v4.1-flash"},
     )
     by_id = {m.id: m for m in merged}
-    assert by_id["deepseek-v4.1-flash"].aa_iq == 32.6
-    assert by_id["deepseek-v4.1-flash"].aa_coding == 37.6
-    assert by_id["grok-4.7"].aa_iq == 35.5
-    assert by_id["qwen3.8-max"].aa_iq == 33.7
-    assert by_id["qwen3.8-flash"].aa_iq == 28.6
-    assert by_id["hy4"].aa_iq == 34.6
-    assert by_id["beam-free"].aa_iq == 17.7
+    assert by_id["model-a"].aa_iq == 32.6
+    assert by_id["model-a"].aa_coding == 37.6
+    assert by_id["model-b"].aa_iq == 35.5
+    assert by_id["model-c"].aa_iq == 33.7
+    assert by_id["model-d"].aa_iq == 28.6
+    assert by_id["model-e"].aa_iq == 34.6
+    assert by_id["model-f"].aa_iq == 17.7
     assert bench["explicitmax"]["iq"] == 40.0
 
 
 def test_aa_exact_release_beats_generic_id():
-    # OpenCode's `deepseek-v4.1-flash` serves the 1017 release; AA also lists a separate
-    # non-1017 model. The exact release-specific name/canonical_id must win over the generic
-    # catalogue ID.
+    # A catalogue ID may serve a dated release; AA also lists a generic variant. The exact
+    # release-specific name/canonical_id must win over the generic catalogue ID.
     items = [
         {
-            "slug": "deepseek-v4-1-flash",
-            "name": "DeepSeek V4.1 Flash (Max)",
+            "slug": "acme-model-a",
+            "name": "Acme Model A (Max)",
             "evaluations": {"artificial_analysis_intelligence_index": 40.0},
         },
         {
-            "slug": "deepseek-v4-1-flash-1017",
-            "name": "DeepSeek V4.1 Flash 1017 (Max)",
+            "slug": "acme-model-a-1017",
+            "name": "Acme Model A 1017 (Max)",
             "evaluations": {"artificial_analysis_intelligence_index": 32.6},
         },
     ]
@@ -1227,11 +1062,11 @@ def test_aa_exact_release_beats_generic_id():
     )
     bench = fetch_aa_benchmarks("k", client=client)
     model = NormalizedModel(
-        id="deepseek-v4.1-flash",
-        name="DeepSeek V4.1 Flash 1017",
-        canonical_id="deepseek/deepseek-v4.1-flash-1017",
+        id="model-a",
+        name="Acme Model A 1017",
+        canonical_id="acme/model-a-1017",
     )
-    merged = merge_docs_pricing([model], {}, aa_benchmarks=bench)
+    merged = merge_catalogue_metadata([model], aa_benchmarks=bench)
     assert merged[0].aa_iq == 32.6
 
 
@@ -1243,26 +1078,6 @@ def test_fetch_aa_benchmarks_invalid_payloads_and_error_reporting():
         errors: list[str] = []
         assert fetch_aa_benchmarks("k", client=client, errors=errors) == {}
         assert errors == ["Artificial Analysis fetch failed (ValueError)"]
-
-
-def test_fetch_and_build_omits_missing_plans_and_falls_back_for_pricing():
-    mdx = (Path(__file__).parent / "fixtures" / "go_docs.mdx").read_text(encoding="utf-8")
-    mdx = mdx.replace('slot="go-teams"', 'slot="unused"')  # fixture without a teams table
-    assert parse_go_pricing(mdx, plan="go-teams", fallback_to_go=False) == {}
-    assert parse_go_pricing(mdx, plan="go-teams")  # default keeps go fallback
-    with (
-        patch(
-            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=[NormalizedModel(id="m", name="Alpha Max")],
-        ),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx),
-        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
-        patch.dict(os.environ, {}, clear=True),
-    ):
-        snap = fetch_and_build_snapshot(plan="go-teams")
-    for m in snap.models:
-        assert "go-teams" not in m.plan_allowances
-    assert any(m.monthly_allowance is not None for m in snap.models)
 
 
 def test_save_snapshot_atomic_replace_keeps_old_on_failure(tmp_path, monkeypatch):
@@ -1293,45 +1108,21 @@ def _umask() -> int:
     return mask
 
 
-def test_build_endpoint_index_and_lookup_pricing():
-    from opencode_go_model_optimizer.ingest.snapshot import (
-        _build_endpoint_index,
-        _lookup_pricing,
-    )
+def test_lookup_named_row_matches_id_or_name():
+    from opencode_go_model_optimizer.ingest.snapshot import _lookup_named_row
 
-    assert _build_endpoint_index(None) == {}
-    assert _build_endpoint_index({}) == {}
-
-    endpoints = {
-        "Super Model 1.0 (50% off)": "super-1",
-        "Super Model 1.0 (Deprecated)": "super-1",
-        "Other Model": "other-2",
+    by_norm = {
+        norm_name("Alpha Max"): {"retention_days": 0},
+        norm_name("beta-flash"): {"retention_days": 30},
     }
-    index = _build_endpoint_index(endpoints)
-    assert "super-1" in index
-    assert "other-2" in index
-    assert norm_name("Super Model 1.0 (50% off)") in index["super-1"]
 
-    m1 = NormalizedModel(id="super-1", name="Custom Name")
-    pricing_map = {
-        norm_name("Super Model 1.0 (50% off)"): {"allowance": 100.0, "output_cost": 5.0},
-    }
-    found = _lookup_pricing(m1, pricing_map, index)
-    assert found is not None
-    assert found[1]["allowance"] == 100.0
+    by_name = NormalizedModel(id="custom-id", name="Alpha Max")
+    assert _lookup_named_row(by_name, by_norm)[1]["retention_days"] == 0
 
-    # Model not in endpoints falls back to fuzzy name matching
-    m2 = NormalizedModel(id="fuzzy-model", name="Fuzzy Display")
-    pricing_fuzzy = {
-        norm_name("Fuzzy Display"): {"allowance": 50.0, "output_cost": 2.0},
-    }
-    found_fuzzy = _lookup_pricing(m2, pricing_fuzzy, index)
-    assert found_fuzzy is not None
-    assert found_fuzzy[1]["allowance"] == 50.0
+    by_id = NormalizedModel(id="beta-flash", name="Drifted Display Name")
+    assert _lookup_named_row(by_id, by_norm)[1]["retention_days"] == 30
 
-    # Model in endpoints but key not in pricing map returns None (no fuzzy fallback)
-    m3 = NormalizedModel(id="other-2", name="Fuzzy Display")
-    assert _lookup_pricing(m3, pricing_fuzzy, index) is None
+    assert _lookup_named_row(NormalizedModel(id="missing", name="Missing"), by_norm) is None
 
 
 def test_default_file_mode_and_atomic_write(tmp_path):
@@ -1383,57 +1174,10 @@ def test_fetch_catalogue_http_empty_models(monkeypatch):
 
     monkeypatch.setattr(
         "opencode_go_model_optimizer.ingest.catalogue._fetch_catalogue_cli",
-        lambda: [],
+        lambda profiles=None: [],
     )
     with pytest.raises(ValueError, match="catalogue HTTP response contained no models"):
         fetch_catalogue(client=mock_client)
-
-
-def test_parse_request_estimates_malformed_rows():
-    from opencode_go_model_optimizer.ingest.docs import parse_request_estimates
-
-    # Row with < 4 cells (line 185)
-    # Row with empty name after stripping tags (line 189)
-    # Row with invalid count (line 189)
-    mdx = """
-<PlanTabs id="go-requests">
-<div slot="go">
-
-| Model | Per 5h | Per week |
-| --- | --- | --- |
-| Short Row | 100 | 200 |
-
-| Model | Per 5h | Per week | Per month |
-| --- | --- | --- | --- |
-| <br> | 100 | 200 | 300 |
-| Bad Count | 100 | not-a-number | 300 |
-| Valid Model | 100 | 500 | 2000 |
-
-</div>
-</PlanTabs>
-"""
-    est = parse_request_estimates(mdx)
-    assert "go" in est
-    assert "Valid Model" in est["go"]
-    assert "Short Row" not in est["go"]
-    assert "Bad Count" not in est["go"]
-
-
-def test_parse_endpoints_table_short_row(monkeypatch):
-    from opencode_go_model_optimizer.ingest.docs import parse_endpoints_table
-
-    # Row with < 2 cells (line 219)
-    monkeypatch.setattr(
-        "opencode_go_model_optimizer.ingest.docs.parse_table_rows",
-        lambda _: [["only_one"], ["MyModel", "`my-model-id`", "/v1", "pkg"]],
-    )
-    mdx = """
-## Endpoints
-
-| Table |
-"""
-    mapping = parse_endpoints_table(mdx)
-    assert mapping == {"MyModel": "my-model-id"}
 
 
 def test_parse_valid_through_invalid_date():
@@ -1446,24 +1190,19 @@ def test_parse_valid_through_invalid_date():
 def test_parse_privacy_short_or_empty_name_row():
     from opencode_go_model_optimizer.ingest.docs import parse_privacy
 
-    # Row with < 3 cells (line 254)
-    # Row with empty name (line 257)
     mdx = """
 ## Privacy
 
-| Model | Training |
+| Model | Data retention |
 | --- | --- |
-| Short | No |
-
-| Model | Model training | Data retention |
-| --- | --- | --- |
-| <br> | Not used | 0 days |
-| Real Model | No | 30 days |
+| OnlyOneCell |
+| <br> | 0 days |
+| Real Model | 30 days |
 """
     priv = parse_privacy(mdx)
     assert "Real Model" in priv
-    assert "Short" not in priv
     assert "" not in priv
+    assert priv["Real Model"]["retention_days"] == 30
 
 
 def test_package_version_not_found(monkeypatch):
@@ -1507,14 +1246,8 @@ def test_create_snapshot_unsupported_multiplier_warning():
     from opencode_go_model_optimizer.ingest.models import PriceMultiplier
 
     bad_mult = PriceMultiplier(factor=1.5, when={"date": {"gte": "not-a-date"}})
-    m = NormalizedModel(id="test/model", multipliers=[bad_mult])
-    pricing_info = {
-        "allowance": 15.0,
-        "output_cost": 2.0,
-        "input_cost": 1.0,
-        "cached_read_cost": 0.5,
-    }
-    snap = create_snapshot([m], pricing={"test/model": pricing_info})
+    m = NormalizedModel(id="test/model", multipliers=[bad_mult], plan_allowances={"go": 15.0})
+    snap = create_snapshot([m])
     assert any("ignoring unsupported price multiplier" in w for w in snap.warnings)
 
 
@@ -1528,3 +1261,272 @@ def test_source_recorder_untracked_url():
     resp = httpx.Response(200, request=req, content=b"ignored")
     recorder(resp)
     assert recorder.sources == {}
+
+
+def _go_catalogue_item(model_id: str = "alpha", **go: object) -> dict:
+    default_go = {
+        "monthly_usage": {"go": 15, "go-plus": 60, "go-teams": 20},
+        "training": False,
+        "zdr": True,
+        "limited_regions": False,
+    }
+    default_go.update(go)
+    return {
+        "id": model_id,
+        "name": model_id.title(),
+        "type": "chat",
+        "cost": {"text": {"input": {"price": 1.0}, "output": {"price": 2.0}}},
+        "limit": {"context": 100000, "output": 10000},
+        "go": default_go,
+    }
+
+
+def test_catalogue_http_reads_go_usage_and_privacy_flags():
+    (model,) = parse_catalogue_http(
+        {
+            "object": "list",
+            "data": [_go_catalogue_item("alpha", training=True, zdr=False, limited_regions=True)],
+        }
+    )
+    assert model.model_type == "chat"
+    assert model.plan_allowances == {"go": 15.0, "go-plus": 60.0, "go-teams": 20.0}
+    assert model.privacy is not None
+    assert model.privacy.trains_on_data is True
+    assert model.privacy.zdr is False
+    # Regional availability is advisory; only explicit docs text blocks on Global.
+    assert model.privacy.limited_regions is True
+    assert model.privacy.requires_global_region is False
+
+
+def test_catalogue_http_skips_null_go_usage_for_free_models():
+    item = _go_catalogue_item("free", monthly_usage=None)
+    item["cost"] = {"text": {"input": {"price": 0}, "output": {"price": 0}}}
+    (model,) = parse_catalogue_http({"object": "list", "data": [item]})
+    assert model.plan_allowances == {}
+    assert model.is_zero_cost is True
+
+
+def test_create_snapshot_uses_catalogue_allowances_without_docs_pricing():
+    models = parse_catalogue_http({"object": "list", "data": [_go_catalogue_item("alpha")]})
+    snap = create_snapshot(models)
+
+    alpha = next(m for m in snap.models if m.id == "alpha")
+    assert alpha.monthly_allowance == 15.0
+    assert not any("no per-plan usage" in w for w in snap.warnings)
+
+    apply_plan(snap.models, "go-plus")
+    assert alpha.monthly_allowance == 60.0
+
+
+def test_non_chat_models_are_excluded_from_tiers():
+    from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
+    from opencode_go_model_optimizer.engine.tiers import select_tiers
+
+    chat = _go_catalogue_item("chat-model")
+    embedding = _go_catalogue_item("embedding-model")
+    embedding["type"] = "embedding"
+    models = parse_catalogue_http({"object": "list", "data": [chat, embedding]})
+    apply_plan(models, "go")
+
+    selection = select_tiers(models, SelectionCriteria(mode="allowance"))
+    selected_ids = {m.id for m in selection.models}
+    assert "chat-model" in selected_ids
+    assert "embedding-model" not in selected_ids
+
+
+def _item_with_prices(model_id: str, inp: float, cache: float, out: float, **go):
+    item = _go_catalogue_item(model_id, **go)
+    item["cost"] = {
+        "text": {
+            "input": {"price": inp, "cache": {"read": cache}},
+            "output": {"price": out},
+        }
+    }
+    return item
+
+
+def test_catalogue_http_computes_console_request_estimates():
+    (model,) = parse_catalogue_http(
+        {
+            "object": "list",
+            "data": [
+                _item_with_prices(
+                    "test-model",
+                    1.0,
+                    0.5,
+                    2.0,
+                    monthly_usage={"go": 15, "go-plus": 60, "go-teams": 16},
+                )
+            ],
+        },
+        profiles=TEST_CONSOLE_PROFILES,
+    )
+    assert model.request_estimates["go"].per_5h == 114
+    assert model.request_estimates["go-plus"].per_5h == 455
+    assert model.request_estimates["go"].per_week == 284
+    assert model.request_estimates["go"].per_month == 568
+
+
+def test_catalogue_http_request_estimates_use_default_profile():
+    (model,) = parse_catalogue_http(
+        {
+            "object": "list",
+            "data": [
+                _item_with_prices(
+                    "unknown-model",
+                    1.0,
+                    0.5,
+                    2.0,
+                    monthly_usage={"go": 15, "go-plus": 60, "go-teams": 16},
+                )
+            ],
+        },
+        profiles=RequestProfiles(default=(800, 65_000, 250), by_model={}),
+    )
+    assert model.request_estimates["go"].per_5h == 89
+
+
+def test_catalogue_http_go_requests_field_is_authoritative():
+    (model,) = parse_catalogue_http(
+        {
+            "object": "list",
+            "data": [
+                _item_with_prices(
+                    "test-model",
+                    1.0,
+                    0.5,
+                    2.0,
+                    monthly_usage={"go": 15, "go-plus": 60, "go-teams": 16},
+                    requests=100,
+                )
+            ],
+        },
+        profiles=RequestProfiles(default=(1, 1, 1), by_model={"test-model": (1, 1, 1)}),
+    )
+    assert model.request_estimates["go"].per_5h == 100
+    assert model.request_estimates["go-plus"].per_5h == 400
+
+
+def test_catalogue_http_request_estimates_are_unlimited_for_free_models():
+    item = _go_catalogue_item("free", monthly_usage=None)
+    item["cost"] = {"text": {"input": {"price": 0}, "output": {"price": 0}}}
+    (model,) = parse_catalogue_http({"object": "list", "data": [item]})
+    for plan in ("go", "go-plus", "go-teams"):
+        assert model.request_estimates[plan].per_5h == float("inf")
+
+
+def test_apply_plan_attaches_matching_request_estimate():
+    (model,) = parse_catalogue_http(
+        {
+            "object": "list",
+            "data": [
+                _item_with_prices(
+                    "test-model",
+                    1.0,
+                    0.5,
+                    2.0,
+                    monthly_usage={"go": 15, "go-plus": 60, "go-teams": 16},
+                )
+            ],
+        },
+        profiles=TEST_CONSOLE_PROFILES,
+    )
+    apply_plan([model], "go-plus")
+    assert model.request_estimate is not None
+    assert model.request_estimate.per_5h == 455
+
+
+def test_parse_console_profiles_extracts_map_and_default():
+    js = (
+        "var defaultProfile={input:800,cached:65e3,output:250},"
+        'profiles={"alpha":{input:1000,cached:50000,output:200},'
+        "beta:{input:700,cached:40000,output:150}};"
+    )
+    profiles = parse_console_profiles(js, source_url="test://console")
+    assert profiles is not None
+    assert profiles.default == (800, 65_000, 250)
+    assert profiles.by_model["alpha"] == (1_000, 50_000, 200)
+    assert profiles.by_model["beta"] == (700, 40_000, 150)
+    assert profiles.source_url == "test://console"
+
+
+def test_parse_console_profiles_rejects_missing_table():
+    assert parse_console_profiles("no profiles here") is None
+    assert parse_console_profiles("var yr={input:800,cached:65000,output:250};") is None
+
+
+def test_fetch_console_profiles_reads_the_component_bundle():
+    page = '<script src="/console/_build/assets/go-abc.js"></script>'
+    js = 'yr={input:800,cached:65e3,output:250};br={"m":{input:1,cached:2,output:3}};'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/console/go":
+            return httpx.Response(200, text=page)
+        if request.url.path.endswith("/go-abc.js"):
+            return httpx.Response(200, text=js)
+        return httpx.Response(500)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    profiles = fetch_console_profiles(client=client)
+    assert profiles is not None
+    assert profiles.by_model["m"] == (1, 2, 3)
+
+
+def test_fetch_console_profiles_reports_failure():
+    errors: list[str] = []
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(503)))
+    assert fetch_console_profiles(client=client, errors=errors) is None
+    assert errors and "console profile fetch failed" in errors[0]
+
+
+def test_apply_request_estimates_without_console_or_go_requests_is_empty():
+    from opencode_go_model_optimizer.ingest.catalogue import apply_request_estimates
+
+    model = NormalizedModel(
+        id="m",
+        cost=TokenCost(input=1.0, output=1.0),
+        plan_allowances={"go": 15.0},
+    )
+    apply_request_estimates([model], None)
+    assert model.request_estimates == {}
+
+
+def test_fetch_and_build_applies_scraped_console_profiles():
+    model = NormalizedModel(
+        id="test-model",
+        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+        plan_allowances={"go": 15.0},
+    )
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[model],
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+    ):
+        snap = fetch_and_build_snapshot(plan="go")
+    assert snap.models[0].request_estimates["go"].per_5h == 114
+
+
+def test_fetch_and_build_warns_when_console_profiles_are_unavailable():
+    model = NormalizedModel(
+        id="test-model",
+        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+        plan_allowances={"go": 15.0},
+    )
+    with (
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+            return_value=[model],
+        ),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_console_profiles",
+            return_value=None,
+        ),
+    ):
+        snap = fetch_and_build_snapshot(plan="go")
+    assert snap.models[0].request_estimates == {}
+    assert any("console request profiles" in w for w in snap.warnings)

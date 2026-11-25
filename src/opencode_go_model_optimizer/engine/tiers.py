@@ -47,7 +47,8 @@ def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[
     return [
         m
         for m in models
-        if (not skips or (m.id not in skips and m.full_id not in skips))
+        if m.model_type == "chat"
+        and (not skips or (m.id not in skips and m.full_id not in skips))
         and passes_privacy(m, c)
         and (min_ctx <= 0 or m.limit.context >= min_ctx)
         and (min_out <= 0 or m.limit.output >= min_out)

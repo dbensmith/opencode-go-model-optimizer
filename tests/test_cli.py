@@ -24,7 +24,7 @@ from opencode_go_model_optimizer.cli import (
     parse_args,
 )
 from opencode_go_model_optimizer.engine.tiers import resolve_mode
-from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
+from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
@@ -36,7 +36,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_cached_snapshot,
     save_snapshot,
 )
-from tests.conftest import FIXTURES_DIR, create_temp_snapshot
+from tests.conftest import CATALOGUE_HTTP_DATA, FIXTURES_DIR, create_temp_snapshot
 
 
 def test_parse_args_select():
@@ -133,7 +133,7 @@ def test_cli_select_json(tmp_path, capsys):
     assert data["tiers"]["heavy"] == "opencode-go/alpha-max"
     assert data["tiers"]["balanced"] == "opencode-go/beta-pro"
     assert data["tiers"]["light"] == "opencode-go/beta-flash"
-    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
+    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
     assert data["mode"] == "allowance"
 
 
@@ -155,14 +155,14 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
     assert rc == 0
     env_out = capsys.readouterr().out
     assert 'OPENCODE_MODEL_HEAVY="opencode-go/alpha-max"' in env_out
-    assert 'OPENCODE_MODEL_FREE="opencode-go/delta-contributor"' in env_out
+    assert 'OPENCODE_MODEL_FREE="opencode-go/epsilon-free"' in env_out
 
     # --format github-output
     rc = main(["select", "--format", "github-output", "--snapshot", str(snap_path)])
     assert rc == 0
     gh_out = capsys.readouterr().out
     assert "heavy=opencode-go/alpha-max" in gh_out
-    assert "free=opencode-go/delta-contributor" in gh_out
+    assert "free=opencode-go/epsilon-free" in gh_out
 
 
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
@@ -187,7 +187,7 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["tiers"]["heavy"] == "opencode-go/gamma-flash"
-    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
+    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
 
 
 def test_select_json_includes_settings(tmp_path, capsys):
@@ -242,11 +242,10 @@ def test_cli_rank_filters(tmp_path, capsys):
     assert all(m["limit"]["context"] >= 120000 for m in models)
     free_models = [m for m in models if m.get("tier") == "free"]
     assert len(free_models) == 1
-    assert free_models[0]["id"] == "delta-contributor"
+    assert free_models[0]["id"] == "epsilon-free"
 
 
 def test_cli_select_plan_switch(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
     out_snap_go = tmp_path / "snap_go.json"
     out_snap_plus = tmp_path / "snap_plus.json"
@@ -254,7 +253,7 @@ def test_cli_select_plan_switch(tmp_path):
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=parse_catalogue_cli(cli_text),
+            return_value=parse_catalogue_http(CATALOGUE_HTTP_DATA),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
@@ -403,14 +402,13 @@ def test_cli_rank_json(tmp_path, capsys):
 
 
 def test_cli_fetch(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
     out_snap = tmp_path / "fetched_snapshot.json"
 
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=parse_catalogue_cli(cli_text),
+            return_value=parse_catalogue_http(CATALOGUE_HTTP_DATA),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),

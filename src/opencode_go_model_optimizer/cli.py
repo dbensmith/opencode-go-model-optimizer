@@ -255,8 +255,8 @@ _FILTER_PARENT = _parent(
             "choices": ["auto", "tokens", "estimate"],
             "default": "auto",
             "help": (
-                "Quota burn basis: tokens (synthetic token mix x price), estimate (docs "
-                "request estimates, scaled by price multipliers), auto (estimate unless "
+                "Quota burn basis: tokens (synthetic token mix x price), estimate (computed "
+                "requests per plan, scaled by price multipliers), auto (estimate unless "
                 "--tokens or a non-general --profile is given) (default: auto)"
             ),
         },

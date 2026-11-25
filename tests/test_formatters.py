@@ -403,21 +403,12 @@ def test_format_diff_table_infinite_allowance():
     assert "unlimited" in table
 
 
-def test_format_rank_table_none_requests_and_privacy():
+def test_format_rank_table_requests_and_privacy_columns():
     from opencode_go_model_optimizer.ingest.models import Privacy, RequestEstimate
 
-    m1 = NormalizedModel(
-        id="m1",
-        rank=1,
-        privacy=Privacy(zdr=True),
-    )
+    m1 = NormalizedModel(id="m1", rank=1, privacy=Privacy(zdr=True))
     m1.request_estimate = RequestEstimate(per_5h=100.0, per_week=500.0, per_month=2000.0)
-    m2 = NormalizedModel(
-        id="m2",
-        rank=2,
-        privacy=None,
-    )
-    m2.request_estimate = None
+    m2 = NormalizedModel(id="m2", rank=2, privacy=None)
     table = format_rank_table([m1, m2])
     assert "Req/month" in table
     assert "Privacy" in table

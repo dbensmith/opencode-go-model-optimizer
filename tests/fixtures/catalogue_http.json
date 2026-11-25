@@ -32,6 +32,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 12,
+          "go-plus": 120,
+          "go-teams": 24
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -74,6 +84,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 9,
+          "go-plus": 90,
+          "go-teams": 18
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -106,6 +126,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 11,
+          "go-plus": 110,
+          "go-teams": 22
+        },
+        "training": false,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -184,6 +214,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 80,
+          "go-plus": 800,
+          "go-teams": 160
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -262,6 +302,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 40,
+          "go-plus": 400,
+          "go-teams": 80
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -294,6 +344,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 50,
+          "go-plus": 180,
+          "go-teams": 90
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -326,6 +386,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 20,
+          "go-plus": 70,
+          "go-teams": 35
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -358,6 +428,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 30,
+          "go-plus": 100,
+          "go-teams": 60
+        },
+        "training": false,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -390,6 +470,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 40,
+          "go-plus": 140,
+          "go-teams": 70
+        },
+        "training": true,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -422,6 +512,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 12,
+          "go-plus": 40,
+          "go-teams": 24
+        },
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     },
     {
@@ -454,6 +554,16 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": {
+          "go": 15,
+          "go-plus": 50,
+          "go-teams": 30
+        },
+        "training": false,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -483,6 +593,12 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": null,
+        "training": true,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -512,6 +628,12 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": null,
+        "training": false,
+        "zdr": false,
+        "limited_regions": false
       }
     },
     {
@@ -541,6 +663,12 @@
       },
       "api": {
         "npm": "@ai-sdk/openai-compatible"
+      },
+      "go": {
+        "monthly_usage": null,
+        "training": false,
+        "zdr": true,
+        "limited_regions": false
       }
     }
   ]
