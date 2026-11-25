@@ -17,6 +17,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     fisher_jenks_3_clusters,
 )
 from opencode_go_model_optimizer.engine.pricing import apply_price_basis
+from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
@@ -98,7 +99,13 @@ def _seed_selection(
         pref = preferred.get(tier)
         if pref:
             hit = next(
-                (m for m in models if (m.full_id == pref or m.id == pref) and m.status == "active"),
+                (
+                    m
+                    for m in models
+                    if (m.full_id == pref or m.id == pref)
+                    and m.status == "active"
+                    and not (m.is_zero_cost and publishes_monthly_allowance(m.plan_allowances))
+                ),
                 None,
             )
             if hit:

@@ -3,6 +3,7 @@
 import math
 from collections.abc import Set as AbstractSet
 
+from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 
@@ -23,7 +24,7 @@ def is_eligible_free(m: NormalizedModel) -> bool:
     if m.is_zero_cost:
         # A model the API lists with a paid allowance but no token prices is incomplete
         # catalogue data, not a free endpoint; it is excluded from every tier instead.
-        return not m.plan_allowances
+        return not publishes_monthly_allowance(m.plan_allowances)
     return bool(m.is_contributor and (m.monthly_allowance == float("inf") or m.cost.output == 0))
 
 

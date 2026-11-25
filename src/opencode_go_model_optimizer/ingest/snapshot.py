@@ -18,6 +18,7 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     DEFAULT_MODELS_HTTP_URL,
     apply_request_estimates,
     fetch_catalogue,
+    publishes_monthly_allowance,
 )
 from opencode_go_model_optimizer.ingest.console import CONSOLE_PAGE_URL, fetch_console_profiles
 from opencode_go_model_optimizer.ingest.docs import (
@@ -46,6 +47,8 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
             m.monthly_allowance = m.plan_allowances[norm_plan]
         elif plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[plan]
+        elif m.plan_allowances:
+            m.monthly_allowance = None
         m.request_estimate = m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
     return models
 
@@ -379,7 +382,7 @@ def merge_privacy(
     for m in models:
         found = _lookup_named_row(m, by_norm)
         if not found:
-            if m.status == "active" and m.privacy is None:
+            if m.status == "active" and m.model_type == "chat" and m.privacy is None:
                 missing.append(m.id)
             continue
         m.privacy = _merge_privacy(m.privacy, found[1])
@@ -436,7 +439,7 @@ def create_snapshot(
             if m.status == "active"
             and m.model_type == "chat"
             and m.is_zero_cost
-            and m.plan_allowances
+            and publishes_monthly_allowance(m.plan_allowances)
         )
         if anomalies:
             all_warnings.append(
@@ -461,13 +464,11 @@ def create_snapshot(
     now = datetime.now(UTC)
     now_utc = now.isoformat(timespec="seconds")
     if privacy is not None:
-        if not privacy and not any(m.privacy is not None for m in merged_models):
+        if not privacy:
             all_warnings.append(
-                "no privacy rows from the Go models API or docs Privacy table; "
-                "privacy/region filters have no data"
+                "docs Privacy table is missing or empty; privacy/region filters may be incomplete"
             )
-        elif privacy:
-            merge_privacy(merged_models, privacy, all_warnings, now)
+        merge_privacy(merged_models, privacy, all_warnings, now)
 
     apply_plan(merged_models, plan)
 
@@ -519,7 +520,9 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     if path.exists():
         try:
             if time.time() - path.stat().st_mtime <= ttl_seconds:
-                return load_snapshot(path)
+                snap = load_snapshot(path)
+                apply_plan(snap.models, plan)
+                return snap
         except OSError, ValueError, json.JSONDecodeError:
             pass
 

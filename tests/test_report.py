@@ -170,6 +170,34 @@ def test_exclusion_reasons_zero_priced_with_allowance():
     )
     # Zero-cost without an allowance is still the normal free pool.
     assert exclusion_reasons(NormalizedModel(id="free"), c) == []
+    unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": math.inf})
+    assert exclusion_reasons(unlimited, c) == []
+
+
+def test_report_excludes_model_without_target_plan_allowance():
+    paid = TokenCost(input=1.0, output=2.0)
+    go_only = NormalizedModel(id="go-only", cost=paid, plan_allowances={"go": 15.0})
+    both = NormalizedModel(
+        id="both",
+        cost=paid,
+        plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": 100.0},
+    )
+    snap = create_snapshot([go_only, both], plan="go")
+
+    report = build_report(snapshot=snap, now=NOW)
+    plus = report["plans"]["go-plus"]
+
+    assert "opencode-go/go-only" in {e["model_id"] for e in plus["excluded"]}
+    assert "opencode-go/go-only" not in plus["tiers"].values()
+    assert "opencode-go/go-only" not in plus["fallbacks"]["heavy"]
+
+
+def test_report_does_not_exclude_zero_cost_unlimited_allowance():
+    model = NormalizedModel(id="unlimited-free", plan_allowances={"go": math.inf})
+    report = build_report(snapshot=create_snapshot([model], plan="go"), now=NOW)
+
+    for section in report["plans"].values():
+        assert "opencode-go/unlimited-free" not in {e["model_id"] for e in section["excluded"]}
 
 
 def test_empty_tier_becomes_warning():

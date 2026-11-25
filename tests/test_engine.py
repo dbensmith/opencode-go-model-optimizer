@@ -96,10 +96,30 @@ def test_zero_cost_model_with_allowance_is_not_free():
     assert is_eligible_free(odd) is False
     assert is_eligible_free(NormalizedModel(id="old", plan_allowances={"go": 15.0}, status="deprecated")) is False
 
+    unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": float("inf")})
+    assert unlimited.is_zero_cost is True
+    assert is_eligible_free(unlimited) is True
+
     selection = select_tiers(
         [odd, NormalizedModel(id="real-free")], SelectionCriteria(mode="allowance")
     )
     assert selection.primary["free"] == "opencode-go/real-free"
+
+
+def test_preferred_zero_cost_catalogue_anomaly_is_not_selected():
+    anomaly = NormalizedModel(
+        id="anom",
+        cost=TokenCost(input=0.0, output=0.0),
+        plan_allowances={"go": 15.0},
+        monthly_allowance=15.0,
+    )
+
+    selection = select_tiers(
+        [anomaly],
+        SelectionCriteria(mode="allowance", preferred_tiers={"free": "anom"}),
+    )
+
+    assert selection.primary == {"heavy": "", "balanced": "", "light": "", "free": ""}
 
 
 def test_deterministic_tie_breaking():

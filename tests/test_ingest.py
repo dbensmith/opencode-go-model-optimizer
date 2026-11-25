@@ -14,6 +14,7 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     _extract_model_limit,
     _extract_token_cost,
     _safe_float,
+    estimate_requests,
     fetch_catalogue,
     parse_catalogue_cli,
     parse_catalogue_http,
@@ -32,6 +33,8 @@ from opencode_go_model_optimizer.ingest.docs import (
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
     NormalizedModel,
+    Privacy,
+    RequestEstimate,
     Snapshot,
     SnapshotMetadata,
     TokenCost,
@@ -83,6 +86,10 @@ def test_parse_catalogue_cli():
     assert alpha.cost.cache_read == 0.4
     assert alpha.cost.cache_write == 3.5
     assert alpha.limit.context == 512000
+    assert alpha.plan_allowances == {"go": 12.0, "go-plus": 120.0, "go-teams": 24.0}
+    assert alpha.privacy is not None
+    assert alpha.privacy.trains_on_data is False
+    assert alpha.privacy.zdr is True
 
     delta = next(m for m in models if m.id == "delta-contributor")
     assert delta.is_zero_cost is True
@@ -565,6 +572,22 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
             assert save_cached_snapshot(snap) is None
 
 
+def test_same_plan_cache_load_applies_request_estimate(tmp_path):
+    estimate = RequestEstimate(per_5h=100.0, per_week=250.0, per_month=500.0)
+    model = NormalizedModel(
+        id="cached-m",
+        plan_allowances={"go": 15.0},
+        request_estimates={"go": estimate},
+    )
+    snap = Snapshot(fetched_at="2026-01-01T00:00:00Z", plan="go", models=[model])
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        save_cached_snapshot(snap)
+        loaded = load_cached_snapshot("go", ttl_seconds=3600)
+
+    assert loaded is not None
+    assert loaded.models[0].request_estimate == estimate
+
+
 def test_fetch_and_build_snapshot_custom_client():
     # Test fetch_and_build_snapshot with user-provided client (should not close user client)
     custom_client = httpx.Client()
@@ -617,9 +640,18 @@ def test_plan_allowances_and_apply_plan():
     apply_plan([m], "go-teams")
     assert m.monthly_allowance == float("inf")
 
-    # unknown plan leaves monthly_allowance unchanged
+    # An absent target plan clears a stale allowance when per-plan data exists.
     apply_plan([m], "unknown-plan")
-    assert m.monthly_allowance == float("inf")
+    assert m.monthly_allowance is None
+
+    go_only = NormalizedModel(id="go-only", monthly_allowance=15.0, plan_allowances={"go": 15.0})
+    apply_plan([go_only], "go-plus")
+    assert go_only.monthly_allowance is None
+
+    # Legacy snapshots without per-plan allowances keep their existing allowance.
+    legacy = NormalizedModel(id="legacy", monthly_allowance=12.0)
+    apply_plan([legacy], "go-plus")
+    assert legacy.monthly_allowance == 12.0
 
 
 def test_apply_plan_aliases_and_normalization():
@@ -1242,6 +1274,44 @@ def test_merge_privacy_warnings_none():
     assert m.privacy.zdr is True
 
 
+def test_create_snapshot_warns_when_docs_privacy_table_is_empty():
+    paid = TokenCost(input=1.0, output=2.0)
+    models = [
+        NormalizedModel(
+            id="m-priv",
+            cost=paid,
+            plan_allowances={"go": 15.0},
+            privacy=Privacy(trains_on_data=False, zdr=True),
+        ),
+        NormalizedModel(id="m-nopriv", cost=paid, plan_allowances={"go": 15.0}),
+    ]
+
+    snap = create_snapshot(models, plan="go", privacy={})
+
+    assert any("docs Privacy table is missing or empty" in w for w in snap.warnings)
+    assert any("no docs privacy row: m-nopriv" in w for w in snap.warnings)
+
+
+def test_zero_cost_unlimited_allowance_is_not_a_catalogue_anomaly():
+    model = NormalizedModel(id="unlimited-free", plan_allowances={"go": float("inf")})
+
+    snap = create_snapshot([model], plan="go")
+    estimates = estimate_requests("unlimited-free", model.cost, model.plan_allowances, None, None)
+
+    assert not any("catalogue anomaly" in w for w in snap.warnings)
+    assert estimates["go"].per_5h == float("inf")
+
+
+def test_estimate_requests_skips_zero_cost_catalogue_anomaly():
+    assert estimate_requests("anom", TokenCost(), {"go": 15.0}, None, None) == {}
+
+
+def test_request_estimate_is_reexported_from_ingest():
+    from opencode_go_model_optimizer.ingest import RequestEstimate as ExportedRequestEstimate
+
+    assert ExportedRequestEstimate is RequestEstimate
+
+
 def test_create_snapshot_unsupported_multiplier_warning():
     from opencode_go_model_optimizer.ingest.models import PriceMultiplier
 
@@ -1448,6 +1518,44 @@ def test_parse_console_profiles_extracts_map_and_default():
     assert profiles.by_model["alpha"] == (1_000, 50_000, 200)
     assert profiles.by_model["beta"] == (700, 40_000, 150)
     assert profiles.source_url == "test://console"
+
+
+def test_parse_console_profiles_skips_zeroed_default():
+    js = (
+        "const z={input:0,cached:0,output:0},"
+        "d={input:800,cached:65e3,output:250},"
+        'm={"alpha":{input:500,cached:5e4,output:200}};'
+    )
+    profiles = parse_console_profiles(js)
+    assert profiles is not None
+    assert profiles.default == (800, 65_000, 250)
+    assert profiles.by_model == {"alpha": (500, 50_000, 200)}
+
+    no_valid_default = (
+        'const z={input:0,cached:0,output:0},m={"alpha":{input:500,cached:5e4,output:200}};'
+    )
+    assert parse_console_profiles(no_valid_default) is None
+
+
+def test_parse_console_profiles_accepts_single_quoted_model_ids():
+    js = (
+        "d={input:800,cached:65e3,output:250},m={'alpha-max.v1':{input:500,cached:5e4,output:200}};"
+    )
+    profiles = parse_console_profiles(js)
+    assert profiles is not None
+    assert profiles.by_model == {"alpha-max.v1": (500, 50_000, 200)}
+
+
+def test_parse_console_profiles_rejects_zeroed_model_entries():
+    js = (
+        "d={input:800,cached:65000,output:250},"
+        'm={"zeroed":{input:0,cached:0,output:0},'
+        '"partial":{input:100,cached:0,output:50},'
+        '"valid":{input:500,cached:5e4,output:200}};'
+    )
+    profiles = parse_console_profiles(js)
+    assert profiles is not None
+    assert profiles.by_model == {"valid": (500, 50_000, 200)}
 
 
 def test_parse_console_profiles_rejects_missing_table():

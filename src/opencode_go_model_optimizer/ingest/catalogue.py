@@ -126,6 +126,11 @@ def _extract_plan_allowances(go_raw: Any) -> dict[str, float]:
     return allowances
 
 
+def publishes_monthly_allowance(allowances: dict[str, float]) -> bool:
+    """Return whether any plan publishes a finite, positive monthly allowance."""
+    return any(math.isfinite(value) and value > 0 for value in allowances.values())
+
+
 def _extract_go_privacy(go_raw: Any) -> Privacy | None:
     """Extract the Go data-handling flags (`training`, `zdr`, `limited_regions`).
 
@@ -175,6 +180,8 @@ def estimate_requests(
     Requests = (window fraction * monthly allowance) / cost of a profile-sized request.
     """
     if cost.input == 0.0 and cost.output == 0.0:
+        if publishes_monthly_allowance(allowances):
+            return {}
         unlimited = RequestEstimate(
             per_5h=float("inf"), per_week=float("inf"), per_month=float("inf")
         )

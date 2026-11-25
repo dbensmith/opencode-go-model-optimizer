@@ -76,6 +76,21 @@ def test_warning_for_missing_privacy_row():
     assert any("no docs privacy row: x" in w for w in warnings)
 
 
+def test_missing_privacy_warning_only_covers_active_chat_models():
+    models = [
+        NormalizedModel(id="active-chat"),
+        NormalizedModel(id="active-embedding", model_type="embedding"),
+        NormalizedModel(id="old-chat", status="deprecated"),
+    ]
+    warnings: list[str] = []
+
+    merge_privacy(models, {}, warnings)
+
+    assert warnings == [
+        "1 active model(s) have no docs privacy row: active-chat (and no Go privacy flags)"
+    ]
+
+
 def test_old_snapshot_without_privacy_loads():
     snap = Snapshot.model_validate_json('{"fetched_at": "t", "models": [{"id": "a", "name": "A"}]}')
     assert snap.models[0].privacy is None
