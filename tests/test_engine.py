@@ -94,7 +94,12 @@ def test_zero_cost_model_with_allowance_is_not_free():
     odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
     assert odd.is_zero_cost is True
     assert is_eligible_free(odd) is False
-    assert is_eligible_free(NormalizedModel(id="old", plan_allowances={"go": 15.0}, status="deprecated")) is False
+    assert (
+        is_eligible_free(
+            NormalizedModel(id="old", plan_allowances={"go": 15.0}, status="deprecated")
+        )
+        is False
+    )
 
     unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": float("inf")})
     assert unlimited.is_zero_cost is True

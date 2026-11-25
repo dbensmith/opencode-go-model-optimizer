@@ -195,9 +195,7 @@ def _reveal_all_rows(page, timeout: float) -> None:
         if not hidden:
             return
         time.sleep(POLL_INTERVAL)
-    raise VerifyError(
-        f"{hidden} model row(s) never rendered after 'VIEW ALL' within {timeout:g}s"
-    )
+    raise VerifyError(f"{hidden} model row(s) never rendered after 'VIEW ALL' within {timeout:g}s")
 
 
 def _collect_final_rows(page) -> list[dict[str, Any]]:
@@ -210,7 +208,7 @@ def _collect_final_rows(page) -> list[dict[str, Any]]:
     parsed so the caller can fail with the actual page content.
     """
     return page.eval_on_selector_all(
-        'tr[data-model]:not([hidden])',
+        "tr[data-model]:not([hidden])",
         """rows => rows.map(e => {
         const sr = (kind) => e.querySelector(
             `td[data-allowance-type="${kind}"] span.sr-only`
@@ -247,9 +245,7 @@ def _finalize_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "requests_plus": r_plus,
                 "usage_go": u_go,
                 "usage_plus": u_plus,
-                "_unparsed": (
-                    entry.get("requests_sr") is not None and None in (r_go, r_plus)
-                )
+                "_unparsed": (entry.get("requests_sr") is not None and None in (r_go, r_plus))
                 or (entry.get("usage_sr") is not None and None in (u_go, u_plus)),
                 "_raw": entry,
             }
@@ -260,7 +256,7 @@ def _finalize_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _collect_displayed_rows(page) -> list[dict[str, Any]]:
     """Read the animated visible cells of every rendered row, per plan and value type."""
     return page.eval_on_selector_all(
-        'tr[data-model]:not([hidden])',
+        "tr[data-model]:not([hidden])",
         """rows => rows.map(e => {
         const cell = (kind, plan) => e.querySelector(
             `td[data-allowance-type="${kind}"] span[data-plan="${plan}"]`
@@ -279,7 +275,7 @@ def _collect_displayed_rows(page) -> list[dict[str, Any]]:
 
 def _wait_until_settled(page, timeout: float) -> list[dict[str, Any]]:
     """Poll the visible cells until they stop changing (the scene animates a count-up)."""
-    page.wait_for_selector('tr[data-model]:not([hidden])', timeout=timeout * 1000)
+    page.wait_for_selector("tr[data-model]:not([hidden])", timeout=timeout * 1000)
     deadline = time.monotonic() + timeout
     previous: str | None = None
     stable = 0
@@ -363,7 +359,9 @@ def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
     try:
         from playwright.sync_api import Error as PlaywrightError
     except ImportError as exc:
-        raise VerifyError("playwright is not installed; run `uv sync` (dev dependency group)") from exc
+        raise VerifyError(
+            "playwright is not installed; run `uv sync` (dev dependency group)"
+        ) from exc
     p = _start_playwright()
     try:
         try:
@@ -379,8 +377,7 @@ def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
             message = str(exc)
             if "doesn't exist" in message or "Executable doesn't exist" in message:
                 raise VerifyError(
-                    "no Playwright Chromium build found; run "
-                    "`uv run playwright install chromium`"
+                    "no Playwright Chromium build found; run `uv run playwright install chromium`"
                 ) from exc
             raise
         try:
@@ -388,7 +385,7 @@ def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
             page.goto(CONSOLE_LIMITS_URL, timeout=timeout * 1000, wait_until="networkidle")
             # The sr-only spans of rendered rows hold the final hydrated values in the
             # same React render that un-hides the row, so they need no animation wait.
-            page.wait_for_selector('tr[data-model]:not([hidden])', timeout=timeout * 1000)
+            page.wait_for_selector("tr[data-model]:not([hidden])", timeout=timeout * 1000)
             _reveal_all_rows(page, timeout)
             finals = _finalize_rows(_collect_final_rows(page))
             unparsed = [r["model"] for r in finals if r["_unparsed"]]
@@ -529,9 +526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:
         return _fail(f"could not scrape the console profiles bundle: {exc}")
     if profiles is None:
-        return _fail(
-            "could not scrape the console request profiles; there is nothing to verify"
-        )
+        return _fail("could not scrape the console request profiles; there is nothing to verify")
     print(f"scraped {len(profiles.by_model)} profiles (default {profiles.default})")
 
     try:

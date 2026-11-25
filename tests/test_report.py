@@ -165,9 +165,7 @@ def test_exclusion_reasons_zero_priced_with_allowance():
     assert exclusion_reasons(odd, c) == [
         "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
     ]
-    assert (
-        _bucket_exclusion_reason(exclusion_reasons(odd, c)[0]) == "Incomplete Catalogue Data"
-    )
+    assert _bucket_exclusion_reason(exclusion_reasons(odd, c)[0]) == "Incomplete Catalogue Data"
     # Zero-cost without an allowance is still the normal free pool.
     assert exclusion_reasons(NormalizedModel(id="free"), c) == []
     unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": math.inf})

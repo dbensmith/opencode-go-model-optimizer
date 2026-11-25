@@ -47,7 +47,10 @@ def test_warning_lists_paid_models_without_usage_for_the_plan():
     )
     missing = NormalizedModel(id="missing-usage", name="Missing", cost=TokenCost(output=1.0))
     partial = NormalizedModel(
-        id="plus-only", name="PlusOnly", cost=TokenCost(output=1.0), plan_allowances={"go-plus": 60.0}
+        id="plus-only",
+        name="PlusOnly",
+        cost=TokenCost(output=1.0),
+        plan_allowances={"go-plus": 60.0},
     )
     snap = create_snapshot([priced, missing, partial], plan="go")
     warning = next(w for w in snap.warnings if "no go.monthly_usage for plan go" in w)
