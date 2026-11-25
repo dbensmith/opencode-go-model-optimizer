@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from opencode_go_model_optimizer.engine.allowance import (
     _desc_str_key,
+    is_eligible_free,
     rank_free_models,
     rank_paid_models,
     tie_break_key,
@@ -83,6 +84,22 @@ def test_allowance_free_ranking():
 
     # Newest release first: delta (2026-10-01), epsilon (2026-09-20), kappa (2026-08-25)
     assert [m.id for m in ranked] == ["delta-contributor", "epsilon-free", "kappa-free"]
+
+
+def test_zero_cost_model_with_allowance_is_not_free():
+    """A paid model whose prices are missing is incomplete data, not a free endpoint."""
+    plain_free = NormalizedModel(id="plain-free")
+    assert is_eligible_free(plain_free) is True
+
+    odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
+    assert odd.is_zero_cost is True
+    assert is_eligible_free(odd) is False
+    assert is_eligible_free(NormalizedModel(id="old", plan_allowances={"go": 15.0}, status="deprecated")) is False
+
+    selection = select_tiers(
+        [odd, NormalizedModel(id="real-free")], SelectionCriteria(mode="allowance")
+    )
+    assert selection.primary["free"] == "opencode-go/real-free"
 
 
 def test_deterministic_tie_breaking():

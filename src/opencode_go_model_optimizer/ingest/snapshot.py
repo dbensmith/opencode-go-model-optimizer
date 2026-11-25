@@ -414,6 +414,35 @@ def create_snapshot(
     all_warnings = list(warnings or [])
     if not any(m.plan_allowances for m in models):
         all_warnings.append("no per-plan usage from the Go models API; no allowance was applied")
+    else:
+        norm_plan = normalize_plan(plan)
+        no_usage = sorted(
+            m.id
+            for m in models
+            if m.status == "active"
+            and m.model_type == "chat"
+            and not m.is_zero_cost
+            and norm_plan not in m.plan_allowances
+            and plan not in m.plan_allowances
+        )
+        if no_usage:
+            all_warnings.append(
+                f"{len(no_usage)} active paid model(s) have no go.monthly_usage for plan "
+                f"{norm_plan}: " + ", ".join(no_usage)
+            )
+        anomalies = sorted(
+            m.id
+            for m in models
+            if m.status == "active"
+            and m.model_type == "chat"
+            and m.is_zero_cost
+            and m.plan_allowances
+        )
+        if anomalies:
+            all_warnings.append(
+                f"catalogue anomaly: {len(anomalies)} model(s) publish a monthly allowance "
+                "but no token prices: " + ", ".join(anomalies)
+            )
     from opencode_go_model_optimizer.engine.pricing import validate_multiplier
 
     for m in models:

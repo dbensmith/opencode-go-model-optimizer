@@ -158,6 +158,20 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     ]
 
 
+def test_exclusion_reasons_zero_priced_with_allowance():
+    c = SelectionCriteria()
+    odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
+    assert odd.is_zero_cost is True
+    assert exclusion_reasons(odd, c) == [
+        "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
+    ]
+    assert (
+        _bucket_exclusion_reason(exclusion_reasons(odd, c)[0]) == "Incomplete Catalogue Data"
+    )
+    # Zero-cost without an allowance is still the normal free pool.
+    assert exclusion_reasons(NormalizedModel(id="free"), c) == []
+
+
 def test_empty_tier_becomes_warning():
     snap = create_snapshot([NormalizedModel(id="only", cost=TokenCost(output=1))])
     report = build_report(snapshot=snap, now=NOW)

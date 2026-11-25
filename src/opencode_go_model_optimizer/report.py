@@ -50,7 +50,9 @@ HOW_DECIDED = [
     "allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: "
     "Global-region models are blocked, paid endpoints that train on request data are blocked, "
     "and free endpoints that train are blocked. Preview models are included. Retention is "
-    "unrestricted unless a retention/ZDR flag is set.",
+    "unrestricted unless a retention/ZDR flag is set. A model that publishes a monthly "
+    "allowance but no token prices is treated as incomplete catalogue data and excluded from "
+    "every tier.",
     "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, "
     "promo expiry) using the 7-day time-weighted average starting at generation time.",
     "Tiers: eligible paid models are split into three clusters by log effective output price "
@@ -107,6 +109,8 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         return [f"status is {m.status!r} (not active)"]
     if m.model_type != "chat":
         return [f"not a text model (type {m.model_type!r})"]
+    if m.is_zero_cost and m.plan_allowances:
+        return ["zero-priced but publishes a monthly allowance (incomplete catalogue data)"]
     reasons: list[str] = []
     p = m.privacy
     if not passes_privacy(m, c):
@@ -308,6 +312,8 @@ def _bucket_exclusion_reason(reason: str) -> str:
         return "Global Region Required"
     if "not a text model" in r:
         return "Non-text Model"
+    if "zero-priced" in r:
+        return "Incomplete Catalogue Data"
     if "free model trains" in r:
         return "Free Model Trains"
     if "paid model trains" in r:
@@ -474,6 +480,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             for bucket in [
                 "Global Region Required",
                 "Non-text Model",
+                "Incomplete Catalogue Data",
                 "Free Model Trains",
                 "Paid Model Trains",
                 "Not Active",

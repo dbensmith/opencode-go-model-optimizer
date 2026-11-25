@@ -14,7 +14,7 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     parse_catalogue_http,
 )
 from opencode_go_model_optimizer.ingest.docs import DOCS_URLS
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
+from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot, TokenCost
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, parse_models_dev
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
@@ -39,6 +39,28 @@ def test_catalogue_carries_allowances_despite_name_drift():
 def test_warning_when_catalogue_has_no_plan_usage():
     snap = create_snapshot([NormalizedModel(id="b", name="B")])
     assert any("no per-plan usage from the Go models API" in w for w in snap.warnings)
+
+
+def test_warning_lists_paid_models_without_usage_for_the_plan():
+    priced = NormalizedModel(
+        id="priced", name="Priced", cost=TokenCost(output=1.0), plan_allowances={"go": 15.0}
+    )
+    missing = NormalizedModel(id="missing-usage", name="Missing", cost=TokenCost(output=1.0))
+    partial = NormalizedModel(
+        id="plus-only", name="PlusOnly", cost=TokenCost(output=1.0), plan_allowances={"go-plus": 60.0}
+    )
+    snap = create_snapshot([priced, missing, partial], plan="go")
+    warning = next(w for w in snap.warnings if "no go.monthly_usage for plan go" in w)
+    assert "missing-usage" in warning and "plus-only" in warning
+    assert "priced" not in warning
+
+
+def test_warning_for_zero_priced_model_with_allowance():
+    odd = NormalizedModel(id="odd", name="Odd", plan_allowances={"go": 15.0})
+    snap = create_snapshot([odd], plan="go")
+    warning = next(w for w in snap.warnings if "catalogue anomaly" in w)
+    assert "odd" in warning
+    assert not any("no go.monthly_usage" in w for w in snap.warnings)
 
 
 def test_snapshot_backward_compatible_without_new_fields():
