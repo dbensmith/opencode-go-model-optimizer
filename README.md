@@ -321,9 +321,10 @@ uvx opencode-go-model-optimizer select --format json
   estimates use `go.requests` when the API publishes it; otherwise the console's current
   per-model token profiles are scraped from its JS bundle (cached in the snapshot) and
   applied only to the models the API returned. models.dev metadata is read from its
-  `opencode-go` provider only. Ingest problems (no per-plan usage, unreachable console
-  profiles, an AA key that returned no benchmarks) are stored in the snapshot's
-  `warnings` list and printed to stderr; they never fail the fetch.
+  `opencode-go` provider only. Ingest problems (no per-plan usage at all, a paid model
+  without published usage for the plan, a model that publishes an allowance but no token
+  prices, unreachable console profiles, an AA key that returned no benchmarks) are stored
+  in the snapshot's `warnings` list and printed to stderr; they never fail the fetch.
 
 - **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (the effective criteria including Global/paid-training/free-training flags, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
   ```bash
@@ -482,11 +483,19 @@ uv run pytest
 uv run ruff check
 ```
 
-The default `pytest` run is offline and uses only synthetic fixtures. Live contract tests (`tests/live`, marked `live`) fetch the real sources and assert structural invariants only (tables parse, every active model is matched to pricing/privacy/estimates, multipliers are understood, paid tiers are non-empty). They are skipped unless you opt in:
+The default `pytest` run is offline and uses only synthetic fixtures. Live contract tests (`tests/live`, marked `live`) fetch the real sources and assert structural invariants only (the docs privacy table parses, every active model is matched to allowances/privacy/estimates, multipliers are understood, paid tiers are non-empty). They are skipped unless you opt in:
 
 ```bash
 OCGO_LIVE=1 uv run pytest tests/live -m live
 ```
+
+The console request-profile scrape is verified separately against the **hydrated** page. The console table is rendered client-side: the served HTML carries stale build-time numbers (rows stay `hidden` until revealed), and the visible cells count up through an animation — so only rendered rows are comparable, never raw HTML. `scripts/verify_console_hydration.py` drives a real headless browser to the console's `#limits` anchor, which renders **every** model row directly (no featured subset, nothing to click); it reads the final values from the rendered rows' `sr-only` spans (updated in the same React render that reveals a row — no animation wait needed) and asserts our computed estimates (Go API allowances + scraped bundle profiles) equal every rendered row on both plans. Coverage is **exhaustive**: the console hydrates every model the API publishes, so any API model missing from the rendered rows — or any rendered row missing from the API — fails the check; a subset-only run is a failure, not a pass. Should the anchor ever stop revealing all rows, the tool falls back to a count-agnostic `VIEW ALL` button click. By default it also waits for the count-up animation to settle and fails loudly if the visible cells ever disagree with the `sr-only` values; pass `--fast` to skip that guard:
+
+```bash
+uv run python scripts/verify_console_hydration.py   # or: OCGO_BROWSER=1 uv run pytest tests/live -m browser
+```
+
+It needs the dev dependency group (`uv sync` installs Playwright) and a one-time Chromium download (`uv run playwright install chromium`). On minimal Linux hosts the script bootstraps missing browser libraries (e.g. libasound) into `~/.cache/opencode-go-model-optimizer/browser-libs` without root; unmapped libraries must be installed system-wide (`playwright install-deps chromium`).
 
 ---
 
