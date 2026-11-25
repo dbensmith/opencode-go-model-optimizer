@@ -122,20 +122,31 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert workflow_path.is_file()
     workflow_text = workflow_path.read_text(encoding="utf-8")
 
+    pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
+    assert pr_ci_path.is_file()
+    pr_ci_text = pr_ci_path.read_text(encoding="utf-8")
+
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     assert ci_path.is_file()
     ci_text = ci_path.read_text(encoding="utf-8")
 
     # Permissions
-    assert "pull-requests: write" in workflow_text
+    assert "pull-requests: write" in pr_ci_text
     assert "pull-requests: write" in ci_text
 
     # Triggers and jobs structure
-    assert "pull_request:" in workflow_text
+    # A PR run must only contain jobs that can actually run on a PR: the PR
+    # trigger lives in pr-ci.yml, and run-optimizer.yml must not carry
+    # PR-triggered paths that would render as skipped jobs on every PR.
+    assert "pull_request:" in pr_ci_text
     assert "push:" in workflow_text
+    assert "schedule:" in workflow_text
+    assert "pull_request:" not in workflow_text
+    assert "if: github.event_name != 'pull_request'" not in workflow_text
+    assert "pull-requests: write" not in workflow_text
+    assert "uses: ./.github/workflows/ci.yml" in pr_ci_text
     assert "uses: ./.github/workflows/ci.yml" in workflow_text
     assert "needs: test" in workflow_text
-    assert "if: github.event_name != 'pull_request'" in workflow_text
 
     # PR comment in ci.yml
     assert "Render CI results comment" in ci_text
@@ -219,8 +230,12 @@ def test_composite_action_and_hardening() -> None:
 
     # Verify least-privilege permissions in run-optimizer.yml
     optimizer_text = optimizer_path.read_text(encoding="utf-8")
-    assert "pull-requests: write" in optimizer_text
+    # run-optimizer.yml never runs on a PR, so it needs no pull-requests: write
+    assert "pull-requests: write" not in optimizer_text
     assert "issues: write" in optimizer_text
+
+    pr_ci_text = (_ROOT / ".github" / "workflows" / "pr-ci.yml").read_text(encoding="utf-8")
+    assert "pull-requests: write" in pr_ci_text
 
     # Verify continue-on-error in ci.yml
     ci_text = ci_path.read_text(encoding="utf-8")

@@ -1,0 +1,24 @@
+name: PR CI
+
+# Pull request checks only: runs the shared test/lint/build suite (reusable
+# ci.yml) and posts the results as a PR comment. Everything that can never run
+# on a PR — the optimizer, issue upsert and Pages deploy — lives in
+# run-optimizer.yml, which triggers only on push/schedule/workflow_dispatch.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      pull-requests: write

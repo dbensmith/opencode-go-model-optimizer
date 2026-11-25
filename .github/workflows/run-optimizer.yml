@@ -4,7 +4,8 @@ name: Run Optimizer
 # 23:00 UTC in EST / UTC-5) and on demand, retrieves AA_API_KEY from 1Password via a
 # service account token, creates or updates the tracking GitHub issue labeled
 # `optimizer-results`, AND publishes the Docsify site to GitHub Pages on the same schedule.
-# Also runs tests on PRs and pushes to main.
+# Also runs tests on pushes to main. Pull request checks live in pr-ci.yml; this
+# workflow never runs on a PR.
 #
 # CI privacy policy: pass --allow-global-region and --allow-free-training so Global-region
 # models and free models that train are eligible. Paid and consent-required training remain
@@ -15,8 +16,6 @@ name: Run Optimizer
 
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
   schedule:
     # 02:00, 10:00, 18:00 EST (UTC-5) — GitHub Actions cron evaluates in UTC.
@@ -47,18 +46,16 @@ permissions:
 
 concurrency:
   group: run-optimizer-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
-      pull-requests: write
 
   optimize:
     needs: test
-    if: github.event_name != 'pull_request'
     name: Run Optimizer, Update Issue & Publish Pages
     runs-on: ubuntu-latest
     timeout-minutes: 10
