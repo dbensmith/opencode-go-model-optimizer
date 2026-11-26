@@ -59,18 +59,22 @@ class ModelLimit(BaseModel):
 
 
 class Privacy(BaseModel):
-    """Data-handling and region requirements from the docs Privacy section."""
+    """Data-handling and region requirements from the Go models API and docs Privacy section."""
 
     trains_on_data: bool | None = None
     retention_days: int | None = None  # None: "Not ZDR" or unknown
     zdr: bool | None = None  # True only for "0 days"
+    # The workspace-level "Global" region requirement, from explicit docs text.
     requires_global_region: bool = False
+    # API `go.limited_regions`: some countries are refused. This is *not* the same as
+    # requiring the workspace's Global region setting, so it is advisory only.
+    limited_regions: bool = False
     note: str | None = None
     agreement_valid_until: str | None = None  # ISO date
 
 
 class RequestEstimate(BaseModel):
-    """Docs-published request estimates for one model on one plan (inf = unlimited)."""
+    """Estimated requests covered by one plan's allowance (inf = unlimited)."""
 
     per_5h: float = 0.0
     per_week: float = 0.0
@@ -94,6 +98,7 @@ class NormalizedModel(BaseModel):
     full_id: str = ""
     canonical_id: str = ""
     name: str = ""
+    model_type: str = "chat"  # chat | embedding | image | decision
     status: str = "active"  # "active" or "deprecated"
     release_date: str = ""
     cost: TokenCost = Field(default_factory=TokenCost)
@@ -102,6 +107,7 @@ class NormalizedModel(BaseModel):
     plan_allowances: dict[str, float] = Field(default_factory=dict)
     multipliers: list[PriceMultiplier] = Field(default_factory=list)
     privacy: Privacy | None = None
+    go_requests: float | None = None  # API `go.requests` (5-hour count) when published
     request_estimates: dict[str, RequestEstimate] = Field(default_factory=dict)
 
     # Benchmark metrics (used in pareto mode)
@@ -123,7 +129,7 @@ class NormalizedModel(BaseModel):
     is_pareto: bool | None = None
     composite_burn_pct: float | None = None
 
-    # Active plan's request estimate, set by apply_plan (not serialized).
+    # Active plan's request estimate, set by ``apply_plan`` (not serialized).
     _request_estimate: RequestEstimate | None = PrivateAttr(default=None)
 
     # Effective multiplier applied to ``cost`` for this run (not serialized).
@@ -131,7 +137,7 @@ class NormalizedModel(BaseModel):
 
     @property
     def request_estimate(self) -> RequestEstimate | None:
-        """Request estimate for the plan last applied with ``apply_plan``, if published."""
+        """Request estimate for the plan last applied with ``apply_plan``, if available."""
         return self._request_estimate
 
     @request_estimate.setter
@@ -212,7 +218,6 @@ class SnapshotMetadata(BaseModel):
     source_catalogue: str = ""
     source_docs: str = ""
     catalogue_count: int = 0
-    docs_pricing_count: int = 0
     benchmark_source: str = "none"  # "aa_live" or "none"
     # Provenance per fetched source (catalogue, docs, models_dev): url, status, fetched_at,
     # sha256 and bytes of the raw body. Digests only; bodies are never stored.

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from opencode_go_model_optimizer.engine.allowance import (
     _desc_str_key,
+    is_eligible_free,
     rank_free_models,
     rank_paid_models,
     tie_break_key,
@@ -17,19 +18,19 @@ from opencode_go_model_optimizer.engine.pareto import (
     effective_quality,
     evaluate_pareto,
     fisher_jenks_3_clusters,
+    resolve_burn_basis,
     ssd,
 )
 from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
-from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
-from opencode_go_model_optimizer.ingest.docs import parse_go_pricing
+from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
     NormalizedModel,
     RequestEstimate,
     TokenCost,
 )
-from opencode_go_model_optimizer.ingest.snapshot import merge_docs_pricing
-from tests.conftest import FIXTURES_DIR
+from opencode_go_model_optimizer.ingest.snapshot import apply_plan
+from tests.conftest import CATALOGUE_HTTP_DATA
 
 
 def _criteria(kw):
@@ -55,11 +56,8 @@ def _rank(models, **kw):
 
 
 def _get_fixture_models() -> list[NormalizedModel]:
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
-    mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
-    models = parse_catalogue_cli(cli_text)
-    pricing = parse_go_pricing(mdx_text)
-    return merge_docs_pricing(models, pricing)
+    models = parse_catalogue_http(CATALOGUE_HTTP_DATA)
+    return apply_plan(models, "go")
 
 
 def test_allowance_paid_ranking():
@@ -86,6 +84,47 @@ def test_allowance_free_ranking():
 
     # Newest release first: delta (2026-10-01), epsilon (2026-09-20), kappa (2026-08-25)
     assert [m.id for m in ranked] == ["delta-contributor", "epsilon-free", "kappa-free"]
+
+
+def test_zero_cost_model_with_allowance_is_not_free():
+    """A paid model whose prices are missing is incomplete data, not a free endpoint."""
+    plain_free = NormalizedModel(id="plain-free")
+    assert is_eligible_free(plain_free) is True
+
+    odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
+    assert odd.is_zero_cost is True
+    assert is_eligible_free(odd) is False
+    assert (
+        is_eligible_free(
+            NormalizedModel(id="old", plan_allowances={"go": 15.0}, status="deprecated")
+        )
+        is False
+    )
+
+    unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": float("inf")})
+    assert unlimited.is_zero_cost is True
+    assert is_eligible_free(unlimited) is True
+
+    selection = select_tiers(
+        [odd, NormalizedModel(id="real-free")], SelectionCriteria(mode="allowance")
+    )
+    assert selection.primary["free"] == "opencode-go/real-free"
+
+
+def test_preferred_zero_cost_catalogue_anomaly_is_not_selected():
+    anomaly = NormalizedModel(
+        id="anom",
+        cost=TokenCost(input=0.0, output=0.0),
+        plan_allowances={"go": 15.0},
+        monthly_allowance=15.0,
+    )
+
+    selection = select_tiers(
+        [anomaly],
+        SelectionCriteria(mode="allowance", preferred_tiers={"free": "anom"}),
+    )
+
+    assert selection.primary == {"heavy": "", "balanced": "", "light": "", "free": ""}
 
 
 def test_deterministic_tie_breaking():
@@ -187,7 +226,7 @@ def test_allocate_tiers_allowance():
     assert tiers["heavy"] == "opencode-go/alpha-max"
     assert tiers["balanced"] == "opencode-go/beta-pro"
     assert tiers["light"] == "opencode-go/beta-flash"
-    assert tiers["free"] == "opencode-go/delta-contributor"
+    assert tiers["free"] == "opencode-go/epsilon-free"
 
 
 def test_allocate_tiers_with_preferences_and_skips():
@@ -266,19 +305,33 @@ def test_compute_quota_burn_pct_guards():
     assert burn_default > 0.0
 
 
-def test_quota_burn_zero_allowance_and_zero_multiplier():
+def test_quota_burn_zero_allowance():
     m_zero_allowance = NormalizedModel(
         id="zero-allowance", monthly_allowance=0.0, cost=TokenCost(input=1.0, output=1.0)
     )
     assert compute_quota_burn_pct(m_zero_allowance) == 100000.0
 
-    m_zero_mult = NormalizedModel(
-        id="zero-mult",
+
+def test_compute_burn_pct_uses_request_estimate():
+    m = NormalizedModel(
+        id="estimated",
         cost=TokenCost(input=1.0, output=1.0),
+        monthly_allowance=15.0,
+        request_estimates={"go": RequestEstimate(per_5h=1000, per_week=2500, per_month=5000)},
     )
-    m_zero_mult.request_estimate = RequestEstimate(per_month=5000.0)
-    m_zero_mult.price_multiplier = 0.0
-    assert compute_burn_pct(m_zero_mult, basis="estimate") == 0.0
+    apply_plan([m], "go")
+    assert m.request_estimate is not None
+    assert compute_burn_pct(m, basis="estimate") == 20.0
+    assert compute_burn_pct(m, basis="tokens") == compute_quota_burn_pct(m)
+    assert resolve_burn_basis("auto") == "estimate"
+    assert resolve_burn_basis("auto", profile="coding") == "tokens"
+
+
+def test_compute_burn_pct_without_estimate_falls_back_to_tokens():
+    m = NormalizedModel(
+        id="no-estimate", cost=TokenCost(input=1.0, output=1.0), monthly_allowance=15.0
+    )
+    assert compute_burn_pct(m, basis="estimate") == compute_quota_burn_pct(m)
 
 
 def test_effective_quality():

@@ -34,6 +34,7 @@ PRIVACY_FIELDS = (
     "retention_days",
     "zdr",
     "requires_global_region",
+    "limited_regions",
     "agreement_valid_until",
 )
 

@@ -28,6 +28,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "playwright>=1.65.2,<2",
     "pytest>=9.0.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.0",
@@ -47,4 +48,5 @@ ignore = [
 pythonpath = ["."]
 markers = [
     "live: contract tests against the real OpenCode/models.dev sources (run with OCGO_LIVE=1)",
+    "browser: headless-browser verification of the console scrape (run with OCGO_BROWSER=1)",
 ]

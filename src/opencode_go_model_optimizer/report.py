@@ -24,6 +24,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     select_tiers,
 )
 from opencode_go_model_optimizer.formatters.output import explain_tiers
+from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
     PLANS,
@@ -41,11 +42,18 @@ _DROP_KEYS = {"aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto"}
 HOW_DECIDED = [
     "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance "
     "and price only.",
-    "Eligibility: only active models are considered. Models without a positive finite "
+    "Sources: per-plan allowance and the training/ZDR flags come from the Go models API "
+    "(`go.monthly_usage`, `go.training`, `go.zdr`); token prices come from the same catalogue. "
+    "The docs Privacy table supplies retention days and agreement notes, and explicit docs text "
+    "supplies the workspace Global-region requirement. `go.limited_regions` is recorded as "
+    "advisory only, because regional availability is not the same as the Global setting.",
+    "Eligibility: only active text (chat) models are considered. Models without a positive finite "
     "allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: "
     "Global-region models are blocked, paid endpoints that train on request data are blocked, "
     "and free endpoints that train are blocked. Preview models are included. Retention is "
-    "unrestricted unless a retention/ZDR flag is set.",
+    "unrestricted unless a retention/ZDR flag is set. A model that publishes a monthly "
+    "allowance but no token prices is treated as incomplete catalogue data and excluded from "
+    "every tier.",
     "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, "
     "promo expiry) using the 7-day time-weighted average starting at generation time.",
     "Tiers: eligible paid models are split into three clusters by log effective output price "
@@ -54,9 +62,9 @@ HOW_DECIDED = [
     "price, then newest release date, then largest context window, then model id.",
     "Free tier: zero-cost (or contributor/unlimited) models, newest release first, then "
     "largest context window, then model id.",
-    "Quota burn: percent of the monthly allowance consumed per 1,000 turns, from the docs "
-    "request estimates when published (scaled by the price multiplier), otherwise from a "
-    "synthetic token mix. Shown for context; it is not a ranking key in allowance mode.",
+    "Quota burn: percent of the monthly allowance consumed per 1,000 turns, using the "
+    "console's per-model token profile to estimate requests per month (scaled by the price "
+    "multiplier). Shown for context; it is not a ranking key in allowance mode.",
     f"Fallbacks: the next {TOP_N - 1} candidates per tier, drawn from the same cluster and "
     "then from the general paid ranking.",
 ]
@@ -100,6 +108,10 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
     """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
     if m.status != "active":
         return [f"status is {m.status!r} (not active)"]
+    if m.model_type != "chat":
+        return [f"not a text model (type {m.model_type!r})"]
+    if m.is_zero_cost and publishes_monthly_allowance(m.plan_allowances):
+        return ["zero-priced but publishes a monthly allowance (incomplete catalogue data)"]
     reasons: list[str] = []
     p = m.privacy
     if not passes_privacy(m, c):
@@ -118,7 +130,7 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         return []
     allowance = m.monthly_allowance
     if allowance is None:
-        reasons.append("unpriced: no docs pricing row for this plan")
+        reasons.append("unpriced: no monthly allowance published for this plan")
     elif allowance <= 0:
         reasons.append("unpriced: allowance is zero")
     elif math.isinf(allowance):
@@ -299,6 +311,10 @@ def _bucket_exclusion_reason(reason: str) -> str:
     r = reason.lower()
     if "global" in r:
         return "Global Region Required"
+    if "not a text model" in r:
+        return "Non-text Model"
+    if "zero-priced" in r:
+        return "Incomplete Catalogue Data"
     if "free model trains" in r:
         return "Free Model Trains"
     if "paid model trains" in r:
@@ -464,6 +480,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 lines.append(f'    "Eligible" : {eligible_count}')
             for bucket in [
                 "Global Region Required",
+                "Non-text Model",
+                "Incomplete Catalogue Data",
                 "Free Model Trains",
                 "Paid Model Trains",
                 "Not Active",

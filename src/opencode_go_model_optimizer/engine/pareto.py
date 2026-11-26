@@ -80,10 +80,9 @@ def compute_burn_pct(
 ) -> float:
     """Monthly quota burn % per 1,000 requests; the single entry point for every consumer.
 
-    ``tokens`` synthesises it from a token mix. ``estimate`` uses the docs-published
-    requests per month for the active plan, scaled by the model's effective price
-    multiplier (published estimates are at list price); models without an estimate fall
-    back to ``tokens``.
+    ``tokens`` synthesises it from a token mix. ``estimate`` uses the plan's estimated
+    requests per month (computed from the console's per-model token profile) scaled by the
+    model's effective price multiplier; models without an estimate fall back to ``tokens``.
     """
     if resolve_burn_basis(basis, profile, token_mix) == "estimate" and not m.is_zero_cost:
         est = m.request_estimate

@@ -10,12 +10,7 @@ import pytest
 from opencode_go_model_optimizer.cli import main
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
-from opencode_go_model_optimizer.ingest.docs import (
-    parse_endpoints_table,
-    parse_go_pricing,
-    parse_privacy,
-    parse_request_estimates,
-)
+from opencode_go_model_optimizer.ingest.docs import parse_privacy
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Privacy, TokenCost
 from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, load_cached_snapshot
 from opencode_go_model_optimizer.report import (
@@ -50,11 +45,7 @@ SOURCES = {
 def snapshot():
     return create_snapshot(
         parse_catalogue_http(OC),
-        parse_go_pricing(MDX),
-        all_plan_pricing={p: parse_go_pricing(MDX, plan=p) for p in ("go", "go-plus", "go-teams")},
-        endpoints=parse_endpoints_table(MDX),
         privacy=parse_privacy(MDX),
-        request_estimates=parse_request_estimates(MDX),
         sources=SOURCES,
     )
 
@@ -83,7 +74,6 @@ def test_report_structure_and_no_benchmark_keys(snapshot, monkeypatch):
     ]
     heavy = go["explanations"]["heavy"]
     assert heavy["cluster"]["size"] >= 1 and heavy["why"]
-    assert heavy["explanation"]["burn_basis_used"] == "estimate"
     assert heavy["explanation"]["privacy"]["requires_global_region"] is False
     text = json.dumps(report)
     assert "aa_" not in text and "speed_tps" not in text and '"bpe"' not in text
@@ -116,7 +106,7 @@ def test_excluded_models_have_reasons(snapshot):
 def test_exclusion_reasons_unpriced_and_unlimited():
     c = SelectionCriteria()
     paid = TokenCost(output=1)
-    assert "no docs pricing row" in exclusion_reasons(NormalizedModel(id="a", cost=paid), c)[0]
+    assert "no monthly allowance" in exclusion_reasons(NormalizedModel(id="a", cost=paid), c)[0]
     zero = NormalizedModel(id="a", cost=paid, monthly_allowance=0.0)
     assert "zero" in exclusion_reasons(zero, c)[0]
     assert exclusion_reasons(NormalizedModel(id="free"), c) == []  # zero-cost: free pool
@@ -168,8 +158,48 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     ]
 
 
+def test_exclusion_reasons_zero_priced_with_allowance():
+    c = SelectionCriteria()
+    odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
+    assert odd.is_zero_cost is True
+    assert exclusion_reasons(odd, c) == [
+        "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
+    ]
+    assert _bucket_exclusion_reason(exclusion_reasons(odd, c)[0]) == "Incomplete Catalogue Data"
+    # Zero-cost without an allowance is still the normal free pool.
+    assert exclusion_reasons(NormalizedModel(id="free"), c) == []
+    unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": math.inf})
+    assert exclusion_reasons(unlimited, c) == []
+
+
+def test_report_excludes_model_without_target_plan_allowance():
+    paid = TokenCost(input=1.0, output=2.0)
+    go_only = NormalizedModel(id="go-only", cost=paid, plan_allowances={"go": 15.0})
+    both = NormalizedModel(
+        id="both",
+        cost=paid,
+        plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": 100.0},
+    )
+    snap = create_snapshot([go_only, both], plan="go")
+
+    report = build_report(snapshot=snap, now=NOW)
+    plus = report["plans"]["go-plus"]
+
+    assert "opencode-go/go-only" in {e["model_id"] for e in plus["excluded"]}
+    assert "opencode-go/go-only" not in plus["tiers"].values()
+    assert "opencode-go/go-only" not in plus["fallbacks"]["heavy"]
+
+
+def test_report_does_not_exclude_zero_cost_unlimited_allowance():
+    model = NormalizedModel(id="unlimited-free", plan_allowances={"go": math.inf})
+    report = build_report(snapshot=create_snapshot([model], plan="go"), now=NOW)
+
+    for section in report["plans"].values():
+        assert "opencode-go/unlimited-free" not in {e["model_id"] for e in section["excluded"]}
+
+
 def test_empty_tier_becomes_warning():
-    snap = create_snapshot([NormalizedModel(id="only", cost=TokenCost(output=1))], {})
+    snap = create_snapshot([NormalizedModel(id="only", cost=TokenCost(output=1))])
     report = build_report(snapshot=snap, now=NOW)
     assert any("no model available for tier heavy" in w for w in report["warnings"])
     assert report["plans"]["go"]["explanations"]["heavy"]["why"].startswith("no eligible")
@@ -332,7 +362,7 @@ def test_render_markdown_mermaid_diagrams_and_charts(snapshot, tmp_path):
         in md
     )
     assert (
-        'plan_go --> plan_go_free["free: opencode-go/epsilon-free (Allowance: unlimited, Cluster: N/A)"]'
+        'plan_go --> plan_go_free["free: opencode-go/epsilon-free (Allowance: -, Cluster: N/A)"]'
         in md
     )
     assert 'plan_go_plus["Plan: go-plus"]' in md

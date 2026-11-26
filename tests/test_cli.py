@@ -24,7 +24,7 @@ from opencode_go_model_optimizer.cli import (
     parse_args,
 )
 from opencode_go_model_optimizer.engine.tiers import resolve_mode
-from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_cli
+from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
@@ -36,7 +36,26 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_cached_snapshot,
     save_snapshot,
 )
-from tests.conftest import FIXTURES_DIR, create_temp_snapshot
+from tests.conftest import CATALOGUE_HTTP_DATA, FIXTURES_DIR, create_temp_snapshot
+
+
+@pytest.fixture
+def go_only_snapshot(tmp_path: Path) -> Path:
+    snap = Snapshot(
+        fetched_at="2026-01-01T00:00:00Z",
+        plan="go",
+        models=[
+            NormalizedModel(
+                id="paid",
+                cost={"input": 1.0, "output": 2.0},
+                limit={"context": 128000, "output": 8192},
+                plan_allowances={"go": 15.0},
+            )
+        ],
+    )
+    path = tmp_path / "go_only.json"
+    save_snapshot(snap, path)
+    return path
 
 
 def test_parse_args_select():
@@ -133,7 +152,7 @@ def test_cli_select_json(tmp_path, capsys):
     assert data["tiers"]["heavy"] == "opencode-go/alpha-max"
     assert data["tiers"]["balanced"] == "opencode-go/beta-pro"
     assert data["tiers"]["light"] == "opencode-go/beta-flash"
-    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
+    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
     assert data["mode"] == "allowance"
 
 
@@ -155,14 +174,14 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
     assert rc == 0
     env_out = capsys.readouterr().out
     assert 'OPENCODE_MODEL_HEAVY="opencode-go/alpha-max"' in env_out
-    assert 'OPENCODE_MODEL_FREE="opencode-go/delta-contributor"' in env_out
+    assert 'OPENCODE_MODEL_FREE="opencode-go/epsilon-free"' in env_out
 
     # --format github-output
     rc = main(["select", "--format", "github-output", "--snapshot", str(snap_path)])
     assert rc == 0
     gh_out = capsys.readouterr().out
     assert "heavy=opencode-go/alpha-max" in gh_out
-    assert "free=opencode-go/delta-contributor" in gh_out
+    assert "free=opencode-go/epsilon-free" in gh_out
 
 
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
@@ -187,7 +206,7 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["tiers"]["heavy"] == "opencode-go/gamma-flash"
-    assert data["tiers"]["free"] == "opencode-go/delta-contributor"
+    assert data["tiers"]["free"] == "opencode-go/epsilon-free"
 
 
 def test_select_json_includes_settings(tmp_path, capsys):
@@ -242,11 +261,10 @@ def test_cli_rank_filters(tmp_path, capsys):
     assert all(m["limit"]["context"] >= 120000 for m in models)
     free_models = [m for m in models if m.get("tier") == "free"]
     assert len(free_models) == 1
-    assert free_models[0]["id"] == "delta-contributor"
+    assert free_models[0]["id"] == "epsilon-free"
 
 
 def test_cli_select_plan_switch(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
     out_snap_go = tmp_path / "snap_go.json"
     out_snap_plus = tmp_path / "snap_plus.json"
@@ -254,7 +272,7 @@ def test_cli_select_plan_switch(tmp_path):
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=parse_catalogue_cli(cli_text),
+            return_value=parse_catalogue_http(CATALOGUE_HTTP_DATA),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
@@ -373,6 +391,46 @@ def test_cli_multiplan_offline_snapshot(tmp_path, capsys):
     assert json_out["plan"] == "go-plus"
 
 
+def test_cli_select_plan_fallback_reapplies_effective_plan(go_only_snapshot, capsys):
+    args = [
+        "select",
+        "--snapshot",
+        str(go_only_snapshot),
+        "--mode",
+        "allowance",
+        "--format",
+        "json",
+    ]
+    assert main([*args, "--plan", "go-plus"]) == 0
+    fallback = json.loads(capsys.readouterr().out)
+    assert main([*args, "--plan", "go"]) == 0
+    direct = json.loads(capsys.readouterr().out)
+
+    assert fallback["plan"] == direct["plan"] == "go"
+    assert fallback["tiers"] == direct["tiers"]
+    assert fallback["tiers"]["heavy"] == "opencode-go/paid"
+
+
+def test_cli_rank_plan_fallback_reapplies_effective_plan(go_only_snapshot, capsys):
+    args = [
+        "rank",
+        "--snapshot",
+        str(go_only_snapshot),
+        "--mode",
+        "allowance",
+        "--format",
+        "json",
+    ]
+    assert main([*args, "--plan", "go-plus"]) == 0
+    fallback = json.loads(capsys.readouterr().out)
+    assert main([*args, "--plan", "go"]) == 0
+    direct = json.loads(capsys.readouterr().out)
+
+    assert fallback == direct
+    assert fallback[0]["monthly_allowance"] == 15.0
+    assert fallback[0]["tier"] == "heavy"
+
+
 def test_cli_select_output_file(tmp_path):
     snap_path = create_temp_snapshot(tmp_path)
     out_file = tmp_path / "selected.json"
@@ -403,14 +461,13 @@ def test_cli_rank_json(tmp_path, capsys):
 
 
 def test_cli_fetch(tmp_path):
-    cli_text = (FIXTURES_DIR / "catalogue_cli.txt").read_text(encoding="utf-8")
     mdx_text = (FIXTURES_DIR / "go_docs.mdx").read_text(encoding="utf-8")
     out_snap = tmp_path / "fetched_snapshot.json"
 
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
-            return_value=parse_catalogue_cli(cli_text),
+            return_value=parse_catalogue_http(CATALOGUE_HTTP_DATA),
         ),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=mdx_text),
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),

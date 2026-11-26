@@ -12,7 +12,7 @@ def pytest_collection_modifyitems(config, items):
         return
     skip = pytest.mark.skip(reason="live contract tests need OCGO_LIVE=1")
     for item in items:
-        if "live" in item.keywords:
+        if item.get_closest_marker("live"):
             item.add_marker(skip)
 
 

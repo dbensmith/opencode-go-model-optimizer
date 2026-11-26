@@ -11,10 +11,7 @@ from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passe
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.engine.tiers import select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
-from opencode_go_model_optimizer.ingest.docs import (
-    parse_endpoints_table,
-    parse_privacy,
-)
+from opencode_go_model_optimizer.ingest.docs import parse_privacy
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Privacy,
@@ -34,12 +31,11 @@ def test_parse_privacy_fixture():
     p = parse_privacy(MDX)
     assert p["Kappa Free"]["requires_global_region"] is True
     assert p["Alpha Max"]["requires_global_region"] is False
-    assert p["Lambda Contributor"]["trains_on_data"] is True
     assert p["Lambda Contributor"]["retention_days"] is None
     assert p["Lambda Contributor"]["zdr"] is False
     assert p["Zeta Pro"]["retention_days"] == 30
     assert p["Zeta Pro"]["zdr"] is False
-    assert p["Gamma Prime"]["zdr"] is True and p["Gamma Prime"]["trains_on_data"] is False
+    assert p["Gamma Prime"]["zdr"] is True
     for name in ("Beta Flash", "Beta Pro"):
         assert p[name]["agreement_valid_until"] == "2026-11-30"
         assert p[name]["retention_days"] == 0  # "0 days\*"
@@ -50,8 +46,8 @@ def test_parse_privacy_fixture():
 
 
 def test_global_region_note_tolerates_markers_and_case():
-    mdx = "## Privacy\n\n| Model | Model training | Data retention |\n| - | - | - |\n"
-    mdx += "| Foo | Not used | 0 days |\n\n- **Foo:** REQUIRES Global REGIONS please.\n"
+    mdx = "## Privacy\n\n| Model | Data retention |\n| - | - |\n"
+    mdx += "| Foo | 0 days |\n\n- **Foo:** REQUIRES Global REGIONS please.\n"
     assert parse_privacy(mdx)["Foo"]["requires_global_region"] is True
 
 
@@ -61,7 +57,6 @@ def test_merge_privacy_catalogue_and_warnings():
     merge_privacy(
         models,
         parse_privacy(MDX),
-        parse_endpoints_table(MDX),
         warnings,
         now=datetime(2026, 12, 15, tzinfo=UTC),
     )
@@ -76,9 +71,24 @@ def test_merge_privacy_catalogue_and_warnings():
 def test_warning_for_missing_privacy_row():
     m = NormalizedModel(id="x", name="X")
     warnings: list[str] = []
-    merge_privacy([m], parse_privacy(MDX), {}, warnings)
+    merge_privacy([m], parse_privacy(MDX), warnings)
     assert m.privacy is None
     assert any("no docs privacy row: x" in w for w in warnings)
+
+
+def test_missing_privacy_warning_only_covers_active_chat_models():
+    models = [
+        NormalizedModel(id="active-chat"),
+        NormalizedModel(id="active-embedding", model_type="embedding"),
+        NormalizedModel(id="old-chat", status="deprecated"),
+    ]
+    warnings: list[str] = []
+
+    merge_privacy(models, {}, warnings)
+
+    assert warnings == [
+        "1 active model(s) have no docs privacy row: active-chat (and no Go privacy flags)"
+    ]
 
 
 def test_old_snapshot_without_privacy_loads():
@@ -177,7 +187,7 @@ def _snapshot_file(tmp_path: Path) -> Path:
         _m("free-train", Privacy(trains_on_data=True), release_date="2026-10-24"),
         _m("free-plain", Privacy(retention_days=0, zdr=True), release_date="2026-10-05"),
     ]
-    snap = create_snapshot(models, {}, plan="go")
+    snap = create_snapshot(models, plan="go")
     path = tmp_path / "s.json"
     save_snapshot(snap, path)
     return path
@@ -270,3 +280,52 @@ def test_diff_reports_privacy_changes():
     assert d.privacy_changes["a"]["requires_global_region"] == (False, True)
     assert d.has_changes()
     assert "note" not in d.privacy_changes["a"]
+
+
+def test_parse_privacy_two_column_retention_table():
+    mdx = (
+        "## Privacy\n\n"
+        "| Model | Data retention |\n"
+        "| ----- | -------------- |\n"
+        "| Foo   | 0 days         |\n"
+        "| Bar   | 30 days        |\n\n"
+        "- **Foo:** Requires Global regions.\n"
+    )
+    p = parse_privacy(mdx)
+    assert p["Foo"].get("trains_on_data") is None  # catalogue supplies the training flag
+    assert p["Foo"]["retention_days"] == 0
+    assert p["Foo"]["zdr"] is True
+    assert p["Foo"]["requires_global_region"] is True
+    assert p["Bar"]["retention_days"] == 30
+    assert p["Bar"]["zdr"] is False
+
+
+def test_merge_privacy_keeps_catalogue_flags_and_adds_docs_retention():
+    m = NormalizedModel(
+        id="alpha",
+        name="Alpha",
+        privacy=Privacy(
+            trains_on_data=True,
+            zdr=False,
+            requires_global_region=True,
+            limited_regions=True,
+        ),
+    )
+    docs_row = {
+        "trains_on_data": None,
+        "retention_days": 0,
+        "zdr": True,
+        "requires_global_region": False,
+        "limited_regions": False,
+        "note": "from docs",
+        "agreement_valid_until": "2026-12-31",
+    }
+    merge_privacy([m], {"alpha": docs_row}, warnings=None)
+    assert m.privacy is not None
+    assert m.privacy.trains_on_data is True  # API flag is authoritative
+    assert m.privacy.zdr is False  # API flag is authoritative
+    assert m.privacy.requires_global_region is True
+    assert m.privacy.limited_regions is True  # API flag is authoritative
+    assert m.privacy.retention_days == 0  # docs-only field is merged in
+    assert m.privacy.note == "from docs"
+    assert m.privacy.agreement_valid_until == "2026-12-31"

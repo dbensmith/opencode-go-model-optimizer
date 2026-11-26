@@ -390,7 +390,7 @@ def format_rank_table(
 
 
 def _privacy_cell(m: NormalizedModel) -> str:
-    """Compact privacy summary: ZDR / <N>d retention, plus train and global flags."""
+    """Compact privacy summary: ZDR / <N>d retention, plus train, global and limited flags."""
     p = m.privacy
     if p is None:
         return "-"
@@ -399,6 +399,8 @@ def _privacy_cell(m: NormalizedModel) -> str:
         parts.append("train")
     if p.requires_global_region:
         parts.append("global")
+    if p.limited_regions:
+        parts.append("limited")
     return ",".join(parts)
 
 

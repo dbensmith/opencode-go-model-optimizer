@@ -14,22 +14,24 @@ from typing import Any
 
 import httpx
 
-from opencode_go_model_optimizer.ingest.catalogue import DEFAULT_MODELS_HTTP_URL, fetch_catalogue
+from opencode_go_model_optimizer.ingest.catalogue import (
+    DEFAULT_MODELS_HTTP_URL,
+    apply_request_estimates,
+    fetch_catalogue,
+    publishes_monthly_allowance,
+)
+from opencode_go_model_optimizer.ingest.console import CONSOLE_PAGE_URL, fetch_console_profiles
 from opencode_go_model_optimizer.ingest.docs import (
     DOCS_URLS,
     fetch_docs_mdx,
     norm_name,
-    parse_endpoints_table,
-    parse_go_pricing,
     parse_privacy,
-    parse_request_estimates,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import (
     PLANS,
     NormalizedModel,
     Privacy,
-    RequestEstimate,
     Snapshot,
     SnapshotMetadata,
     normalize_plan,
@@ -38,21 +40,17 @@ from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_
 
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
-    """Apply plan-specific monthly allowances to models."""
+    """Apply plan-specific monthly allowances and request estimates to models."""
     norm_plan = normalize_plan(plan)
     for m in models:
         if norm_plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[norm_plan]
         elif plan in m.plan_allowances:
             m.monthly_allowance = m.plan_allowances[plan]
-        m.request_estimate = estimate_for(m, norm_plan)
+        elif m.plan_allowances:
+            m.monthly_allowance = None
+        m.request_estimate = m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
     return models
-
-
-def estimate_for(m: NormalizedModel, plan: str) -> RequestEstimate | None:
-    """Return the docs request estimate for a model on a plan (None if unpublished)."""
-    norm_plan = normalize_plan(plan)
-    return m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
 
 
 def _to_float(value: Any) -> float | None:
@@ -176,18 +174,16 @@ def _aa_entry_rank(entry: dict[str, Any], is_canonical: bool) -> tuple[int, floa
     )
 
 
-def _model_aa_lookup_keys(
-    m: NormalizedModel, norm_names_by_id: dict[str, tuple[str, ...]]
-) -> list[str]:
+def _model_aa_lookup_keys(m: NormalizedModel) -> list[str]:
     """Candidate keys for matching a catalogue model against ``fetch_aa_benchmarks``."""
     canon = m.canonical_id or ""
     canon_tail = canon.partition("/")[2] if "/" in canon else canon
     no_params_canon = _AA_PARAM_SIZE_RE.sub("", canon)
     no_params_tail = _AA_PARAM_SIZE_RE.sub("", canon_tail)
     forms: list[str] = [
-        # Exact release-specific identifiers first: an OpenCode ID like
-        # ``deepseek-v4.1-flash`` may serve the ``1017`` release, and AA also lists a
-        # separate non-1017 model. Never let the generic ID shadow the exact release.
+        # Exact release-specific identifiers first: a catalogue ID may serve a dated
+        # release while AA also lists a generic variant. Never let the generic ID shadow
+        # the exact release.
         m.name,
         canon,
         canon_tail,
@@ -196,7 +192,6 @@ def _model_aa_lookup_keys(
         _AA_TRAILING_ONE_DOT_ZERO_RE.sub("", no_params_canon),
         _AA_TRAILING_ONE_DOT_ZERO_RE.sub("", no_params_tail),
         m.id,
-        *norm_names_by_id.get(m.id, ()),
         _AA_DATE_CODE_RE.sub(" ", m.name),
         _AA_EDITION_RE.sub("", m.id),
         _AA_EDITION_RE.sub("", m.name),
@@ -294,88 +289,28 @@ def fetch_aa_benchmarks(
         return {}
 
 
-def _build_endpoint_index(
-    endpoints: dict[str, str] | None,
-) -> dict[str, tuple[str, ...]]:
-    """Map each endpoint model ID to its normalized display name(s) in O(1)."""
-    by_id: dict[str, list[str]] = {}
-    for raw_name, model_id in (endpoints or {}).items():
-        key = norm_name(raw_name)
-        if key:
-            by_id.setdefault(model_id, []).append(key)
-    return {mid: tuple(keys) for mid, keys in by_id.items()}
-
-
-def _lookup_pricing(
-    m: NormalizedModel,
-    pricing_map: dict[str, dict[str, Any]],
-    norm_names_by_id: dict[str, tuple[str, ...]],
+def _lookup_named_row(
+    m: NormalizedModel, by_norm: dict[str, dict[str, Any]]
 ) -> tuple[str, dict[str, Any]] | None:
-    """Find a pricing row for a model: by endpoint model ID first (O(1)), then fuzzy names."""
-    if m.id in norm_names_by_id:
-        for key in norm_names_by_id[m.id]:
-            if key in pricing_map:
-                return key, pricing_map[key]
-        return None
+    """Find a docs row by display name or model ID (normalized first)."""
     for key in (norm_name(m.name), norm_name(m.id), m.id, m.name):
-        if pricing_map.get(key):
-            return key, pricing_map[key]
+        row = by_norm.get(key)
+        if row:
+            return key, row
     return None
 
 
-def merge_docs_pricing(
+def merge_catalogue_metadata(
     models: list[NormalizedModel],
-    pricing: dict[str, dict[str, Any]],
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
-    all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
-    endpoints: dict[str, str] | None = None,
-    warnings: list[str] | None = None,
-    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
 ) -> list[NormalizedModel]:
-    """Merge published monthly allowances and prices into catalog models.
-
-    `endpoints` is the docs Endpoints table (display name -> model ID); pricing rows are
-    matched to catalogue models by ID through it. `warnings`, if given, receives messages
-    about active models without pricing and pricing rows without a model.
-    """
+    """Attach AA benchmarks and backfill missing metadata from models.dev."""
     benchmarks = aa_benchmarks or {}
     external_metadata = models_dev_metadata or {}
-    norm_names_by_id = (
-        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
-    )
-    used_keys: set[str] = set()
-    unpriced: list[str] = []
     for m in models:
         key_name = norm_name(m.name)
         key_id = norm_name(m.id)
-
-        found = _lookup_pricing(m, pricing, norm_names_by_id)
-        info = found[1] if found else None
-        if found:
-            used_keys.add(found[0])
-        elif m.status == "active":
-            unpriced.append(m.id)
-        if info:
-            m.monthly_allowance = info["allowance"]
-            if m.cost.output == 0.0 and info["output_cost"] > 0:
-                m.cost.output = info["output_cost"]
-            if m.cost.input == 0.0 and info["input_cost"] > 0:
-                m.cost.input = info["input_cost"]
-            if m.cost.cache_read == 0.0 and info["cached_read_cost"] > 0:
-                m.cost.cache_read = info["cached_read_cost"]
-            if m.cost.cache_write == 0.0 and info.get("cached_write_cost", 0) > 0:
-                m.cost.cache_write = info["cached_write_cost"]
-            m.is_zero_cost = m.cost.input == 0.0 and m.cost.output == 0.0
-
-        if all_plan_pricing:
-            for plan_name, plan_map in all_plan_pricing.items():
-                plan_found = _lookup_pricing(m, plan_map, norm_names_by_id)
-                if plan_found:
-                    m.plan_allowances[plan_name] = plan_found[1]["allowance"]
-        elif m.monthly_allowance is not None and "go" not in m.plan_allowances:
-            m.plan_allowances["go"] = m.monthly_allowance
-
         metadata = (
             external_metadata.get(m.id)
             or external_metadata.get(key_id)
@@ -390,7 +325,7 @@ def merge_docs_pricing(
                 m.limit.output = int(metadata["output"])
 
         bench = next(
-            (benchmarks[k] for k in _model_aa_lookup_keys(m, norm_names_by_id) if k in benchmarks),
+            (benchmarks[k] for k in _model_aa_lookup_keys(m) if k in benchmarks),
             None,
         )
         if bench:
@@ -400,54 +335,57 @@ def merge_docs_pricing(
                 m.aa_coding = bench.get("coding")
             if m.speed_tps is None:
                 m.speed_tps = bench.get("tps")
-
-    if warnings is not None:
-        if unpriced:
-            warnings.append(
-                f"{len(unpriced)} active catalogue model(s) have no docs pricing match: "
-                + ", ".join(unpriced)
-            )
-        orphans = [
-            str(row.get("raw_name", key))
-            for key, row in pricing.items()
-            if key not in used_keys and isinstance(row, dict)
-        ]
-        if orphans:
-            warnings.append(
-                f"{len(orphans)} docs pricing row(s) matched no catalogue model: "
-                + ", ".join(orphans)
-            )
-
     return models
+
+
+def _merge_privacy(existing: Privacy | None, docs_row: dict[str, Any]) -> Privacy:
+    """Combine catalogue Go flags with docs retention/notes, keeping catalogue flags.
+
+    The Go models API is authoritative for training/ZDR/region flags; the docs privacy
+    table contributes retention days, notes and agreement dates that the API does not
+    publish.
+    """
+    docs = Privacy(**docs_row)
+    if existing is None:
+        return docs
+    data = existing.model_dump()
+    for field in ("trains_on_data", "retention_days", "zdr"):
+        if getattr(existing, field) is None:
+            value = getattr(docs, field)
+            if value is not None:
+                data[field] = value
+    if docs.requires_global_region:
+        data["requires_global_region"] = True
+    if docs.note:
+        data["note"] = f"{existing.note} {docs.note}" if existing.note else docs.note
+    if docs.agreement_valid_until:
+        data["agreement_valid_until"] = docs.agreement_valid_until
+    return Privacy(**data)
 
 
 def merge_privacy(
     models: list[NormalizedModel],
     privacy: dict[str, dict[str, Any]],
-    endpoints: dict[str, str] | None = None,
     warnings: list[str] | None = None,
     now: datetime | None = None,
-    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
-    """Attach docs privacy rows to models, resolving names the same way pricing does.
+    """Attach docs privacy rows to models by name or model ID.
 
+    Catalogue-provided Go flags are preserved; docs retention and notes are merged in.
     `warnings`, if given, receives messages about active models without a privacy row and
     expired ZDR agreement dates (relative to `now`).
     """
-    norm_names_by_id = (
-        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
-    )
     by_norm = {norm_name(n): row for n, row in privacy.items() if norm_name(n)}
     missing: list[str] = []
     expired: set[str] = set()
     today = (now or datetime.now(UTC)).date().isoformat()
     for m in models:
-        found = _lookup_pricing(m, by_norm, norm_names_by_id)
+        found = _lookup_named_row(m, by_norm)
         if not found:
-            if m.status == "active":
+            if m.status == "active" and m.model_type == "chat" and m.privacy is None:
                 missing.append(m.id)
             continue
-        m.privacy = Privacy(**found[1])
+        m.privacy = _merge_privacy(m.privacy, found[1])
         until = m.privacy.agreement_valid_until
         if until and until < today:
             expired.add(until)
@@ -455,68 +393,59 @@ def merge_privacy(
         return
     if missing:
         warnings.append(
-            f"{len(missing)} active model(s) have no docs privacy row: " + ", ".join(missing)
+            f"{len(missing)} active model(s) have no docs privacy row: "
+            + ", ".join(missing)
+            + " (and no Go privacy flags)"
         )
     for until in sorted(expired):
         warnings.append(f"privacy agreement date {until} is in the past; docs may be stale")
 
 
-def merge_request_estimates(
-    models: list[NormalizedModel],
-    estimates: dict[str, dict[str, dict[str, float]]],
-    endpoints: dict[str, str] | None = None,
-    warnings: list[str] | None = None,
-    _endpoint_index: dict[str, tuple[str, ...]] | None = None,
-) -> None:
-    """Attach docs request estimates per plan, resolving names the same way pricing does.
-
-    `warnings`, if given, receives a message listing active paid models with no estimate.
-    """
-    norm_names_by_id = (
-        _endpoint_index if _endpoint_index is not None else _build_endpoint_index(endpoints)
-    )
-    by_plan = {
-        plan: {norm_name(n): row for n, row in rows.items() if norm_name(n)}
-        for plan, rows in estimates.items()
-    }
-    missing: list[str] = []
-    for m in models:
-        for plan, by_norm in by_plan.items():
-            found = _lookup_pricing(m, by_norm, norm_names_by_id)
-            if found:
-                m.request_estimates[plan] = RequestEstimate(**found[1])
-        if m.status == "active" and not m.is_zero_cost and not m.request_estimates:
-            missing.append(m.id)
-    if warnings is not None and missing:
-        warnings.append(
-            f"{len(missing)} active paid model(s) have no docs request estimate "
-            "(quota burn falls back to synthetic token costs): " + ", ".join(missing)
-        )
-
-
 def create_snapshot(
     models: list[NormalizedModel],
-    pricing: dict[str, dict[str, Any]],
     plan: str = "go",
     aa_benchmarks: dict[str, dict[str, Any]] | None = None,
     source_catalogue: str = "live",
     source_docs: str = "live",
-    all_plan_pricing: dict[str, dict[str, dict[str, Any]]] | None = None,
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
-    endpoints: dict[str, str] | None = None,
     benchmark_source: str = "none",
     warnings: list[str] | None = None,
     privacy: dict[str, dict[str, Any]] | None = None,
-    request_estimates: dict[str, dict[str, dict[str, float]]] | None = None,
     sources: dict[str, dict[str, Any]] | None = None,
 ) -> Snapshot:
     """Create an immutable normalized Snapshot instance."""
     all_warnings = list(warnings or [])
-    if not pricing:
-        all_warnings.append(
-            "no rows parsed from the go-pricing table in the docs; "
-            "the docs format may have changed and no pricing was applied"
+    if not any(m.plan_allowances for m in models):
+        all_warnings.append("no per-plan usage from the Go models API; no allowance was applied")
+    else:
+        norm_plan = normalize_plan(plan)
+        no_usage = sorted(
+            m.id
+            for m in models
+            if m.status == "active"
+            and m.model_type == "chat"
+            and not m.is_zero_cost
+            and norm_plan not in m.plan_allowances
+            and plan not in m.plan_allowances
         )
+        if no_usage:
+            all_warnings.append(
+                f"{len(no_usage)} active paid model(s) have no go.monthly_usage for plan "
+                f"{norm_plan}: " + ", ".join(no_usage)
+            )
+        anomalies = sorted(
+            m.id
+            for m in models
+            if m.status == "active"
+            and m.model_type == "chat"
+            and m.is_zero_cost
+            and publishes_monthly_allowance(m.plan_allowances)
+        )
+        if anomalies:
+            all_warnings.append(
+                f"catalogue anomaly: {len(anomalies)} model(s) publish a monthly allowance "
+                "but no token prices: " + ", ".join(anomalies)
+            )
     from opencode_go_model_optimizer.engine.pricing import validate_multiplier
 
     for m in models:
@@ -527,48 +456,19 @@ def create_snapshot(
                     f"ignoring unsupported price multiplier on {m.id} ({reason}); "
                     "prices for it may be understated"
                 )
-    endpoint_index = _build_endpoint_index(endpoints)
-    merged_models = merge_docs_pricing(
+    merged_models = merge_catalogue_metadata(
         models,
-        pricing,
         aa_benchmarks=aa_benchmarks,
-        all_plan_pricing=all_plan_pricing,
         models_dev_metadata=models_dev_metadata,
-        endpoints=endpoints,
-        warnings=all_warnings if pricing else None,
-        _endpoint_index=endpoint_index,
     )
     now = datetime.now(UTC)
     now_utc = now.isoformat(timespec="seconds")
     if privacy is not None:
         if not privacy:
             all_warnings.append(
-                "no rows parsed from the docs Privacy table; privacy/region filters have no data"
+                "docs Privacy table is missing or empty; privacy/region filters may be incomplete"
             )
-        else:
-            merge_privacy(
-                merged_models,
-                privacy,
-                endpoints,
-                all_warnings,
-                now,
-                _endpoint_index=endpoint_index,
-            )
-
-    if request_estimates is not None:
-        if not request_estimates:
-            all_warnings.append(
-                "no rows parsed from the docs go-requests table; "
-                "quota burn uses synthetic token costs"
-            )
-        else:
-            merge_request_estimates(
-                merged_models,
-                request_estimates,
-                endpoints,
-                all_warnings,
-                _endpoint_index=endpoint_index,
-            )
+        merge_privacy(merged_models, privacy, all_warnings, now)
 
     apply_plan(merged_models, plan)
 
@@ -581,7 +481,6 @@ def create_snapshot(
             source_catalogue=source_catalogue,
             source_docs=source_docs,
             catalogue_count=len(models),
-            docs_pricing_count=len(pricing),
             benchmark_source=benchmark_source,
             sources=dict(sources or {}),
         ),
@@ -621,7 +520,9 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     if path.exists():
         try:
             if time.time() - path.stat().st_mtime <= ttl_seconds:
-                return load_snapshot(path)
+                snap = load_snapshot(path)
+                apply_plan(snap.models, plan)
+                return snap
         except OSError, ValueError, json.JSONDecodeError:
             pass
 
@@ -661,6 +562,7 @@ _SOURCE_LABELS: dict[str, str] = {
     DEFAULT_MODELS_HTTP_URL: "catalogue",
     **dict.fromkeys(DOCS_URLS, "docs"),
     MODELS_DEV_URL: "models_dev",
+    CONSOLE_PAGE_URL: "console",
 }
 
 
@@ -723,10 +625,14 @@ def _fetch_and_build(
 ) -> Snapshot:
     aa_key = os.environ.get("AA_API_KEY") if use_aa else None
     aa_errors: list[str] = []
+    console_errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         fut_cat = executor.submit(fetch_catalogue, client=active_client)
         fut_docs = executor.submit(fetch_docs_mdx, client=active_client)
         fut_models_dev = executor.submit(fetch_models_dev, client=active_client)
+        fut_console = executor.submit(
+            fetch_console_profiles, client=active_client, errors=console_errors
+        )
         fut_aa = (
             executor.submit(fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors)
             if aa_key
@@ -736,17 +642,18 @@ def _fetch_and_build(
         models = fut_cat.result()
         docs_text = fut_docs.result()
         models_dev_metadata = fut_models_dev.result()
+        console_profiles = fut_console.result()
         aa_benchmarks = fut_aa.result() if fut_aa is not None else None
 
-    all_plan_pricing = {}
-    for p in PLANS:
-        parsed = parse_go_pricing(docs_text, plan=p, fallback_to_go=False)
-        if parsed:
-            all_plan_pricing[p] = parsed
-    norm_plan = normalize_plan(plan)
-    pricing = all_plan_pricing.get(norm_plan) or parse_go_pricing(docs_text, plan=plan)
+    apply_request_estimates(models, console_profiles)
 
     warnings: list[str] = []
+    if console_profiles is None:
+        detail = f" ({'; '.join(console_errors)})" if console_errors else ""
+        warnings.append(
+            "could not read the console request profiles; models without "
+            f"go.requests have no request estimates{detail}; quota burn falls back to tokens"
+        )
     if aa_key and not aa_benchmarks:
         detail = f" ({'; '.join(aa_errors)})" if aa_errors else ""
         warnings.append(
@@ -756,14 +663,10 @@ def _fetch_and_build(
 
     return create_snapshot(
         models,
-        pricing,
         plan=plan,
         aa_benchmarks=aa_benchmarks,
-        all_plan_pricing=all_plan_pricing,
         models_dev_metadata=models_dev_metadata,
-        endpoints=parse_endpoints_table(docs_text),
         privacy=parse_privacy(docs_text),
-        request_estimates=parse_request_estimates(docs_text),
         benchmark_source="aa_live" if aa_benchmarks else "none",
         warnings=warnings,
         sources=recorder.sources,

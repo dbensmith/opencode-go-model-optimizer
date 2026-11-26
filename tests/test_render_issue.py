@@ -87,9 +87,6 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
                 "bpe": None,
                 "is_pareto": None,
                 "context": 262144,
-                "requests_per_5h": "unlimited",
-                "requests_per_month": "unlimited",
-                "burn_basis_used": "estimate",
             },
         },
     }
@@ -119,6 +116,7 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     assert "Paid training**: blocked" in md
     assert "Free training**: allowed" in md
     assert "Pareto mode" in md
+    assert "estimated requests: 440 / 5h, 2,120 / month" in md
     assert "#### Visual Tier Summary" in md
     assert "```mermaid\nflowchart LR" in md
     assert 'title "Tier Comparison: Benchmark Scores vs Quota Burn %"' in md
