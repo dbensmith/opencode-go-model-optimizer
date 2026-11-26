@@ -153,6 +153,10 @@ def test_cli_select_json(tmp_path, capsys):
     assert data["tiers"]["balanced"] == "opencode-go/beta-pro"
     assert data["tiers"]["light"] == "opencode-go/beta-flash"
     assert data["tiers"]["free"] == "opencode-go/epsilon-free"
+    assert data["names"]["heavy"] == "Alpha Max"
+    assert data["names"]["balanced"] == "Beta Pro"
+    assert data["names"]["light"] == "Beta Flash 1101"
+    assert data["names"]["free"] == "Epsilon Free"
     assert data["mode"] == "allowance"
 
 
@@ -162,8 +166,10 @@ def test_cli_select_table(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     assert "Tier" in captured.out
+    assert "Model Name" in captured.out
     assert "heavy" in captured.out
     assert "opencode-go/alpha-max" in captured.out
+    assert "Alpha Max" in captured.out
 
 
 def test_cli_select_env_and_github_output(tmp_path, capsys):
@@ -175,6 +181,8 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
     env_out = capsys.readouterr().out
     assert 'OPENCODE_MODEL_HEAVY="opencode-go/alpha-max"' in env_out
     assert 'OPENCODE_MODEL_FREE="opencode-go/epsilon-free"' in env_out
+    assert 'OPENCODE_MODEL_HEAVY_NAME="Alpha Max"' in env_out
+    assert 'OPENCODE_MODEL_FREE_NAME="Epsilon Free"' in env_out
 
     # --format github-output
     rc = main(["select", "--format", "github-output", "--snapshot", str(snap_path)])
@@ -182,6 +190,8 @@ def test_cli_select_env_and_github_output(tmp_path, capsys):
     gh_out = capsys.readouterr().out
     assert "heavy=opencode-go/alpha-max" in gh_out
     assert "free=opencode-go/epsilon-free" in gh_out
+    assert "heavy_name=Alpha Max" in gh_out
+    assert "free_name=Epsilon Free" in gh_out
 
 
 def test_cli_select_filters_and_overrides(tmp_path, capsys):
@@ -206,6 +216,7 @@ def test_cli_select_filters_and_overrides(tmp_path, capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["tiers"]["heavy"] == "opencode-go/gamma-flash"
+    assert data["names"]["heavy"] == "Gamma-Flash"
     assert data["tiers"]["free"] == "opencode-go/epsilon-free"
 
 
@@ -299,9 +310,10 @@ def test_cli_select_compact(tmp_path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     lines = captured.out.strip().splitlines()
-    assert "heavy opencode-go/alpha-max" in lines
-    assert "balanced opencode-go/beta-pro" in lines
-    assert "light opencode-go/beta-flash" in lines
+    assert "heavy opencode-go/alpha-max Alpha Max" in lines
+    assert "balanced opencode-go/beta-pro Beta Pro" in lines
+    assert "light opencode-go/beta-flash Beta Flash 1101" in lines
+    assert "free opencode-go/epsilon-free Epsilon Free" in lines
 
 
 def test_cli_select_profile_and_explain(tmp_path, capsys):
@@ -325,6 +337,8 @@ def test_cli_select_profile_and_explain(tmp_path, capsys):
     assert data["profile"] == "reasoning"
     assert "explanations" in data
     assert "heavy" in data["explanations"]
+    assert data["explanations"]["heavy"]["model_id"] == "opencode-go/alpha-max"
+    assert data["explanations"]["heavy"]["name"] == "Alpha Max"
     assert "turn_cost_usd" in data["explanations"]["heavy"]
 
     # --explain with table format
@@ -340,6 +354,8 @@ def test_cli_select_profile_and_explain(tmp_path, capsys):
     )
     assert rc == 0
     tbl_out = capsys.readouterr().out
+    assert "Model Name" in tbl_out
+    assert "Alpha Max" in tbl_out
     assert "IQ" in tbl_out
     assert "Turn Cost" in tbl_out
     assert "Burn %" in tbl_out
@@ -1238,7 +1254,7 @@ def test_select_json_snapshot_provenance(tmp_path, capsys):
     snap_path = create_temp_snapshot(tmp_path)
     assert main(["select", "--snapshot", str(snap_path), "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert list(data)[:5] == ["plan", "tiers", "evaluated_at", "mode", "snapshot"]
+    assert list(data)[:6] == ["plan", "tiers", "names", "evaluated_at", "mode", "snapshot"]
     assert data["snapshot"]["source"] == "file"
     assert data["snapshot"]["fetched_at"] == load_snapshot(snap_path).fetched_at
 

@@ -11,6 +11,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_github_output,
     format_select_json,
     format_select_table,
+    tier_display_names,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "format_select_github_output",
     "format_select_json",
     "format_select_table",
+    "tier_display_names",
 ]
