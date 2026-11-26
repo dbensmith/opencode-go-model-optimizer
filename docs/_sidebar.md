@@ -1,8 +1,16 @@
 - [Latest Optimizer Selections](README.md)
 - [Live Pareto Analysis & Plans](analysis.md)
+- [All Data & Other Choices](data.md)
 - [Documentation & CLI Usage](usage.md)
-- **Artifacts & Links**
+- **Other Choices (JSON)**
+  - [Go top-3 choices](plans/go.json ':ignore')
+  - [Go Plus top-3 choices](plans/go-plus.json ':ignore')
+  - [Go Teams top-3 choices](plans/go-teams.json ':ignore')
+  - [Free-tier matrix](free-matrix.json ':ignore')
+- **Raw Artifacts**
   - [Raw Selection JSON](select.json ':ignore')
   - [Raw Rank JSON](rank.json ':ignore')
+  - [Normalized Snapshot](snapshot.json ':ignore')
+  - [Full Output](full-output.txt ':ignore')
   - [GitHub Issue]({{ISSUES_URL}})
   - [GitHub Repository]({{REPO_URL}})

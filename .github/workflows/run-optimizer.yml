@@ -100,6 +100,25 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
 
+      # Resolves the Pages site URL up front so the issue can link the published
+      # dataset (rank.json, select.json, per-plan selections, analysis) in the
+      # same run that renders it.
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Fetch snapshot for this run
+        env:
+          OPTIMIZER_PLAN: ${{ inputs.plan || 'go' }}
+          UV_NO_SYNC: "1"
+        run: |
+          mkdir -p out
+          if ! uv run opencode-go-model-optimizer fetch --plan "$OPTIMIZER_PLAN" \
+            --out out/snapshot.json 2> out/fetch.log; then
+            cat out/fetch.log >&2
+            exit 1
+          fi
+
       - name: Run optimizer
         env:
           OPTIMIZER_MODE: ${{ inputs.mode || 'pareto' }}
@@ -108,28 +127,30 @@ jobs:
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GH_REPO: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
           mkdir -p out
-          # Run JSON first with --cache-ttl so the subsequent table run shares the exact snapshot.
-          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 --format json \
+          # Every command reads the same snapshot so the published artifacts are consistent.
+          snapshot_args=(--snapshot out/snapshot.json)
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" --cache-ttl 300 --format json \
             --allow-global-region --allow-free-training > out/select.json 2> out/script.log; then
             cat out/script.log >&2
             exit 1
           fi
-          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" --cache-ttl 300 \
+          if ! scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" --cache-ttl 300 \
             --allow-global-region --allow-free-training > out/table.txt 2> out/table.err; then
             cat out/table.err >&2
             exit 1
           fi
           cp out/table.txt out/full_output.txt
-          if [[ -s out/script.log || -s out/table.err ]]; then
+          if [[ -s out/fetch.log || -s out/script.log || -s out/table.err ]]; then
             printf '\n--- stderr ---\n' >> out/full_output.txt
-            cat out/script.log out/table.err >> out/full_output.txt
+            cat out/fetch.log out/script.log out/table.err >> out/full_output.txt
           fi
           mkdir -p out/plans
-          uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode "$OPTIMIZER_MODE" --cache-ttl 300 --format json --allow-global-region --allow-free-training > out/rank.json
+          uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode "$OPTIMIZER_MODE" "${snapshot_args[@]}" --cache-ttl 300 --format json --allow-global-region --allow-free-training > out/rank.json
           for p in go go-plus go-teams; do
-            uv run opencode-go-model-optimizer select --plan "$p" --mode "$OPTIMIZER_MODE" --cache-ttl 300 --top-n 3 --format json --explain --allow-global-region --allow-free-training > "out/plans/${p}.json"
+            uv run opencode-go-model-optimizer select --plan "$p" --mode "$OPTIMIZER_MODE" "${snapshot_args[@]}" --cache-ttl 300 --top-n 3 --format json --explain --allow-global-region --allow-free-training > "out/plans/${p}.json"
           done
 
           python3 - << 'EOF'
@@ -143,7 +164,7 @@ jobs:
               {"label": "Allow both (CI setting)", "flags": "--allow-global-region --allow-free-training", "model_id": ""}
           ]
           for row in matrix:
-              cmd = ["uv", "run", "opencode-go-model-optimizer", "select", "--plan", plan, "--mode", mode, "--cache-ttl", "300", "--format", "json"] + row["flags"].split()
+              cmd = ["uv", "run", "opencode-go-model-optimizer", "select", "--plan", plan, "--mode", mode, "--snapshot", "out/snapshot.json", "--cache-ttl", "300", "--format", "json"] + row["flags"].split()
               cmd = [c for c in cmd if c]
               res = subprocess.run(cmd, capture_output=True, text=True)
               if res.returncode != 0:
@@ -163,6 +184,7 @@ jobs:
             --json out/select.json \
             --script-output out/full_output.txt \
             --run-url "$run_url" \
+            --site-url "$SITE_URL" \
             --output out/issue.md \
             --rank-json out/rank.json \
             --plan-json go=out/plans/go.json \
@@ -170,7 +192,8 @@ jobs:
             --plan-json go-teams=out/plans/go-teams.json \
             --free-matrix-json out/free-matrix.json \
             --charts-dir out/charts \
-            --analysis-output out/analysis.md
+            --analysis-output out/analysis.md \
+            --data-output out/data.md
 
           cat out/issue.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -178,9 +201,16 @@ jobs:
           cp -a docs/. out/site/
           cp out/issue.md out/site/README.md
           cp out/analysis.md out/site/analysis.md
+          cp out/data.md out/site/data.md
           cp README.md out/site/usage.md
           cp out/select.json out/site/select.json
           cp out/rank.json out/site/rank.json
+          cp out/snapshot.json out/site/snapshot.json
+          cp out/free-matrix.json out/site/free-matrix.json
+          cp out/full_output.txt out/site/full-output.txt
+          cp out/table.txt out/site/table.txt
+          cp out/fetch.log out/site/fetch-log.txt
+          cp -a out/plans out/site/plans
           cp -a out/charts out/site/charts
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
@@ -188,7 +218,16 @@ jobs:
           sed -i \
             -e "s|{{REPO_URL}}|${repo_url}|g" \
             -e "s|{{ISSUES_URL}}|${issues_url}|g" \
-            out/site/index.html out/site/_sidebar.md
+            out/site/index.html out/site/_sidebar.md out/site/data.md
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: out/site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
 
       - name: Create or update GitHub issue
         env:
@@ -224,15 +263,3 @@ jobs:
               --label "$ISSUE_LABEL" \
               --body-file out/issue.md
           fi
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v6
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: out/site
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5

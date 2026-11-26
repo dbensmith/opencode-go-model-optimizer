@@ -12,6 +12,8 @@ def test_docsify_files_exist() -> None:
     assert (docs_dir / ".nojekyll").is_file()
     assert (docs_dir / "_sidebar.md").is_file()
     assert (docs_dir / "README.md").is_file()
+    assert (docs_dir / "analysis.md").is_file()
+    assert (docs_dir / "data.md").is_file()
     assert (docs_dir / "index.html").is_file()
 
     index_content = (docs_dir / "index.html").read_text(encoding="utf-8")
@@ -180,6 +182,27 @@ def test_workflow_has_pages_and_pr_comment() -> None:
 
     assert "Configure GitHub Pages" in workflow_text
     assert "Upload Pages artifact" in workflow_text
+
+    # The issue links the published Pages dataset: configure-pages must run
+    # before the optimizer step so its base_url output can be rendered in,
+    # and the whole dataset (per-plan selections, free matrix) ships to the site.
+    assert "id: pages" in workflow_text
+    assert "SITE_URL: ${{ steps.pages.outputs.base_url }}" in workflow_text
+    assert "--site-url" in workflow_text
+    assert "--data-output out/data.md" in workflow_text
+    assert "uv run opencode-go-model-optimizer fetch" in workflow_text
+    assert "out/snapshot.json" in workflow_text
+    assert "out/site/snapshot.json" in workflow_text
+    assert "cp -a out/plans out/site/plans" in workflow_text
+    assert "cp out/free-matrix.json out/site/free-matrix.json" in workflow_text
+    assert "out/site/full-output.txt" in workflow_text
+    assert "out/site/table.txt" in workflow_text
+    assert "out/site/fetch-log.txt" in workflow_text
+    assert "out/site/data.md" in workflow_text
+    assert workflow_text.index("Configure GitHub Pages") < workflow_text.index("Run optimizer")
+    assert workflow_text.index("Deploy to GitHub Pages") < workflow_text.index(
+        "Create or update GitHub issue"
+    )
     assert "Deploy to GitHub Pages" in workflow_text
 
     assert "actions/configure-pages@v6" in workflow_text
@@ -212,7 +235,11 @@ def test_docsify_analysis_page_and_sidebar() -> None:
     assert sidebar_md.is_file()
     sidebar_text = sidebar_md.read_text(encoding="utf-8")
     assert "analysis.md" in sidebar_text
+    assert "data.md" in sidebar_text
     assert "rank.json" in sidebar_text
+    assert "snapshot.json" in sidebar_text
+    assert "plans/go.json" in sidebar_text
+    assert "free-matrix.json" in sidebar_text
 
 
 def test_readme_clean_hardcoded_examples() -> None:
