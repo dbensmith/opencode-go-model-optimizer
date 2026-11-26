@@ -3,7 +3,9 @@ name: Run Optimizer
 # Runs the OpenCode Go model optimizer every 8 hours starting at 02:00 ET (07:00, 15:00,
 # 23:00 UTC in EST / UTC-5) and on demand, retrieves AA_API_KEY from 1Password via a
 # service account token, creates or updates the tracking GitHub issue labeled
-# `optimizer-results`, AND publishes the Docsify site to GitHub Pages on the same schedule.
+# `optimizer-results` and uploads the rendered Docsify site as a `docs-site` artifact.
+# Publishing that artifact to GitHub Pages is handled by the separate `publish-pages.yml`
+# workflow, which triggers whenever this workflow completes successfully on main.
 # Also runs tests on pushes to main. Pull request checks live in pr-ci.yml; this
 # workflow never runs on a PR.
 #
@@ -59,17 +61,16 @@ jobs:
 
   optimize:
     needs: test
-    name: Run Optimizer, Update Issue & Publish Pages
+    name: Run Optimizer & Update Issue
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       issues: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      # configure-pages only reads Pages metadata to resolve the site URL for
+      # the issue's dataset links; the deployment itself lives in
+      # publish-pages.yml, which holds pages: write and id-token: write.
+      pages: read
 
     steps:
       - uses: actions/checkout@v7
@@ -223,14 +224,16 @@ jobs:
             -e "s|{{ISSUES_URL}}|${issues_url}|g" \
             out/site/index.html out/site/_sidebar.md out/site/data.md
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+      # The site is published by publish-pages.yml from this artifact; splitting
+      # the build upload from the deploy keeps the same-job upload→deploy race
+      # (deploy-pages querying the artifact API ~300 ms after upload finalized,
+      # run 45897155638) out of this workflow entirely.
+      - name: Upload Docsify site artifact
+        uses: actions/upload-artifact@v7
         with:
+          name: docs-site
           path: out/site
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          retention-days: 1
 
       - name: Create or update GitHub issue
         env:
