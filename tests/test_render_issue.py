@@ -224,6 +224,18 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
         < md_with_script.index("### Full Script Output")
     )
 
+    # a published site URL adds the dataset reference line to the issue header
+    md_site = _MOD.render_issue_markdown(
+        payload, rank_models=rank_models, site_url="https://example.github.io/repo/"
+    )
+    assert (
+        "- **Full dataset & analysis**: [GitHub Pages](https://example.github.io/repo) — "
+        "[analysis & charts](https://example.github.io/repo/analysis.md), "
+        "raw [rank.json](https://example.github.io/repo/rank.json) "
+        "and [select.json](https://example.github.io/repo/select.json)" in md_site
+    )
+    assert "Full dataset & analysis" not in md  # no site URL passed
+
 
 def test_render_allowance_issue_markdown_visuals() -> None:
     payload = {

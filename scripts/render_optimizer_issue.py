@@ -332,6 +332,7 @@ def render_issue_markdown(
     script_output: str = "",
     run_url: str | None = None,
     rank_models: list[dict[str, Any]] | None = None,
+    site_url: str | None = None,
 ) -> str:
     """Render optimizer JSON payload, optional full ranked catalog and full script output."""
     plan = payload.get("plan", "go")
@@ -357,6 +358,13 @@ def render_issue_markdown(
     ]
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
+    if site_url:
+        base = site_url.rstrip("/")
+        lines.append(
+            f"- **Full dataset & analysis**: [GitHub Pages]({base}) — "
+            f"[analysis & charts]({base}/analysis.md), raw [rank.json]({base}/rank.json) "
+            f"and [select.json]({base}/select.json)"
+        )
 
     lines.extend(_format_settings_lines(payload, mode))
 
@@ -1616,6 +1624,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--free-matrix-json", default=None, help="Optional path to free matrix JSON list file"
     )
     parser.add_argument(
+        "--site-url",
+        default=None,
+        help="Optional published GitHub Pages site URL (full dataset location)",
+    )
+    parser.add_argument(
         "-o", "--output", default=None, help="Output markdown path (default: stdout)"
     )
     parser.add_argument(
@@ -1663,6 +1676,7 @@ def main(argv: list[str] | None = None) -> int:
             script_output=script_output,
             run_url=args.run_url or None,
             rank_models=_load_rank_models(args.rank_json),
+            site_url=args.site_url or None,
         )
     else:
         sys.stderr.write(

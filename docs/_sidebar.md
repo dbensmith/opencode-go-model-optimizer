@@ -4,5 +4,7 @@
 - **Artifacts & Links**
   - [Raw Selection JSON](select.json ':ignore')
   - [Raw Rank JSON](rank.json ':ignore')
+  - [Per-Plan Selections](plans/go.json ':ignore') ([go-plus](plans/go-plus.json ':ignore'), [go-teams](plans/go-teams.json ':ignore'))
+  - [Free-Tier Selection Matrix](free-matrix.json ':ignore')
   - [GitHub Issue]({{ISSUES_URL}})
   - [GitHub Repository]({{REPO_URL}})

@@ -180,6 +180,16 @@ def test_workflow_has_pages_and_pr_comment() -> None:
 
     assert "Configure GitHub Pages" in workflow_text
     assert "Upload Pages artifact" in workflow_text
+
+    # The issue links the published Pages dataset: configure-pages must run
+    # before the optimizer step so its base_url output can be rendered in,
+    # and the whole dataset (per-plan selections, free matrix) ships to the site.
+    assert "id: pages" in workflow_text
+    assert "SITE_URL: ${{ steps.pages.outputs.base_url }}" in workflow_text
+    assert "--site-url" in workflow_text
+    assert "cp -a out/plans out/site/plans" in workflow_text
+    assert "cp out/free-matrix.json out/site/free-matrix.json" in workflow_text
+    assert workflow_text.index("Configure GitHub Pages") < workflow_text.index("Run optimizer")
     assert "Deploy to GitHub Pages" in workflow_text
 
     assert "actions/configure-pages@v6" in workflow_text

@@ -100,6 +100,13 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
 
+      # Resolves the Pages site URL up front so the issue can link the published
+      # dataset (rank.json, select.json, per-plan selections, analysis) in the
+      # same run that renders it.
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
       - name: Run optimizer
         env:
           OPTIMIZER_MODE: ${{ inputs.mode || 'pareto' }}
@@ -108,6 +115,7 @@ jobs:
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GH_REPO: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
           mkdir -p out
           # Run JSON first with --cache-ttl so the subsequent table run shares the exact snapshot.
@@ -163,6 +171,7 @@ jobs:
             --json out/select.json \
             --script-output out/full_output.txt \
             --run-url "$run_url" \
+            --site-url "$SITE_URL" \
             --output out/issue.md \
             --rank-json out/rank.json \
             --plan-json go=out/plans/go.json \
@@ -181,6 +190,8 @@ jobs:
           cp README.md out/site/usage.md
           cp out/select.json out/site/select.json
           cp out/rank.json out/site/rank.json
+          cp -a out/plans out/site/plans
+          cp out/free-matrix.json out/site/free-matrix.json
           cp -a out/charts out/site/charts
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
@@ -224,9 +235,6 @@ jobs:
               --label "$ISSUE_LABEL" \
               --body-file out/issue.md
           fi
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
