@@ -30,6 +30,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_json,
     format_select_table,
     settings_payload,
+    tier_display_names,
 )
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
@@ -592,6 +593,7 @@ def handle_select(args: argparse.Namespace) -> int:
 
     tiers = selection.primary
     fallbacks = selection.candidates if criteria.top_n > 1 else None
+    names = tier_display_names(tiers, selection.models)
 
     if args.format == "json":
         explanations = explain_tiers(tiers, selection.models, criteria) if explain else None
@@ -602,6 +604,7 @@ def handle_select(args: argparse.Namespace) -> int:
             explanations=explanations,
             profile=profile,
             fallbacks=fallbacks,
+            names=names,
             snapshot_info={
                 "source": loaded.source,
                 "fetched_at": snap.fetched_at,
@@ -614,11 +617,11 @@ def handle_select(args: argparse.Namespace) -> int:
             tiers, selection.models, plan=plan, explain=explain, criteria=criteria
         )
     elif args.format == "env":
-        out = format_select_env(tiers, fallbacks=fallbacks)
+        out = format_select_env(tiers, fallbacks=fallbacks, names=names)
     elif args.format == "github-output":
-        out = format_select_github_output(tiers, fallbacks=fallbacks)
+        out = format_select_github_output(tiers, fallbacks=fallbacks, names=names)
     else:
-        out = format_select_compact(tiers)
+        out = format_select_compact(tiers, names=names)
 
     _write_output(out, args.output)
     empty = [t for t in _TIERS if not tiers.get(t)]

@@ -17,6 +17,7 @@ from opencode_go_model_optimizer.formatters.output import (
     format_select_github_output,
     format_select_json,
     format_select_table,
+    tier_display_names,
 )
 from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
 
@@ -31,6 +32,14 @@ def test_format_select_json():
     assert data["mode"] == "pareto"
     assert data["evaluated_at"] == "2026-11-10T00:00:00Z"
     assert data["tiers"] == tiers
+    assert "names" not in data
+
+    # Display names mirror tiers when given
+    names = {"heavy": "Alpha", "free": "Delta Free"}
+    res_names = format_select_json(tiers, mode="pareto", names=names)
+    data_names = json.loads(res_names)
+    assert data_names["names"] == names
+    assert list(data_names)[:3] == ["plan", "tiers", "names"]
 
     # Default evaluated_at
     res2 = format_select_json(tiers, mode="allowance")
@@ -50,6 +59,27 @@ def test_format_select_json():
     assert data3["explanations"] == expl
 
 
+def test_tier_display_names():
+    named = NormalizedModel(
+        id="alpha", provider_id="opencode-go", name="Alpha Max", status="active"
+    )
+    unnamed = NormalizedModel(id="beta", provider_id="opencode-go")
+    models = [named, unnamed]
+
+    tiers = {
+        "heavy": "opencode-go/alpha",
+        "balanced": "opencode-go/beta",
+        "light": "opencode-go/missing",
+        "free": "",
+    }
+    assert tier_display_names(tiers, models) == {
+        "heavy": "Alpha Max",
+        "balanced": "",
+        "light": "",
+        "free": "",
+    }
+
+
 def test_format_select_compact():
     tiers = {"heavy": "opencode-go/alpha", "balanced": "", "free": "opencode-go/delta"}
     compact = format_select_compact(tiers)
@@ -57,6 +87,16 @@ def test_format_select_compact():
     assert len(lines) == 2
     assert "heavy opencode-go/alpha" in lines
     assert "free opencode-go/delta" in lines
+
+    # Display names are appended alongside the model IDs
+    named = format_select_compact(tiers, names={"heavy": "Alpha Max", "free": "Delta"})
+    named_lines = named.splitlines()
+    assert "heavy opencode-go/alpha Alpha Max" in named_lines
+    assert "free opencode-go/delta Delta" in named_lines
+
+    # A tier without a name keeps its two-field line
+    partial = format_select_compact(tiers, names={"heavy": "Alpha Max"})
+    assert "free opencode-go/delta" in partial.splitlines()
 
 
 def test_format_select_env():
@@ -71,6 +111,12 @@ def test_format_select_env():
     assert 'OPENCODE_MODEL_BALANCED="opencode-go/beta-flash"' in env_str
     assert 'OPENCODE_MODEL_LIGHT="opencode-go/eta-flash"' in env_str
     assert 'OPENCODE_MODEL_FREE="opencode-go/theta-flash"' in env_str
+
+    # Display names are exposed as <TIER>_NAME variables alongside the IDs
+    named_env = format_select_env(tiers, names={"heavy": "Zeta Pro", "free": "Theta Flash"})
+    assert 'OPENCODE_MODEL_HEAVY_NAME="Zeta Pro"' in named_env
+    assert 'OPENCODE_MODEL_FREE_NAME="Theta Flash"' in named_env
+    assert 'OPENCODE_MODEL_BALANCED_NAME=""' in named_env
 
     # Missing tier defaults to empty string
     partial = {"heavy": "opencode-go/zeta"}
@@ -93,6 +139,12 @@ def test_format_select_github_output():
     assert "balanced=opencode-go/beta-flash" in gh_str
     assert "light=opencode-go/eta-flash" in gh_str
     assert "free=opencode-go/theta-flash" in gh_str
+
+    # Display names are exposed as <tier>_name outputs alongside the IDs
+    named_gh = format_select_github_output(tiers, names={"heavy": "Zeta Pro", "free": "Theta"})
+    assert "heavy_name=Zeta Pro" in named_gh
+    assert "free_name=Theta" in named_gh
+    assert "balanced_name=" in named_gh
 
     # Missing tier defaults to empty string
     partial = {"heavy": "opencode-go/zeta"}
@@ -122,23 +174,27 @@ def test_formatters_with_fallbacks():
     data = json.loads(res_json)
     assert data["fallbacks"] == fallbacks
 
-    # Env format with fallbacks
-    res_env = format_select_env(tiers, fallbacks=fallbacks)
+    # Env format with fallbacks and display names
+    names = {t: f"{t.title()} Model" for t in tiers}
+    res_env = format_select_env(tiers, fallbacks=fallbacks, names=names)
     assert 'OPENCODE_MODEL_HEAVY="opencode-go/mod-h1"' in res_env
     assert 'OPENCODE_MODEL_HEAVY_FALLBACKS="opencode-go/mod-h1,opencode-go/mod-h2"' in res_env
     assert 'OPENCODE_MODEL_FREE_FALLBACKS="opencode-go/mod-f1,opencode-go/mod-f2"' in res_env
+    assert 'OPENCODE_MODEL_HEAVY_NAME="Heavy Model"' in res_env
 
-    # GitHub Actions output with fallbacks
-    res_gh = format_select_github_output(tiers, fallbacks=fallbacks)
+    # GitHub Actions output with fallbacks and display names
+    res_gh = format_select_github_output(tiers, fallbacks=fallbacks, names=names)
     assert "heavy=opencode-go/mod-h1" in res_gh
     assert "heavy_fallbacks=opencode-go/mod-h1,opencode-go/mod-h2" in res_gh
     assert "free_fallbacks=opencode-go/mod-f1,opencode-go/mod-f2" in res_gh
+    assert "heavy_name=Heavy Model" in res_gh
 
 
 def test_format_select_table_with_missing_and_varied_models():
     m1 = NormalizedModel(
         id="model-inf",
         provider_id="opencode-go",
+        name="Model Inf",
         monthly_allowance=float("inf"),
         is_zero_cost=True,
         limit=ModelLimit(context=1000000),
@@ -146,6 +202,7 @@ def test_format_select_table_with_missing_and_varied_models():
     m2 = NormalizedModel(
         id="model-dollar",
         provider_id="opencode-go",
+        name="Model Dollar",
         monthly_allowance=60.0,
         cost=TokenCost(output=0.50),
         limit=ModelLimit(context=0),
@@ -167,6 +224,9 @@ def test_format_select_table_with_missing_and_varied_models():
     }
     table = format_select_table(tiers, models, plan="go")
     assert "Allowance (go)" in table
+    assert "Model Name" in table
+    assert "Model Dollar" in table
+    assert "Model Inf" in table
     assert "Unlimited" in table
     assert "$60.00" in table
     assert "Free" in table
@@ -279,6 +339,7 @@ def test_explain_tiers_and_table():
     m1 = NormalizedModel(
         id="mod-1",
         provider_id="opencode-go",
+        name="Mod One",
         monthly_allowance=60.0,
         cost=TokenCost(input=1.0, output=2.0, cache_read=0.1),
         limit=ModelLimit(context=200000),
@@ -306,6 +367,7 @@ def test_explain_tiers_and_table():
     expl = explain_tiers(tiers, models, SelectionCriteria(profile="coding"))
     assert "heavy" in expl
     assert expl["heavy"]["model_id"] == "opencode-go/mod-1"
+    assert expl["heavy"]["name"] == "Mod One"
     assert expl["heavy"]["monthly_allowance"] == 60.0
     assert expl["heavy"]["output_cost_per_1m"] == 2.0
     assert expl["heavy"]["turn_cost_usd"] > 0.0
@@ -319,11 +381,14 @@ def test_explain_tiers_and_table():
 
     assert expl["free"]["monthly_allowance"] == "unlimited"
     assert expl["light"]["model_id"] == "opencode-go/mod-missing"
+    assert expl["light"]["name"] == ""
 
     # Test format_select_table with explain=True
     tbl_explain = format_select_table(
         tiers, models, plan="go", explain=True, criteria=SelectionCriteria(profile="coding")
     )
+    assert "Model Name" in tbl_explain
+    assert "Mod One" in tbl_explain
     assert "IQ" in tbl_explain
     assert "BPE" in tbl_explain
     assert "Burn %" in tbl_explain

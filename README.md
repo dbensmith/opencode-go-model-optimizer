@@ -267,6 +267,12 @@ uvx opencode-go-model-optimizer select --format json
       "light": "opencode-go/model-c",
       "free": "opencode-go/model-d"
     },
+    "names": {
+      "heavy": "Model A",
+      "balanced": "Model B",
+      "light": "Model C",
+      "free": "Model D"
+    },
     "evaluated_at": "2026-11-11T02:47:40+00:00",
     "mode": "allowance",
     "snapshot": {
@@ -276,6 +282,11 @@ uvx opencode-go-model-optimizer select --format json
     }
   }
   ```
+  Every `select` format pairs each pick's model ID with its catalogue display name:
+  `names` mirrors `tiers` in JSON, the table adds a **Model Name** column, `compact`
+  lines append the display name (`<tier> <model_id> <display name>`), `env` adds
+  `OPENCODE_MODEL_<TIER>_NAME`, and `github-output` adds `<tier>_name`. Picks with no
+  catalogue name (or empty tiers) get an empty string / `-`.
   The `snapshot` block (JSON only) records provenance: `source` is `file` (`--snapshot`),
   `cache`, `live`, or `stale-cache` (your local cache, used after a live fetch failure).
   `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
@@ -390,6 +401,7 @@ Load the tier assignments into the current shell:
 ```bash
 eval "$(opencode-go-model-optimizer select --format env)"
 echo "$OPENCODE_MODEL_HEAVY"
+echo "$OPENCODE_MODEL_HEAVY_NAME"
 ```
 
 In GitHub Actions, append the outputs to `$GITHUB_OUTPUT` and reference them by step id:
@@ -400,7 +412,7 @@ In GitHub Actions, append the outputs to `$GITHUB_OUTPUT` and reference them by 
   run: opencode-go-model-optimizer select --format github-output >> "$GITHUB_OUTPUT"
 
 - name: Show balanced tier
-  run: echo "Balanced: ${{ steps.models.outputs.balanced }}"
+  run: echo "Balanced: ${{ steps.models.outputs.balanced }} (${{ steps.models.outputs.balanced_name }})"
 ```
 
 Add `--strict` to fail the job (exit `3`) if any tier comes back empty.
@@ -447,14 +459,14 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (default: 0, or `OPENCODE_GO_CACHE_TTL`).
 - **`--prefer <tier>=<model_id>`** *(`select` only)*: Pin a model to a tier (e.g. `--prefer heavy=model-a`).
 - **`--top-n <count>`** *(`select` only)*: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.
-- **`--explain`** *(`select` only)*: Include detailed per-tier metrics (`turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) and selection rationale in table and JSON output.
+- **`--explain`** *(`select` only)*: Include detailed per-tier metrics (`model_id`, `name`, `turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) and selection rationale in table and JSON output.
 - **`--strict`** *(`select` only)*: Still writes output, but exits `3` with an stderr error when any tier is empty.
-- **`--format`**: Output format. `select` accepts `{json,table,compact,env,github-output}` (default: `json`); `rank` accepts `{table,json}` (default: `table`).
-  - `json`: Structured JSON schema.
-  - `table`: Formatted ASCII table (with extra metric columns when `--explain` is enabled).
-  - `compact`: Clean space-delimited `<tier> <model_id>` lines.
-  - `env`: Shell environment variable assignments (`OPENCODE_MODEL_HEAVY="..."`, etc.).
-  - `github-output`: GitHub Actions `$GITHUB_OUTPUT` key=value lines (`heavy=...`, etc.).
+- **`--format`**: Output format. `select` accepts `{json,table,compact,env,github-output}` (default: `json`); `rank` accepts `{table,json}` (default: `table`). Every `select` format outputs the display name of each tier's pick alongside its model ID.
+  - `json`: Structured JSON schema; `names` maps each tier to its pick's display name.
+  - `table`: Formatted ASCII table with a Model Name column (with extra metric columns when `--explain` is enabled).
+  - `compact`: Clean space-delimited `<tier> <model_id> <display name>` lines (the name is omitted when the pick has none).
+  - `env`: Shell environment variable assignments (`OPENCODE_MODEL_HEAVY="..."`, etc., plus `OPENCODE_MODEL_HEAVY_NAME="..."`).
+  - `github-output`: GitHub Actions `$GITHUB_OUTPUT` key=value lines (`heavy=...`, etc., plus `heavy_name=...`).
 
 ### Exit Codes
 

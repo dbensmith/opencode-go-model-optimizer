@@ -57,15 +57,18 @@ def format_select_json(
     fallbacks: dict[str, list[str]] | None = None,
     snapshot_info: dict[str, Any] | None = None,
     settings: dict[str, Any] | None = None,
+    names: dict[str, str] | None = None,
 ) -> str:
-    """Format tier selection as standard JSON."""
+    """Format tier selection as standard JSON.
+
+    ``names`` mirrors ``tiers`` with each pick's display name and is omitted when None.
+    """
     ts = evaluated_at or datetime.now(UTC).isoformat(timespec="seconds")
-    payload: dict[str, Any] = {
-        "plan": plan,
-        "tiers": tiers,
-        "evaluated_at": ts,
-        "mode": mode,
-    }
+    payload: dict[str, Any] = {"plan": plan, "tiers": tiers}
+    if names is not None:
+        payload["names"] = {tier: names.get(tier, "") for tier in tiers}
+    payload["evaluated_at"] = ts
+    payload["mode"] = mode
     if snapshot_info is not None:
         payload["snapshot"] = snapshot_info
     if settings is not None:
@@ -110,6 +113,16 @@ def _model_map(models: list[NormalizedModel]) -> dict[str, NormalizedModel]:
     return mapping
 
 
+def tier_display_names(tiers: dict[str, str], models: list[NormalizedModel]) -> dict[str, str]:
+    """Display name of each tier's selected model (empty string when unknown or unnamed)."""
+    model_map = _model_map(models)
+    names: dict[str, str] = {}
+    for tier, full_id in tiers.items():
+        m = model_map.get(full_id) if full_id else None
+        names[tier] = m.name if m is not None else ""
+    return names
+
+
 def _fmt_allowance(m: NormalizedModel) -> str:
     if m.monthly_allowance is None:
         return "-"
@@ -149,6 +162,7 @@ def explain_tiers(
             )
             explanations[tier] = {
                 "model_id": full_id,
+                "name": m.name,
                 "monthly_allowance": allow_val,
                 "output_cost_per_1m": m.cost.output,
                 "turn_cost_usd": round(
@@ -179,22 +193,33 @@ def explain_tiers(
         else:
             explanations[tier] = {
                 "model_id": full_id or "None",
+                "name": "",
             }
     return explanations
 
 
-def format_select_compact(tiers: dict[str, str]) -> str:
-    """Format tier selection as compact space-delimited lines."""
-    lines = [f"{tier} {model_id}" for tier, model_id in tiers.items() if model_id]
+def format_select_compact(tiers: dict[str, str], names: dict[str, str] | None = None) -> str:
+    """Format tier selection as compact space-delimited lines with optional display names."""
+    lines: list[str] = []
+    for tier, model_id in tiers.items():
+        if not model_id:
+            continue
+        name = (names or {}).get(tier, "")
+        lines.append(f"{tier} {model_id} {name}" if name else f"{tier} {model_id}")
     return "\n".join(lines)
 
 
 def format_select_env(
     tiers: dict[str, str],
     fallbacks: dict[str, list[str]] | None = None,
+    names: dict[str, str] | None = None,
 ) -> str:
     """Format tier selection as shell environment variable assignments."""
     lines = [f'OPENCODE_MODEL_{tier.upper()}="{tiers.get(tier, "")}"' for tier in STANDARD_TIERS]
+    if names is not None:
+        lines.extend(
+            f'OPENCODE_MODEL_{tier.upper()}_NAME="{names.get(tier, "")}"' for tier in STANDARD_TIERS
+        )
     if fallbacks is not None:
         lines.extend(
             [
@@ -208,9 +233,12 @@ def format_select_env(
 def format_select_github_output(
     tiers: dict[str, str],
     fallbacks: dict[str, list[str]] | None = None,
+    names: dict[str, str] | None = None,
 ) -> str:
     """Format tier selection as GitHub Actions key=value output lines."""
     lines = [f"{tier}={tiers.get(tier, '')}" for tier in STANDARD_TIERS]
+    if names is not None:
+        lines.extend(f"{tier}_name={names.get(tier, '')}" for tier in STANDARD_TIERS)
     if fallbacks is not None:
         lines.extend(
             [f"{tier}_fallbacks={','.join(fallbacks.get(tier, []))}" for tier in STANDARD_TIERS]
@@ -242,6 +270,7 @@ def format_select_table(
         headers = [
             "Tier",
             "Model ID",
+            "Model Name",
             f"Allowance ({plan})",
             "Output Cost",
             "Context",
@@ -251,7 +280,14 @@ def format_select_table(
             "Turn Cost",
         ]
     else:
-        headers = ["Tier", "Model ID", f"Allowance ({plan})", "Output Cost", "Context"]
+        headers = [
+            "Tier",
+            "Model ID",
+            "Model Name",
+            f"Allowance ({plan})",
+            "Output Cost",
+            "Context",
+        ]
     show_mult = explain and any(
         (m := model_map.get(fid)) is not None and m.price_multiplier is not None
         for fid in tiers.values()
@@ -266,6 +302,7 @@ def format_select_table(
             allow_str = _fmt_allowance(m)
             cost_str = _fmt_output_cost(m)
             ctx_str = _fmt_context(m)
+            name_str = m.name or "-"
             if explain:
                 iq_str = f"{m.aa_iq:.1f}" if m.aa_iq is not None else "-"
                 bpe_str = f"{m.bpe:.3f}" if m.bpe is not None else "-"
@@ -280,6 +317,7 @@ def format_select_table(
                 row = [
                     tier,
                     full_id,
+                    name_str,
                     allow_str,
                     cost_str,
                     ctx_str,
@@ -292,15 +330,15 @@ def format_select_table(
                     row.append(_multiplier_cell(m, _next_change(m, criteria)))
                 rows.append(row)
             else:
-                rows.append([tier, full_id, allow_str, cost_str, ctx_str])
+                rows.append([tier, full_id, name_str, allow_str, cost_str, ctx_str])
         else:
             if explain:
                 rows.append(
-                    [tier, full_id or "None", "-", "-", "-", "-", "-", "-", "-"]
+                    [tier, full_id or "None", "-", "-", "-", "-", "-", "-", "-", "-"]
                     + (["-"] if show_mult else [])
                 )
             else:
-                rows.append([tier, full_id or "None", "-", "-", "-"])
+                rows.append([tier, full_id or "None", "-", "-", "-", "-"])
 
     return _render_table(headers, rows)
 
