@@ -53,6 +53,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+      # ci.yml declares this for its PR-comment step; reusable workflows fail at
+      # startup if the caller does not grant every permission they declare.
+      pull-requests: write
 
   optimize:
     needs: test

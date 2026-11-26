@@ -148,10 +148,13 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "schedule:" in workflow_text
     assert "pull_request:" not in workflow_text
     assert "if: github.event_name != 'pull_request'" not in workflow_text
-    assert "pull-requests: write" not in workflow_text
     assert "uses: ./.github/workflows/ci.yml" in pr_ci_text
     assert "uses: ./.github/workflows/ci.yml" in workflow_text
     assert "needs: test" in workflow_text
+    # Reusable workflows fail at startup when the caller does not grant every
+    # permission the called workflow declares. ci.yml declares this for its
+    # PR-comment step, which is skipped for push/schedule runs.
+    assert "pull-requests: write" in workflow_text
 
     # The optimizer also runs on PRs and its actual output is posted as a
     # PR comment, with graceful degradation when secrets are absent.
@@ -273,10 +276,11 @@ def test_composite_action_and_hardening() -> None:
         text = path.read_text(encoding="utf-8")
         assert "./.github/actions/setup-env" in text
 
-    # Verify least-privilege permissions in run-optimizer.yml
+    # Verify permissions in run-optimizer.yml. Its optimize job never runs on a PR,
+    # but its test job calls ci.yml, which declares pull-requests: write for the
+    # PR-comment step; reusable workflows fail at startup without that grant.
     optimizer_text = optimizer_path.read_text(encoding="utf-8")
-    # run-optimizer.yml never runs on a PR, so it needs no pull-requests: write
-    assert "pull-requests: write" not in optimizer_text
+    assert "pull-requests: write" in optimizer_text
     assert "issues: write" in optimizer_text
 
     pr_ci_text = (_ROOT / ".github" / "workflows" / "pr-ci.yml").read_text(encoding="utf-8")
