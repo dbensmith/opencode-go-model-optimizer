@@ -224,17 +224,70 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
         < md_with_script.index("### Full Script Output")
     )
 
-    # a published site URL adds the dataset reference line to the issue header
+    # a published site URL adds the Pages link and the artifact index to the issue
     md_site = _MOD.render_issue_markdown(
         payload, rank_models=rank_models, site_url="https://example.github.io/repo/"
     )
+    assert "- **GitHub Pages**: https://example.github.io/repo/" in md_site
+    assert "- **All data & other choices**: https://example.github.io/repo/#/data" in md_site
+    assert "### Other Choices & Published Data" in md_site
+    assert "[rank.json](https://example.github.io/repo/rank.json)" in md_site
+    assert "[select.json](https://example.github.io/repo/select.json)" in md_site
+    assert "[plans/go.json](https://example.github.io/repo/plans/go.json)" in md_site
+    assert "[plans/go-plus.json](https://example.github.io/repo/plans/go-plus.json)" in md_site
+    assert "[plans/go-teams.json](https://example.github.io/repo/plans/go-teams.json)" in md_site
+    assert "[free-matrix.json](https://example.github.io/repo/free-matrix.json)" in md_site
+    assert "[snapshot.json](https://example.github.io/repo/snapshot.json)" in md_site
+    assert "[full-output.txt](https://example.github.io/repo/full-output.txt)" in md_site
+    assert "[table.txt](https://example.github.io/repo/table.txt)" in md_site
+    assert "[fetch-log.txt](https://example.github.io/repo/fetch-log.txt)" in md_site
     assert (
-        "- **Full dataset & analysis**: [GitHub Pages](https://example.github.io/repo) — "
-        "[analysis & charts](https://example.github.io/repo/analysis.md), "
-        "raw [rank.json](https://example.github.io/repo/rank.json) "
-        "and [select.json](https://example.github.io/repo/select.json)" in md_site
+        "[pareto-frontier.svg](https://example.github.io/repo/charts/pareto-frontier.svg)"
+        in md_site
     )
-    assert "Full dataset & analysis" not in md  # no site URL passed
+    assert "Other Choices & Published Data" not in md  # no site URL passed
+
+
+def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
+    select_path = tmp_path / "select.json"
+    select_path.write_text(
+        json.dumps(
+            {
+                "plan": "go",
+                "mode": "pareto",
+                "evaluated_at": "2026-11-15T16:00:00+00:00",
+                "tiers": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "data.md"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--json",
+            str(select_path),
+            "--site-url",
+            "https://example.github.io/repo/",
+            "--data-output",
+            str(out_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    md = out_path.read_text(encoding="utf-8")
+    assert "All Data & Other Choices" in md
+    assert "https://example.github.io/repo/" in md
+    assert "plans/go.json" in md
+    assert "plans/go-plus.json" in md
+    assert "plans/go-teams.json" in md
+    assert "free-matrix.json" in md
+    assert "snapshot.json" in md
+    assert "full-output.txt" in md
+    assert "charts/pareto-frontier.svg" in md
 
 
 def test_render_allowance_issue_markdown_visuals() -> None:

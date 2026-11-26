@@ -87,6 +87,23 @@ def _fmt_privacy(privacy: dict[str, Any] | None) -> str:
     return "; ".join(parts)
 
 
+def _normalize_site_url(site_url: str | None) -> str | None:
+    """Return a GitHub Pages base URL with exactly one trailing slash, or None."""
+    if not site_url or not site_url.strip():
+        return None
+    return site_url.strip().rstrip("/") + "/"
+
+
+def _site_file(site_url: str, path: str) -> str:
+    """Absolute link to a published file under the GitHub Pages base URL."""
+    return f"{site_url}{path.lstrip('/')}"
+
+
+def _site_page(site_url: str, page: str) -> str:
+    """Docsify hash route for a rendered Markdown page on GitHub Pages."""
+    return f"{site_url}#/{page.lstrip('/')}"
+
+
 def _fence_for(text: str) -> str:
     """Return a backtick fence longer than any backtick run in text."""
     longest = 0
@@ -335,6 +352,7 @@ def render_issue_markdown(
     site_url: str | None = None,
 ) -> str:
     """Render optimizer JSON payload, optional full ranked catalog and full script output."""
+    site_base = _normalize_site_url(site_url)
     plan = payload.get("plan", "go")
     mode = payload.get("mode", "unknown")
     evaluated_at = payload.get("evaluated_at", "-")
@@ -358,13 +376,9 @@ def render_issue_markdown(
     ]
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
-    if site_url:
-        base = site_url.rstrip("/")
-        lines.append(
-            f"- **Full dataset & analysis**: [GitHub Pages]({base}) — "
-            f"[analysis & charts]({base}/analysis.md), raw [rank.json]({base}/rank.json) "
-            f"and [select.json]({base}/select.json)"
-        )
+    if site_base:
+        lines.append(f"- **GitHub Pages**: {site_base}")
+        lines.append(f"- **All data & other choices**: {_site_page(site_base, 'data')}")
 
     lines.extend(_format_settings_lines(payload, mode))
 
@@ -597,6 +611,48 @@ def render_issue_markdown(
         for m in rank_models:
             lines.append(_ranked_catalog_row(m))
         lines.extend(_catalog_composition_pie_lines(rank_models))
+
+    if site_base:
+        lines.extend(
+            [
+                "",
+                "### Other Choices & Published Data",
+                "",
+                "Every artifact from this run is published on the GitHub Pages site:",
+                "",
+                "| Artifact | Link |",
+                "| --- | --- |",
+                f"| Live analysis, Pareto frontier & multi-plan fallbacks "
+                f"| [Open page]({_site_page(site_base, 'analysis')}) |",
+                f"| Complete data index | [Open page]({_site_page(site_base, 'data')}) |",
+                f"| Full ranked catalog (all models) "
+                f"| [rank.json]({_site_file(site_base, 'rank.json')}) |",
+                f"| Raw selection payload "
+                f"| [select.json]({_site_file(site_base, 'select.json')}) |",
+                f"| `go` top-3 choices per tier "
+                f"| [plans/go.json]({_site_file(site_base, 'plans/go.json')}) |",
+                f"| `go-plus` top-3 choices per tier "
+                f"| [plans/go-plus.json]({_site_file(site_base, 'plans/go-plus.json')}) |",
+                f"| `go-teams` top-3 choices per tier "
+                f"| [plans/go-teams.json]({_site_file(site_base, 'plans/go-teams.json')}) |",
+                f"| Free-tier choices across privacy/region flags "
+                f"| [free-matrix.json]({_site_file(site_base, 'free-matrix.json')}) |",
+                f"| Normalized ingest snapshot from every source "
+                f"| [snapshot.json]({_site_file(site_base, 'snapshot.json')}) |",
+                f"| Full script output (stdout/stderr) "
+                f"| [full-output.txt]({_site_file(site_base, 'full-output.txt')}) |",
+                f"| Human-readable table output "
+                f"| [table.txt]({_site_file(site_base, 'table.txt')}) |",
+                f"| Ingest warnings & provenance log "
+                f"| [fetch-log.txt]({_site_file(site_base, 'fetch-log.txt')}) |",
+                f"| Pareto frontier chart "
+                f"| [pareto-frontier.svg]({_site_file(site_base, 'charts/pareto-frontier.svg')}) |",
+                f"| Catalog ranking chart "
+                f"| [catalog-ranking.svg]({_site_file(site_base, 'charts/catalog-ranking.svg')}) |",
+                f"| Multi-plan comparison chart "
+                f"| [multi-plan-comparison.svg]({_site_file(site_base, 'charts/multi-plan-comparison.svg')}) |",
+            ]
+        )
 
     cleaned_script = script_output.strip()
     if cleaned_script:
@@ -970,8 +1026,10 @@ def render_analysis_markdown(
     free_matrix: list[dict[str, Any]] | None = None,
     run_url: str | None = None,
     charts_dir: str | Path | None = None,
+    site_url: str | None = None,
 ) -> str:
     """Render comprehensive live Pareto analysis and catalog markdown (analysis.md)."""
+    site_base = _normalize_site_url(site_url)
     plan = select_payload.get("plan", "go")
     mode = select_payload.get("mode", "pareto")
     evaluated_at = select_payload.get("evaluated_at", "-")
@@ -988,6 +1046,8 @@ def render_analysis_markdown(
     ]
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
+    if site_base:
+        lines.append(f"- **All data & other choices**: {_site_page(site_base, 'data')}")
 
     lines.extend(_format_settings_lines(select_payload, mode))
 
@@ -1377,6 +1437,91 @@ def render_analysis_markdown(
     return "\n".join(lines) + "\n"
 
 
+def render_data_markdown(
+    site_url: str | None = None,
+    evaluated_at: str | None = None,
+    run_url: str | None = None,
+) -> str:
+    """Render the data index page linking every artifact published to GitHub Pages."""
+    site_base = _normalize_site_url(site_url)
+    lines = [
+        "# OpenCode Go Model Optimizer — All Data & Other Choices",
+        "",
+        "This page indexes every artifact published by the latest optimizer run. Use it to",
+        "inspect the models that were **not** selected, the fallback chains for each plan, and",
+        "the normalized data collected from every ingest source.",
+        "",
+    ]
+    if evaluated_at:
+        lines.append(f"- **Updated**: `{evaluated_at}`")
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+    if site_base:
+        lines.append(f"- **GitHub Pages**: {site_base}")
+    lines.extend(
+        [
+            "- **GitHub Issue**: {{ISSUES_URL}}",
+            "- **GitHub Repository**: {{REPO_URL}}",
+            "",
+            "## Rendered pages",
+            "",
+            "| Page | Contents |",
+            "| --- | --- |",
+            "| [Latest tier selections](README.md) | Final `heavy`, `balanced`, `light` and `free` picks |",
+            "| [Live Pareto analysis & plans](analysis.md) | Frontier, quality/value bands, free-tier matrix, multi-plan top-3 fallbacks, and the full ranked catalog |",
+            "| [Documentation & CLI usage](usage.md) | How to run the optimizer yourself |",
+            "",
+            "## Other choices and raw data",
+            "",
+            "| Artifact | Contents |",
+            "| --- | --- |",
+            "| [select.json](select.json ':ignore') | Raw `select --format json --explain` payload for the configured plan |",
+            "| [rank.json](rank.json ':ignore') | Every model ranked by the optimizer, including models that did not win a tier |",
+            "| [plans/go.json](plans/go.json ':ignore') | `go` plan top-3 choices per tier with explanations |",
+            "| [plans/go-plus.json](plans/go-plus.json ':ignore') | `go-plus` plan top-3 choices per tier with explanations |",
+            "| [plans/go-teams.json](plans/go-teams.json ':ignore') | `go-teams` plan top-3 choices per tier with explanations |",
+            "| [free-matrix.json](free-matrix.json ':ignore') | Free-tier picks under every privacy/region flag combination |",
+            "| [snapshot.json](snapshot.json ':ignore') | Normalized ingest snapshot: catalogue, docs pricing/privacy/request estimates, models.dev metadata, and Artificial Analysis benchmarks when enabled |",
+            "| [full-output.txt](full-output.txt ':ignore') | Full stdout/stderr from the optimizer script |",
+            "| [table.txt](table.txt ':ignore') | Human-readable table output from `scripts/run-optimizer.sh` |",
+            "| [fetch-log.txt](fetch-log.txt ':ignore') | Ingest warnings and provenance messages from the snapshot fetch |",
+            "",
+            "## Charts (SVG)",
+            "",
+            "| Chart | Contents |",
+            "| --- | --- |",
+            "| [pareto-frontier.svg](charts/pareto-frontier.svg ':ignore') | Effective quality vs quota burn with frontier and value bands |",
+            "| [catalog-ranking.svg](charts/catalog-ranking.svg ':ignore') | Ranked model catalog with benchmark scores and burn |",
+            "| [multi-plan-comparison.svg](charts/multi-plan-comparison.svg ':ignore') | Monthly allowance vs quota burn across plans and paid tiers |",
+            "",
+            "## Data sources",
+            "",
+            "| Source | Used for | Notes |",
+            "| --- | --- | --- |",
+            "| OpenCode catalogue (API/CLI) | Model IDs, providers, canonical IDs, status, token prices, multipliers | Fetched live each run |",
+            "| OpenCode docs | Monthly plan allowances, privacy/training rules, request estimates | Fetched live each run |",
+            "| models.dev | Release dates, context windows, max output tokens | `opencode-go` provider only |",
+            "| Artificial Analysis | IQ, engineering capability, output speed | Only when `AA_API_KEY` is configured; always attributed |",
+            "",
+            "The normalized snapshot records the URL, HTTP status, fetch time, sha256, and byte length",
+            "for each source. Raw response bodies are never published.",
+            "",
+        ]
+    )
+    if site_base:
+        lines.extend(
+            [
+                "## Quick links",
+                "",
+                "- **Issue**: {{ISSUES_URL}}",
+                f"- **Raw ranked catalog**: {_site_file(site_base, 'rank.json')}",
+                f"- **Raw normalized snapshot**: {_site_file(site_base, 'snapshot.json')}",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _ci_status_class(outcome: str) -> str:
     low = outcome.strip().lower()
     if low == "success":
@@ -1639,6 +1784,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional directory to output generated SVG analysis charts",
     )
+    parser.add_argument(
+        "--data-output",
+        default=None,
+        help="Optional path to write the all-data index page (data.md)",
+    )
     return parser.parse_args(argv)
 
 
@@ -1684,32 +1834,45 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    if args.analysis_output and args.json:
+    if args.json and (args.analysis_output or args.data_output):
         select_payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
-        rank_models: list[dict[str, Any]] = _load_rank_models(args.rank_json)
 
-        plan_payloads: dict[str, dict[str, Any]] = {}
-        for item in args.plan_json:
-            if "=" in item:
-                p_name, p_path = item.split("=", 1)
-                if Path(p_path).is_file():
-                    plan_payloads[p_name] = json.loads(Path(p_path).read_text(encoding="utf-8"))
+        if args.analysis_output:
+            rank_models: list[dict[str, Any]] = _load_rank_models(args.rank_json)
 
-        free_matrix: list[dict[str, Any]] | None = None
-        if args.free_matrix_json and Path(args.free_matrix_json).is_file():
-            free_matrix = json.loads(Path(args.free_matrix_json).read_text(encoding="utf-8"))
+            plan_payloads: dict[str, dict[str, Any]] = {}
+            for item in args.plan_json:
+                if "=" in item:
+                    p_name, p_path = item.split("=", 1)
+                    if Path(p_path).is_file():
+                        plan_payloads[p_name] = json.loads(Path(p_path).read_text(encoding="utf-8"))
 
-        analysis_md = render_analysis_markdown(
-            select_payload=select_payload,
-            rank_models=rank_models,
-            plan_payloads=plan_payloads if plan_payloads else None,
-            free_matrix=free_matrix,
-            run_url=args.run_url or None,
-            charts_dir=args.charts_dir,
-        )
-        out_analysis = Path(args.analysis_output)
-        out_analysis.parent.mkdir(parents=True, exist_ok=True)
-        out_analysis.write_text(analysis_md, encoding="utf-8")
+            free_matrix: list[dict[str, Any]] | None = None
+            if args.free_matrix_json and Path(args.free_matrix_json).is_file():
+                free_matrix = json.loads(Path(args.free_matrix_json).read_text(encoding="utf-8"))
+
+            analysis_md = render_analysis_markdown(
+                select_payload=select_payload,
+                rank_models=rank_models,
+                plan_payloads=plan_payloads if plan_payloads else None,
+                free_matrix=free_matrix,
+                run_url=args.run_url or None,
+                charts_dir=args.charts_dir,
+                site_url=args.site_url or None,
+            )
+            out_analysis = Path(args.analysis_output)
+            out_analysis.parent.mkdir(parents=True, exist_ok=True)
+            out_analysis.write_text(analysis_md, encoding="utf-8")
+
+        if args.data_output:
+            data_md = render_data_markdown(
+                site_url=args.site_url or None,
+                evaluated_at=select_payload.get("evaluated_at"),
+                run_url=args.run_url or None,
+            )
+            out_data = Path(args.data_output)
+            out_data.parent.mkdir(parents=True, exist_ok=True)
+            out_data.write_text(data_md, encoding="utf-8")
 
     if args.output:
         out_path = Path(args.output)
