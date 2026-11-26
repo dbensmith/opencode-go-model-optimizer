@@ -122,6 +122,107 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     assert 'title "Tier Comparison: Benchmark Scores vs Quota Burn %"' in md
     assert "Source: Artificial Analysis (artificialanalysis.ai)" in md
     assert ".." not in md
+    # no rank JSON was passed, so the issue carries no full comparison catalog
+    assert "Full Comparison Catalog" not in md
+
+
+def test_render_issue_markdown_full_comparison_catalog() -> None:
+    payload = {
+        "plan": "go",
+        "mode": "pareto",
+        "evaluated_at": "2026-11-16T00:00:00+00:00",
+        "snapshot": {
+            "source": "live",
+            "fetched_at": "2026-11-16T00:00:00+00:00",
+            "benchmark_source": "aa_live",
+        },
+        "tiers": {"heavy": "opencode-go/model-a", "free": "opencode-go/model-free"},
+        "explanations": {
+            "heavy": {
+                "model_id": "opencode-go/model-a",
+                "monthly_allowance": 30.0,
+                "output_cost_per_1m": 10.0,
+                "quota_burn_pct": 47.2,
+            },
+            "free": {
+                "model_id": "opencode-go/model-free",
+                "output_cost_per_1m": 0.0,
+                "quota_burn_pct": 0.0,
+            },
+        },
+    }
+    rank_models = [
+        {
+            "full_id": "opencode-go/model-a",
+            "tier": "heavy",
+            "bpe": 1.0,
+            "aa_iq": 90.0,
+            "aa_coding": 95.0,
+            "composite_burn_pct": 47.2,
+            "monthly_allowance": 30.0,
+            "cost": {"output": 10.0},
+            "limit": {"context": 1048576},
+            "release_date": "2026-11-01",
+            "privacy": {"zdr": True, "trains_on_data": False},
+            "is_pareto": True,
+            "rank": 1,
+        },
+        {
+            "full_id": "opencode-go/model-b",
+            "tier": "-",
+            "bpe": 0.5,
+            "aa_iq": 60.0,
+            "aa_coding": 65.0,
+            "composite_burn_pct": 20.0,
+            "cost": {"output": 4.0},
+            "limit": {"context": 131072},
+            "release_date": "2026-10-15",
+            "is_pareto": False,
+            "rank": 2,
+        },
+        {
+            "full_id": "opencode-go/model-free",
+            "tier": "free",
+            "is_zero_cost": True,
+            "quota_burn_pct": 0.0,
+            "limit": {"context": 262144},
+            "rank": 3,
+        },
+    ]
+
+    md = _MOD.render_issue_markdown(payload, rank_models=rank_models)
+    assert "### Full Comparison Catalog (`rank --mode pareto`)" in md
+    assert (
+        "All 3 models evaluated for this run by `rank --mode pareto`, not just the tier winners above."
+        in md
+    )
+    assert (
+        "| 1 | `opencode-go/model-a` | heavy | 1.000 | 90.0 | 95.0 | 47.2% "
+        "| $30.00 | $10.00/1M | 1,048,576 | 2026-11-01 | ZDR (0d retention); no training |" in md
+    )
+    assert (
+        "| 2 | `opencode-go/model-b` | - | 0.500 | 60.0 | 65.0 | 20.0% "
+        "| - | $4.00/1M | 131,072 | 2026-10-15 | No privacy metadata |" in md
+    )
+    assert (
+        "| 3 | `opencode-go/model-free` | free | - | - | - | 0.0% "
+        "| - | Free | 262,144 | - | No privacy metadata |" in md
+    )
+    assert 'title "Catalog Composition by Eligibility & Frontier Status"' in md
+    assert '"Pareto Frontier" : 1' in md
+    assert '"Paid (Non-Frontier)" : 1' in md
+    assert '"Free / Zero-Cost" : 1' in md
+    assert '"Unbenchmarked Paid"' not in md
+
+    # the catalog sits between the per-tier explanations and the full script output
+    md_with_script = _MOD.render_issue_markdown(
+        payload, script_output="raw table output", rank_models=rank_models
+    )
+    assert (
+        md_with_script.index("#### `heavy`")
+        < md_with_script.index("### Full Comparison Catalog")
+        < md_with_script.index("### Full Script Output")
+    )
 
 
 def test_render_allowance_issue_markdown_visuals() -> None:
@@ -475,6 +576,14 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     assert "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)" in content
     assert "![Multi-Plan Comparison](charts/multi-plan-comparison.svg)" in content
     assert "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)" in content
+
+    # the same rank JSON also feeds the full comparison catalog in the issue markdown
+    issue_md = res.stdout
+    assert "### Full Comparison Catalog (`rank --mode pareto`)" in issue_md
+    assert "All 2 models evaluated for this run" in issue_md
+    assert "| 1 | `opencode-go/model-a` | heavy |" in issue_md
+    assert "| 2 | `opencode-go/model-b` | balanced |" in issue_md
+    assert 'title "Catalog Composition by Eligibility & Frontier Status"' in issue_md
 
     for svg_name in (
         "pareto-frontier.svg",

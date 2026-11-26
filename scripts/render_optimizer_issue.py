@@ -227,12 +227,113 @@ def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[s
     return lines
 
 
+_RANKED_CATALOG_HEADERS = (
+    "| Rank | Model ID | Tier | BPE | AA IQ | Engineering | Burn % | Allowance | Output Cost | Context | Release | Privacy |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+)
+
+
+def _ranked_catalog_row(m: dict[str, Any]) -> str:
+    """Render one full-catalog markdown table row from a rank JSON model entry."""
+    model_id = m.get("full_id") or m.get("id") or m.get("model_id") or "unknown"
+    tier = m.get("tier", "-")
+    bpe_s = _fmt_float(m.get("bpe"), 3)
+    iq_s = _fmt_float(m.get("aa_iq"), 1)
+    eng_s = _fmt_float(m.get("aa_coding"), 1)
+    burn = m.get("composite_burn_pct")
+    if burn is None:
+        burn = m.get("quota_burn_pct")
+    burn_s = f"{burn:.1f}%" if isinstance(burn, (int, float)) else "-"
+    allowance_s = _fmt_allowance(m.get("monthly_allowance"))
+
+    if m.get("is_zero_cost"):
+        output_s = "Free"
+    else:
+        cost_dict = m.get("cost") or {}
+        output_cost = cost_dict.get("output")
+        if output_cost is not None:
+            output_s = _fmt_output_cost(output_cost)
+        else:
+            output_s = _fmt_output_cost(m.get("output_cost_per_1m"))
+
+    limit_dict = m.get("limit") or {}
+    ctx_val = limit_dict.get("context") if limit_dict else None
+    if ctx_val is None:
+        ctx_val = m.get("context")
+    ctx_s = _fmt_int(ctx_val)
+
+    rank_val = m.get("rank")
+    rank_s = str(rank_val) if rank_val is not None else "-"
+
+    release = m.get("release_date") or "-"
+    priv = _fmt_privacy(m.get("privacy"))
+    return (
+        f"| {rank_s} | `{model_id}` | {tier} | {bpe_s} | {iq_s} | {eng_s} | {burn_s} "
+        f"| {allowance_s} | {output_s} | {ctx_s} | {release} | {priv} |"
+    )
+
+
+def _catalog_composition_pie_lines(rank_models: list[dict[str, Any]]) -> list[str]:
+    """Mermaid pie block summarizing the catalog by eligibility & frontier status."""
+    if not rank_models:
+        return []
+    pareto_count = 0
+    paid_non_frontier_count = 0
+    free_count = 0
+    unbenchmarked_count = 0
+
+    for m in rank_models:
+        is_pareto = bool(m.get("is_pareto"))
+        is_zero = bool(m.get("is_zero_cost"))
+        has_bm = m.get("aa_iq") is not None or m.get("aa_coding") is not None
+
+        if is_pareto:
+            pareto_count += 1
+        elif is_zero:
+            free_count += 1
+        elif has_bm:
+            paid_non_frontier_count += 1
+        else:
+            unbenchmarked_count += 1
+
+    pie_lines = [
+        "",
+        "```mermaid",
+        "pie showData",
+        '    title "Catalog Composition by Eligibility & Frontier Status"',
+    ]
+    slices = [
+        ("Pareto Frontier", pareto_count),
+        ("Paid (Non-Frontier)", paid_non_frontier_count),
+        ("Free / Zero-Cost", free_count),
+        ("Unbenchmarked Paid", unbenchmarked_count),
+    ]
+    for name, count in slices:
+        if count > 0:
+            pie_lines.append(f'    "{name}" : {count}')
+    pie_lines.append("```")
+    return pie_lines
+
+
+def _load_rank_models(path: str | None) -> list[dict[str, Any]]:
+    """Load model entries from a `rank --format json` output file."""
+    if not path:
+        return []
+    rank_data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(rank_data, list):
+        return rank_data
+    if isinstance(rank_data, dict):
+        return rank_data.get("models") or rank_data.get("rankings") or []
+    return []
+
+
 def render_issue_markdown(
     payload: dict[str, Any],
     script_output: str = "",
     run_url: str | None = None,
+    rank_models: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Render optimizer JSON payload and optional full script output as GitHub Markdown."""
+    """Render optimizer JSON payload, optional full ranked catalog and full script output."""
     plan = payload.get("plan", "go")
     mode = payload.get("mode", "unknown")
     evaluated_at = payload.get("evaluated_at", "-")
@@ -472,6 +573,22 @@ def render_issue_markdown(
         if ex.get("privacy") is not None:
             priv_text = _fmt_privacy(ex.get("privacy")).rstrip(".")
             lines.append(f"- **Privacy**: {priv_text}.")
+
+    if rank_models:
+        lines.extend(
+            [
+                "",
+                f"### Full Comparison Catalog (`rank --mode {mode}`)",
+                "",
+                f"All {len(rank_models)} models evaluated for this run by `rank --mode {mode}`, "
+                "not just the tier winners above.",
+                "",
+                *_RANKED_CATALOG_HEADERS,
+            ]
+        )
+        for m in rank_models:
+            lines.append(_ranked_catalog_row(m))
+        lines.extend(_catalog_composition_pie_lines(rank_models))
 
     cleaned_script = script_output.strip()
     if cleaned_script:
@@ -1236,85 +1353,12 @@ def render_analysis_markdown(
             "",
             "### 4. Full Ranked Catalog (`rank --mode pareto`)",
             "",
-            "| Rank | Model ID | Tier | BPE | AA IQ | Engineering | Burn % | Allowance | Output Cost | Context | Release | Privacy |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            *_RANKED_CATALOG_HEADERS,
         ]
     )
-
     for m in rank_models:
-        model_id = m.get("full_id") or m.get("id") or m.get("model_id") or "unknown"
-        tier = m.get("tier", "-")
-        bpe_s = _fmt_float(m.get("bpe"), 3)
-        iq_s = _fmt_float(m.get("aa_iq"), 1)
-        eng_s = _fmt_float(m.get("aa_coding"), 1)
-        burn = m.get("composite_burn_pct")
-        if burn is None:
-            burn = m.get("quota_burn_pct")
-        burn_s = f"{burn:.1f}%" if isinstance(burn, (int, float)) else "-"
-        allowance_s = _fmt_allowance(m.get("monthly_allowance"))
-
-        if m.get("is_zero_cost"):
-            output_s = "Free"
-        else:
-            cost_dict = m.get("cost") or {}
-            output_cost = cost_dict.get("output")
-            if output_cost is not None:
-                output_s = _fmt_output_cost(output_cost)
-            else:
-                output_s = _fmt_output_cost(m.get("output_cost_per_1m"))
-
-        limit_dict = m.get("limit") or {}
-        ctx_val = limit_dict.get("context") if limit_dict else None
-        if ctx_val is None:
-            ctx_val = m.get("context")
-        ctx_s = _fmt_int(ctx_val)
-
-        rank_val = m.get("rank")
-        rank_s = str(rank_val) if rank_val is not None else "-"
-
-        release = m.get("release_date") or "-"
-        priv = _fmt_privacy(m.get("privacy"))
-        lines.append(
-            f"| {rank_s} | `{model_id}` | {tier} | {bpe_s} | {iq_s} | {eng_s} | {burn_s} | {allowance_s} | {output_s} | {ctx_s} | {release} | {priv} |"
-        )
-
-    if rank_models:
-        pareto_count = 0
-        paid_non_frontier_count = 0
-        free_count = 0
-        unbenchmarked_count = 0
-
-        for m in rank_models:
-            is_pareto = bool(m.get("is_pareto"))
-            is_zero = bool(m.get("is_zero_cost"))
-            has_bm = m.get("aa_iq") is not None or m.get("aa_coding") is not None
-
-            if is_pareto:
-                pareto_count += 1
-            elif is_zero:
-                free_count += 1
-            elif has_bm:
-                paid_non_frontier_count += 1
-            else:
-                unbenchmarked_count += 1
-
-        pie_lines = [
-            "",
-            "```mermaid",
-            "pie showData",
-            '    title "Catalog Composition by Eligibility & Frontier Status"',
-        ]
-        slices = [
-            ("Pareto Frontier", pareto_count),
-            ("Paid (Non-Frontier)", paid_non_frontier_count),
-            ("Free / Zero-Cost", free_count),
-            ("Unbenchmarked Paid", unbenchmarked_count),
-        ]
-        for name, count in slices:
-            if count > 0:
-                pie_lines.append(f'    "{name}" : {count}')
-        pie_lines.append("```")
-        lines.extend(pie_lines)
+        lines.append(_ranked_catalog_row(m))
+    lines.extend(_catalog_composition_pie_lines(rank_models))
 
     if "catalog-ranking.svg" in generated_svgs:
         lines.extend(["", "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)"])
@@ -1618,6 +1662,7 @@ def main(argv: list[str] | None = None) -> int:
             payload,
             script_output=script_output,
             run_url=args.run_url or None,
+            rank_models=_load_rank_models(args.rank_json),
         )
     else:
         sys.stderr.write(
@@ -1627,13 +1672,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.analysis_output and args.json:
         select_payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
-        rank_models: list[dict[str, Any]] = []
-        if args.rank_json:
-            rank_data = json.loads(Path(args.rank_json).read_text(encoding="utf-8"))
-            if isinstance(rank_data, list):
-                rank_models = rank_data
-            elif isinstance(rank_data, dict):
-                rank_models = rank_data.get("models") or rank_data.get("rankings") or []
+        rank_models: list[dict[str, Any]] = _load_rank_models(args.rank_json)
 
         plan_payloads: dict[str, dict[str, Any]] = {}
         for item in args.plan_json:
