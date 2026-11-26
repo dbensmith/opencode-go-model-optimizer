@@ -74,6 +74,10 @@ jobs:
           git add -A
           git commit -q -m "results: $GENERATED_AT ($TEST_RESULT)"
           git push -f origin HEAD:results
+          # The orphan checkout above deleted .github/actions/setup-env, which the
+          # runner needs to execute this composite action's post steps when the job
+          # ends; restore it so publishing leaves the run green.
+          git checkout origin/main -- .github/actions/setup-env
 
       - name: Fail if tests failed
         if: steps.offline.outcome == 'failure' || steps.live.outcome == 'failure'
