@@ -1,0 +1,103 @@
+name: Publish Pages
+
+# Deploys the Docsify site produced by the Run Optimizer workflow to GitHub
+# Pages. Publishing lives in its own workflow so a Pages deployment problem can
+# never mark the optimizer run itself failed, and the site can be redeployed
+# without re-running the optimizer. It wakes whenever Run Optimizer completes
+# successfully on main (push, schedule, or manual run); a workflow_dispatch run
+# deploys the docs-site artifact of a specific Run Optimizer run id, or of the
+# latest successful run when no id is given.
+#
+# Splitting the artifact upload (in run-optimizer.yml) from this deploy also
+# avoids the back-to-back upload→deploy race where deploy-pages queried the
+# artifact API ~300 ms after upload-pages-artifact finalized and saw zero
+# artifacts for the run.
+
+on:
+  workflow_run:
+    workflows: ["Run Optimizer"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "Run Optimizer run id whose docs-site artifact to deploy (blank = latest successful)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pages
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package Docsify site for Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+    steps:
+      - name: Resolve source run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_RUN_ID: ${{ inputs.run-id || '' }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+        run: |
+          if [[ -n "$INPUT_RUN_ID" ]]; then
+            run_id="$INPUT_RUN_ID"
+          elif [[ -n "$EVENT_RUN_ID" ]]; then
+            run_id="$EVENT_RUN_ID"
+          else
+            run_id="$(gh run list \
+              --repo "$GH_REPO" \
+              --workflow run-optimizer.yml \
+              --branch main \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')"
+          fi
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No successful Run Optimizer run with a docs-site artifact was found."
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download Docsify site artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-site
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

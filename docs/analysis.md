@@ -11,5 +11,7 @@ flowchart LR
     RENDER --> CATALOG["Format Model Catalog & Plan Comparisons"]
     CHARTS --> ANALYSIS["docs/analysis.md (Live Pareto Analysis & Catalog)"]
     CATALOG --> ANALYSIS
-    ANALYSIS --> PAGES["Deploy to Docsify GitHub Pages"]
+    ANALYSIS --> ARTIFACT["Upload docs-site Artifact"]
+    ARTIFACT --> DOWNLOAD["publish-pages.yml: Download docs-site Artifact"]
+    DOWNLOAD --> PAGES["Deploy to Docsify GitHub Pages"]
 ```

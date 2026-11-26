@@ -175,16 +175,21 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "if: always()" in ci_text
     assert "scripts/render_optimizer_issue.py" in ci_text
 
-    assert "pages: write" in workflow_text
-    assert "id-token: write" in workflow_text
+    assert "pages: read" in workflow_text
+    # The explanatory comment names the permissions held by publish-pages.yml;
+    # only active workflow configuration must omit the OIDC token grant here.
+    workflow_without_comments = "\n".join(
+        line for line in workflow_text.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "id-token: write" not in workflow_without_comments
     assert "issues: write" in workflow_text
     assert "contents: read" in workflow_text
 
-    assert "github-pages" in workflow_text
-    assert "${{ steps.deployment.outputs.page_url }}" in workflow_text
+    assert "github-pages" not in workflow_text
+    assert "steps.deployment" not in workflow_text
 
     assert "Configure GitHub Pages" in workflow_text
-    assert "Upload Pages artifact" in workflow_text
+    assert "Upload Docsify site artifact" in workflow_text
 
     # The issue links the published Pages dataset: configure-pages must run
     # before the optimizer step so its base_url output can be rendered in,
@@ -203,14 +208,28 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "out/site/fetch-log.txt" in workflow_text
     assert "out/site/data.md" in workflow_text
     assert workflow_text.index("Configure GitHub Pages") < workflow_text.index("Run optimizer")
-    assert workflow_text.index("Deploy to GitHub Pages") < workflow_text.index(
+    assert workflow_text.index("Upload Docsify site artifact") < workflow_text.index(
         "Create or update GitHub issue"
     )
-    assert "Deploy to GitHub Pages" in workflow_text
 
     assert "actions/configure-pages@v6" in workflow_text
-    assert "actions/upload-pages-artifact@v5" in workflow_text
-    assert "actions/deploy-pages@v5" in workflow_text
+
+    pages_path = _ROOT / ".github" / "workflows" / "publish-pages.yml"
+    assert pages_path.is_file()
+    pages_text = pages_path.read_text(encoding="utf-8")
+    assert 'workflows: ["Run Optimizer"]' in pages_text
+    assert "types: [completed]" in pages_text
+    assert "workflow_dispatch:" in pages_text
+    assert "github.event.workflow_run.conclusion == 'success'" in pages_text
+    assert "pages: write" in pages_text
+    assert "id-token: write" in pages_text
+    assert "name: github-pages" in pages_text
+    assert "${{ steps.deployment.outputs.page_url }}" in pages_text
+    assert "name: docs-site" in pages_text
+    assert "actions/download-artifact@v8" in pages_text
+    assert "actions/upload-pages-artifact@v5" in pages_text
+    assert "actions/deploy-pages@v5" in pages_text
+    assert "Deploy to GitHub Pages" in pages_text
 
     # Check generation of analysis.md and rank.json
     assert "out/site/analysis.md" in workflow_text
@@ -336,10 +355,11 @@ def test_no_interpolation_in_run_blocks_and_valid_multiline_indent() -> None:
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
     publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
+    pages_path = _ROOT / ".github" / "workflows" / "publish-pages.yml"
     action_path = _ROOT / ".github" / "actions" / "setup-env" / "action.yml"
     pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
 
-    for path in (ci_path, optimizer_path, publish_path, action_path, pr_ci_path):
+    for path in (ci_path, optimizer_path, publish_path, pages_path, action_path, pr_ci_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
         run_indent: int | None = None
