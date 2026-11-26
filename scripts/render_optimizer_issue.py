@@ -1327,9 +1327,73 @@ def render_ci_comment_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
+def render_optimizer_output_comment(
+    output: str | Path,
+    run_url: str | None = None,
+    sha: str | None = None,
+    command: str | None = None,
+    benchmarks: str | None = None,
+    status: str | int | None = None,
+) -> str:
+    """Render a PR comment carrying the actual optimizer output verbatim.
+
+    ``output`` is the optimizer's stdout with its stderr appended after a
+    ``--- stderr ---`` separator (assembled by the workflow). ``benchmarks``
+    is ``"live"`` when an Artificial Analysis key was available to the run and
+    ``"unavailable"`` when repository secrets were absent (fork PR), where
+    pareto selection falls back to allowance ranking.
+    """
+    text = Path(output).read_text(encoding="utf-8", errors="replace")
+    marker = (
+        f"<!-- optimizer-output-comment:commit={sha} -->"
+        if sha
+        else "<!-- optimizer-output-comment -->"
+    )
+    lines = [marker, "## Optimizer Output", ""]
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+    if sha:
+        lines.append(f"- **Commit**: `{sha}`")
+    if command:
+        lines.append(f"- **Command**: `{command}`")
+    if status is not None and str(status) != "0":
+        lines.append(f"- **Exit status**: `{status}` (see output below)")
+    if benchmarks == "live":
+        lines.append("- **Benchmarks**: Artificial Analysis live fetch (key loaded from 1Password)")
+    elif benchmarks == "unavailable":
+        lines.append(
+            "- **Benchmarks**: unavailable on this run (1Password secrets absent); "
+            "pareto selection falls back to allowance ranking"
+        )
+    if len(lines) > 3:
+        lines.append("")
+
+    cleaned = text.strip()
+    if cleaned:
+        fence = _fence_for(cleaned)
+        lines.extend(
+            [
+                "<details open>",
+                "<summary>Actual optimizer output</summary>",
+                "",
+                f"{fence}text",
+                cleaned,
+                fence,
+                "",
+                "</details>",
+            ]
+        )
+    else:
+        lines.append("The optimizer produced no output.")
+    if benchmarks == "live":
+        lines.extend(["", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
+    return "\n".join(lines).strip() + "\n"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render GitHub-pretty markdown from optimizer JSON and script output or CI results."
+        description="Render GitHub-pretty markdown from optimizer JSON and script output, "
+        "CI results, or the raw optimizer output."
     )
     parser.add_argument("--json", default=None, help="Path to select --format json --explain file")
     parser.add_argument(
@@ -1340,6 +1404,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-url", default=None, help="Optional GitHub Actions run URL")
     parser.add_argument(
         "--ci-dir", default=None, help="Optional path to CI logs directory (out/ci)"
+    )
+    parser.add_argument(
+        "--optimizer-output",
+        default=None,
+        help="Path to the actual optimizer output (stdout plus stderr) to post as a PR comment",
+    )
+    parser.add_argument(
+        "--benchmarks",
+        default=None,
+        choices=["live", "unavailable"],
+        help="Benchmark availability shown in the optimizer output comment header",
+    )
+    parser.add_argument(
+        "--command",
+        default=None,
+        help="Command line shown in the optimizer output comment header",
+    )
+    parser.add_argument(
+        "--status",
+        default=None,
+        help="Optimizer exit status shown in the optimizer output comment header",
     )
     parser.add_argument("--sha", default=None, help="Optional commit SHA for CI report")
     parser.add_argument("--format-outcome", default="unknown", help="Format step outcome")
@@ -1387,6 +1472,15 @@ def main(argv: list[str] | None = None) -> int:
                 "build": args.build_outcome,
             },
         )
+    elif args.optimizer_output:
+        markdown = render_optimizer_output_comment(
+            output=args.optimizer_output,
+            run_url=args.run_url or None,
+            sha=args.sha or None,
+            command=args.command or None,
+            benchmarks=args.benchmarks or None,
+            status=args.status,
+        )
     elif args.json:
         payload = json.loads(Path(args.json).read_text(encoding="utf-8"))
         script_output = (
@@ -1398,7 +1492,9 @@ def main(argv: list[str] | None = None) -> int:
             run_url=args.run_url or None,
         )
     else:
-        sys.stderr.write("Error: either --json or --ci-dir must be specified.\n")
+        sys.stderr.write(
+            "Error: one of --json, --ci-dir or --optimizer-output must be specified.\n"
+        )
         return 1
 
     if args.analysis_output and args.json:

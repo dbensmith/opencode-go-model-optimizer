@@ -215,6 +215,87 @@ def test_render_ci_comment_markdown(tmp_path: Path) -> None:
     assert "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside" in comment
 
 
+def test_render_optimizer_output_comment(tmp_path: Path) -> None:
+    out_file = tmp_path / "optimizer.txt"
+    out_file.write_text(
+        "OpenCode Go Model Optimizer --plan go --mode pareto\n"
+        "+-------+----------------------+\n"
+        "| Tier  | Model ID             |\n"
+        "| heavy | opencode-go/model-a  |\n"
+        "+-------+----------------------+\n"
+        "\n"
+        "--- stderr ---\n"
+        "opencode-go-model-optimizer: warning: catalogue hiccup\n",
+        encoding="utf-8",
+    )
+    comment = _MOD.render_optimizer_output_comment(
+        out_file,
+        run_url="https://github.com/example/repo/actions/runs/77",
+        sha="deadbeef",
+        command="uv run opencode-go-model-optimizer select --format table --explain",
+        benchmarks="live",
+    )
+    assert comment.startswith("<!-- optimizer-output-comment:commit=deadbeef -->\n")
+    assert "## Optimizer Output" in comment
+    assert "https://github.com/example/repo/actions/runs/77" in comment
+    assert "`deadbeef`" in comment
+    assert (
+        "- **Command**: `uv run opencode-go-model-optimizer select --format table --explain`"
+        in comment
+    )
+    assert "- **Benchmarks**: Artificial Analysis live fetch" in comment
+    assert "- **Exit status**" not in comment
+    assert "<summary>Actual optimizer output</summary>" in comment
+    assert "| heavy | opencode-go/model-a  |" in comment
+    assert "--- stderr ---" in comment
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in comment
+
+
+def test_render_optimizer_output_comment_cli_backticks_and_unavailable(tmp_path: Path) -> None:
+    out_file = tmp_path / "optimizer.txt"
+    out_file.write_text(
+        "table with ``` fences inside\nopencode-go-model-optimizer: error: live fetch failed\n",
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "comment.md"
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--optimizer-output",
+            str(out_file),
+            "--run-url",
+            "https://github.com/example/repo/actions/runs/78",
+            "--sha",
+            "1234567890ab",
+            "--status",
+            "1",
+            "--command",
+            "uv run opencode-go-model-optimizer select --format table",
+            "--benchmarks",
+            "unavailable",
+            "--output",
+            str(out_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "<!-- optimizer-output-comment:commit=1234567890ab -->" in content
+    assert "## Optimizer Output" in content
+    assert "- **Exit status**: `1` (see output below)" in content
+    assert "- **Benchmarks**: unavailable on this run" in content
+    assert "falls back to allowance ranking" in content
+    # backticks inside the output force a longer code fence
+    assert "````text" in content
+    assert "table with ``` fences inside" in content
+    # no AA data was displayed, so no attribution footer
+    assert "Artificial Analysis (artificialanalysis.ai)" not in content
+
+
 def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     from opencode_go_model_optimizer.cli import format_rank_json
     from opencode_go_model_optimizer.ingest.models import NormalizedModel
