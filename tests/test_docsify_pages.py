@@ -137,7 +137,10 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     # Triggers and jobs structure
     # A PR run must only contain jobs that can actually run on a PR: the PR
     # trigger lives in pr-ci.yml, and run-optimizer.yml must not carry
-    # PR-triggered paths that would render as skipped jobs on every PR.
+    # PR-triggered paths that would render as skipped jobs on every PR. The
+    # optimizer-output job is PR-safe by design: it degrades to a
+    # no-benchmarks run when repository secrets (1Password) are unavailable,
+    # e.g. on fork PRs.
     assert "pull_request:" in pr_ci_text
     assert "push:" in workflow_text
     assert "schedule:" in workflow_text
@@ -147,6 +150,20 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "uses: ./.github/workflows/ci.yml" in pr_ci_text
     assert "uses: ./.github/workflows/ci.yml" in workflow_text
     assert "needs: test" in workflow_text
+
+    # The optimizer also runs on PRs and its actual output is posted as a
+    # PR comment, with graceful degradation when secrets are absent.
+    assert "optimizer-output:" in pr_ci_text
+    assert "Detect 1Password configuration" in pr_ci_text
+    assert "Load AA API key from 1Password" in pr_ci_text
+    assert "1password/load-secrets-action@v5" in pr_ci_text
+    assert "--format table --explain --allow-global-region --allow-free-training" in pr_ci_text
+    assert "continue-on-error: true" in pr_ci_text
+    assert "Render optimizer output comment" in pr_ci_text
+    assert "scripts/render_optimizer_issue.py" in pr_ci_text
+    assert "optimizer-output-comment:commit=" in pr_ci_text
+    assert "Post or update PR comment with optimizer output" in pr_ci_text
+    assert "Fail if the optimizer run failed" in pr_ci_text
 
     # PR comment in ci.yml
     assert "Render CI results comment" in ci_text
@@ -222,8 +239,9 @@ def test_composite_action_and_hardening() -> None:
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
     publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
+    pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
 
-    for path in (ci_path, optimizer_path, publish_path):
+    for path in (ci_path, optimizer_path, publish_path, pr_ci_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
         assert "./.github/actions/setup-env" in text
@@ -288,8 +306,9 @@ def test_no_interpolation_in_run_blocks_and_valid_multiline_indent() -> None:
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
     publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
     action_path = _ROOT / ".github" / "actions" / "setup-env" / "action.yml"
+    pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
 
-    for path in (ci_path, optimizer_path, publish_path, action_path):
+    for path in (ci_path, optimizer_path, publish_path, action_path, pr_ci_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
         run_indent: int | None = None

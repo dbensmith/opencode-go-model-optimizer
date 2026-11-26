@@ -1,9 +1,14 @@
 name: PR CI
 
 # Pull request checks only: runs the shared test/lint/build suite (reusable
-# ci.yml) and posts the results as a PR comment. Everything that can never run
-# on a PR — the optimizer, issue upsert and Pages deploy — lives in
-# run-optimizer.yml, which triggers only on push/schedule/workflow_dispatch.
+# ci.yml) and posts the results as a PR comment, then runs the optimizer on
+# the PR code and posts its actual output as a second PR comment so a reviewer
+# sees the tier selections this PR would produce. Repository secrets are
+# available to same-repo PRs, so the AA key is loaded from 1Password and the
+# optimizer runs with live benchmarks; fork PRs receive no secrets, skip
+# 1Password and fall back to allowance ranking. Only the issue upsert and the
+# Pages deploy can never run on a PR; they live in run-optimizer.yml, which
+# triggers only on push/schedule/workflow_dispatch.
 
 on:
   pull_request:
@@ -22,3 +27,129 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+
+  optimizer-output:
+    name: Run Optimizer & Post Output Comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_NO_SYNC: "1"
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up environment
+        uses: ./.github/actions/setup-env
+
+      - name: Detect 1Password configuration
+        id: opgate
+        env:
+          HAS_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
+          SECRET_REF: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
+        run: |
+          if [[ "$HAS_OP_TOKEN" == "true" && -n "$SECRET_REF" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::1Password configuration is unavailable to this run (fork PR?); the optimizer will run without Artificial Analysis benchmarks."
+          fi
+
+      # Set OP_SERVICE_ACCOUNT_TOKEN in repository secrets and AA_SECRET_REF
+      # (op://<vault>/<item>/<field>) in repository variables or secrets,
+      # exactly as in run-optimizer.yml. Fork PRs never receive secrets.
+      - name: Load AA API key from 1Password
+        if: steps.opgate.outputs.available == 'true'
+        uses: 1password/load-secrets-action@v5
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
+
+      # Same command and CI privacy flags as the scheduled run in
+      # run-optimizer.yml, so the comment shows the selections this PR would
+      # publish. Without the AA key the engine falls back to allowance ranking.
+      - name: Run optimizer
+        id: optimizer
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          status=0
+          uv run opencode-go-model-optimizer select --plan go --mode pareto \
+            --format table --explain --allow-global-region --allow-free-training \
+            > out/optimizer.txt 2> out/optimizer.err || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat out/optimizer.txt
+          cat out/optimizer.err >&2
+          exit "$status"
+
+      - name: Render optimizer output comment
+        if: always()
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AA_AVAILABLE: ${{ steps.opgate.outputs.available }}
+          OPTIMIZER_STATUS: ${{ steps.optimizer.outputs.status }}
+        run: |
+          run_url="${SERVER_URL}/${GH_REPO}/actions/runs/${RUN_ID}"
+          if [[ -s out/optimizer.err ]]; then
+            printf '\n--- stderr ---\n' >> out/optimizer.txt
+            cat out/optimizer.err >> out/optimizer.txt
+          fi
+          if [[ "$AA_AVAILABLE" == "true" ]]; then
+            benchmarks=live
+          else
+            benchmarks=unavailable
+          fi
+          uv run python scripts/render_optimizer_issue.py \
+            --optimizer-output out/optimizer.txt \
+            --run-url "$run_url" \
+            --sha "$COMMIT_SHA" \
+            --status "$OPTIMIZER_STATUS" \
+            --command "uv run opencode-go-model-optimizer select --plan go --mode pareto --format table --explain --allow-global-region --allow-free-training" \
+            --benchmarks "$benchmarks" \
+            --output out/comment.md
+          cat out/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or update PR comment with optimizer output
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          export MARKER="<!-- optimizer-output-comment:commit=${COMMIT_SHA} -->"
+
+          if [[ ! -s out/comment.md ]]; then
+            echo "Warning: out/comment.md is empty"
+            exit 0
+          fi
+
+          comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/${PR_NUMBER}/comments" \
+            --jq 'flatten | map(select(.body | contains(env.MARKER))) | last | .id // empty' \
+            2>/dev/null || true)"
+
+          if [[ -n "$comment_id" ]]; then
+            if ! gh api "repos/$GH_REPO/issues/comments/${comment_id}" \
+              -X PATCH -F body=@out/comment.md >/dev/null 2>&1; then
+              echo "::notice::Skipping PR comment update (read-only token on fork PR); see Job Summary."
+            fi
+          else
+            if ! gh pr comment "$PR_NUMBER" \
+              --repo "$GH_REPO" \
+              --body-file out/comment.md >/dev/null 2>&1; then
+              echo "::notice::Skipping PR comment creation (read-only token on fork PR); see Job Summary."
+            fi
+          fi
+
+      - name: Fail if the optimizer run failed
+        if: steps.optimizer.outcome == 'failure'
+        run: |
+          echo "::error::The optimizer run failed; its output was posted as a PR comment."
+          exit 1
