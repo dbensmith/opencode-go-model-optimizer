@@ -101,6 +101,98 @@ def _fence_for(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+_STDERR_SEPARATOR = "--- stderr ---"
+_ASCII_TABLE_ROW_RE = re.compile(r"^\s*\|.+\|\s*$")
+_ASCII_TABLE_BORDER_RE = re.compile(r"^\s*\+[-+]+\+\s*$")
+
+
+def _split_stderr_section(text: str) -> tuple[str, str]:
+    """Split combined optimizer output at the workflow's stderr separator line."""
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if line.strip() == _STDERR_SEPARATOR:
+            return "\n".join(lines[:idx]), "\n".join(lines[idx + 1 :])
+    return text, ""
+
+
+def _split_ascii_table_row(line: str) -> list[str]:
+    """Split one ``| a | b |`` ASCII table row into stripped cells."""
+    inner = line.strip()[1:-1]
+    return [cell.strip() for cell in inner.split("|")]
+
+
+def _parse_ascii_output_blocks(text: str) -> list[dict[str, Any]]:
+    """Split optimizer stdout into ASCII-table and plain-line blocks, in order.
+
+    Border lines (``+---+``) are treated as table glue and never surface as
+    plain lines, so a bordered ASCII table always parses as a single block
+    whose first row is the header.
+    """
+    blocks: list[dict[str, Any]] = []
+    pending: list[str] = []
+    table_rows: list[list[str]] | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending
+        if pending:
+            blocks.append({"kind": "lines", "lines": list(pending)})
+            pending.clear()
+
+    def flush_table() -> None:
+        nonlocal table_rows
+        if table_rows is not None:
+            blocks.append({"kind": "table", "headers": table_rows[0], "rows": table_rows[1:]})
+            table_rows = None
+
+    for raw in text.splitlines():
+        if _ASCII_TABLE_BORDER_RE.match(raw):
+            continue
+        if _ASCII_TABLE_ROW_RE.match(raw):
+            if table_rows is None:
+                flush_pending()
+                table_rows = []
+            table_rows.append(_split_ascii_table_row(raw))
+        else:
+            flush_table()
+            if raw.strip():
+                pending.append(raw.rstrip())
+    flush_table()
+    flush_pending()
+    return blocks
+
+
+def _format_table_cell(header: str, cell: str) -> str:
+    """Escape an ASCII table cell for GitHub markdown, styling known columns.
+
+    Model IDs get code spans and tier names get bold, matching the tables in
+    the issue comment.
+    """
+    escaped = cell.replace("|", "\\|")
+    if not escaped or escaped == "-":
+        return escaped
+    key = header.strip().lower()
+    if key == "model id":
+        return f"`{escaped}`"
+    if key == "tier":
+        return f"**{escaped}**"
+    return escaped
+
+
+def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """Render a parsed ASCII table as GitHub-flavored markdown table lines."""
+    norm_headers = [h.strip() for h in headers]
+    lines = [
+        "| " + " | ".join(norm_headers) + " |",
+        "| " + " | ".join("---" for _ in norm_headers) + " |",
+    ]
+    for row in rows:
+        cells = [cell.strip() for cell in row[: len(norm_headers)]]
+        cells += ["-"] * (len(norm_headers) - len(cells))
+        styled = [_format_table_cell(h, c) for h, c in zip(norm_headers, cells, strict=True)]
+        lines.append("| " + " | ".join(styled) + " |")
+    return lines
+
+
 def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[str]:
     """Render Run Settings lines when effective settings are present in payload."""
     settings = payload.get("settings") or {}
@@ -1335,10 +1427,13 @@ def render_optimizer_output_comment(
     benchmarks: str | None = None,
     status: str | int | None = None,
 ) -> str:
-    """Render a PR comment carrying the actual optimizer output verbatim.
+    """Render a PR comment showing the optimizer's tier selections as a table.
 
     ``output`` is the optimizer's stdout with its stderr appended after a
-    ``--- stderr ---`` separator (assembled by the workflow). ``benchmarks``
+    ``--- stderr ---`` separator (assembled by the workflow). ASCII
+    tier-selection tables are parsed out and re-rendered as GitHub markdown
+    tables so they render natively on the PR; any other stdout lines are kept
+    as fenced text and stderr is folded into a collapsible section. ``benchmarks``
     is ``"live"`` when an Artificial Analysis key was available to the run and
     ``"unavailable"`` when repository secrets were absent (fork PR), where
     pareto selection falls back to allowance ranking.
@@ -1349,7 +1444,7 @@ def render_optimizer_output_comment(
         if sha
         else "<!-- optimizer-output-comment -->"
     )
-    lines = [marker, "## Optimizer Output", ""]
+    lines = [marker, "## Optimizer Tier Selections", ""]
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
     if sha:
@@ -1368,23 +1463,56 @@ def render_optimizer_output_comment(
     if len(lines) > 3:
         lines.append("")
 
-    cleaned = text.strip()
-    if cleaned:
-        fence = _fence_for(cleaned)
+    stdout_text, stderr_text = _split_stderr_section(text)
+    blocks = _parse_ascii_output_blocks(stdout_text)
+    tables = [b for b in blocks if b["kind"] == "table"]
+    stray_groups = [b for b in blocks if b["kind"] == "lines"]
+
+    for i, block in enumerate(tables):
+        if i:
+            lines.append("")
+        lines.extend(_render_markdown_table(block["headers"], block["rows"]))
+
+    if stray_groups:
+        if tables:
+            lines.append("")
+        stray_text = "\n\n".join("\n".join(g["lines"]) for g in stray_groups)
+        fence = _fence_for(stray_text)
         lines.extend(
             [
-                "<details open>",
-                "<summary>Actual optimizer output</summary>",
+                "<details>",
+                "<summary>Additional optimizer output</summary>",
                 "",
                 f"{fence}text",
-                cleaned,
+                stray_text,
                 fence,
                 "",
                 "</details>",
             ]
         )
-    else:
+
+    if not tables and not stray_groups:
         lines.append("The optimizer produced no output.")
+
+    stderr_cleaned = stderr_text.strip()
+    if stderr_cleaned:
+        failed = status is not None and str(status) != "0"
+        details_tag = "<details open>" if failed or not tables else "<details>"
+        fence = _fence_for(stderr_cleaned)
+        lines.extend(
+            [
+                "",
+                details_tag,
+                "<summary>stderr</summary>",
+                "",
+                f"{fence}text",
+                stderr_cleaned,
+                fence,
+                "",
+                "</details>",
+            ]
+        )
+
     if benchmarks == "live":
         lines.extend(["", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
     return "\n".join(lines).strip() + "\n"

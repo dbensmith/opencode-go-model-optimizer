@@ -236,7 +236,8 @@ def test_render_optimizer_output_comment(tmp_path: Path) -> None:
         benchmarks="live",
     )
     assert comment.startswith("<!-- optimizer-output-comment:commit=deadbeef -->\n")
-    assert "## Optimizer Output" in comment
+    assert "## Optimizer Tier Selections" in comment
+    assert "## Optimizer Output" not in comment
     assert "https://github.com/example/repo/actions/runs/77" in comment
     assert "`deadbeef`" in comment
     assert (
@@ -245,10 +246,68 @@ def test_render_optimizer_output_comment(tmp_path: Path) -> None:
     )
     assert "- **Benchmarks**: Artificial Analysis live fetch" in comment
     assert "- **Exit status**" not in comment
-    assert "<summary>Actual optimizer output</summary>" in comment
-    assert "| heavy | opencode-go/model-a  |" in comment
-    assert "--- stderr ---" in comment
+    # the ASCII tier table is re-rendered as a native markdown table
+    assert "| Tier | Model ID |" in comment
+    assert "| --- | --- |" in comment
+    assert "| **heavy** | `opencode-go/model-a` |" in comment
+    # the table leads the comment, ahead of any collapsible section
+    assert comment.index("| Tier | Model ID |") < comment.index("<details")
+    # non-table stdout lines survive in a fenced section
+    assert "<summary>Additional optimizer output</summary>" in comment
+    assert "OpenCode Go Model Optimizer --plan go --mode pareto" in comment
+    # stderr lands in its own collapsed section instead of a raw separator line
+    assert "<summary>stderr</summary>" in comment
+    assert "opencode-go-model-optimizer: warning: catalogue hiccup" in comment
+    assert "--- stderr ---" not in comment
     assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in comment
+
+
+def test_render_optimizer_output_comment_explain_table(tmp_path: Path) -> None:
+    """The real `select --format table --explain` output renders as markdown."""
+    from opencode_go_model_optimizer.formatters.output import format_select_table
+    from opencode_go_model_optimizer.ingest.models import NormalizedModel
+
+    models = [
+        NormalizedModel(
+            id="model-a",
+            provider_id="opencode-go",
+            name="Model A",
+            monthly_allowance=30.0,
+            cost={"output": 10.0},
+            limit={"context": 1048576},
+            aa_iq=88.5,
+            bpe=1.425,
+            composite_burn_pct=47.17,
+            price_multiplier=1.0,
+        ),
+        NormalizedModel(
+            id="model-free",
+            provider_id="opencode-go",
+            name="Model Free",
+            monthly_allowance=None,
+            is_zero_cost=True,
+            limit={"context": 262144},
+        ),
+    ]
+    tiers = {"heavy": "opencode-go/model-a", "free": "opencode-go/model-free"}
+    ascii_table = format_select_table(tiers, models, plan="go", explain=True)
+
+    out_file = tmp_path / "optimizer.txt"
+    out_file.write_text(ascii_table, encoding="utf-8")
+    comment = _MOD.render_optimizer_output_comment(out_file, benchmarks="live")
+    assert "## Optimizer Tier Selections" in comment
+    # every explain column survives the trip through the parser
+    assert (
+        "| Tier | Model ID | Model Name | Allowance (go) | Output Cost | Context "
+        "| IQ | BPE | Burn % | Turn Cost |"
+    ) in comment
+    assert "| **heavy** | `opencode-go/model-a` | Model A |" in comment
+    assert "| $30.00 | $10.00/1M | 1,048,576 | 88.5 | 1.425 | 47.2% |" in comment
+    assert "| **free** | `opencode-go/model-free` | Model Free | - | Free | 262,144 |" in comment
+    # a pure-table stdout renders no fenced text block at all
+    assert "```" not in comment
+    # no stderr was appended, so there is no stderr section
+    assert "stderr" not in comment
 
 
 def test_render_optimizer_output_comment_cli_backticks_and_unavailable(tmp_path: Path) -> None:
@@ -285,10 +344,13 @@ def test_render_optimizer_output_comment_cli_backticks_and_unavailable(tmp_path:
     assert res.returncode == 0
     content = out_path.read_text(encoding="utf-8")
     assert "<!-- optimizer-output-comment:commit=1234567890ab -->" in content
-    assert "## Optimizer Output" in content
+    assert "## Optimizer Tier Selections" in content
+    assert "## Optimizer Output" not in content
     assert "- **Exit status**: `1` (see output below)" in content
     assert "- **Benchmarks**: unavailable on this run" in content
     assert "falls back to allowance ranking" in content
+    # no ASCII table was found, so the output stays a fenced text block
+    assert "<summary>Additional optimizer output</summary>" in content
     # backticks inside the output force a longer code fence
     assert "````text" in content
     assert "table with ``` fences inside" in content
