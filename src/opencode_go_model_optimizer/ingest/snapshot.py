@@ -13,10 +13,6 @@ from typing import Any
 import httpx
 
 from opencode_go_model_optimizer.ingest.artificial_analysis import (
-    AA_MAX_PAGES,
-    AA_MODELS_URL,
-    _model_aa_lookup_keys,
-    _to_float,
     fetch_aa_benchmarks,
     lookup_aa_benchmark,
 )
@@ -46,18 +42,12 @@ from opencode_go_model_optimizer.ingest.models import (
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_models_dev
 
 __all__ = [
-    "AA_MAX_PAGES",
-    "AA_MODELS_URL",
-    "_model_aa_lookup_keys",
-    "_to_float",
     "apply_plan",
     "create_snapshot",
-    "fetch_aa_benchmarks",
     "fetch_and_build_snapshot",
     "get_cache_snapshot_path",
     "load_cached_snapshot",
     "load_snapshot",
-    "lookup_aa_benchmark",
     "merge_catalogue_metadata",
     "merge_privacy",
     "save_cached_snapshot",

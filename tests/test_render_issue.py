@@ -433,7 +433,7 @@ def test_render_optimizer_output_comment(tmp_path: Path) -> None:
 
 def test_render_optimizer_output_comment_explain_table(tmp_path: Path) -> None:
     """The real `select --format table --explain` output renders as markdown."""
-    from opencode_go_model_optimizer.formatters.output import format_select_table
+    from opencode_go_model_optimizer.formatters import format_select_table
     from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
     models = [
@@ -707,13 +707,12 @@ def test_optimizer_issue_submodule_structure() -> None:
         "issue.py",
         "analysis.py",
         "data_page.py",
-        "pages.py",
         "comments.py",
     ):
         assert (package_dir / filename).is_file(), f"Missing submodule file: {filename}"
 
     pkg = importlib.import_module("optimizer_issue")
-    for name in ("common", "charts", "issue", "analysis", "data_page", "pages", "comments"):
+    for name in ("common", "charts", "issue", "analysis", "data_page", "comments"):
         assert importlib.import_module(f"optimizer_issue.{name}") is not None
 
     for public_fn in (
@@ -726,13 +725,8 @@ def test_optimizer_issue_submodule_structure() -> None:
     ):
         assert getattr(_MOD, public_fn) is getattr(pkg, public_fn)
 
-    assert pkg.pages.render_issue_markdown is pkg.issue.render_issue_markdown
-    assert pkg.pages.render_analysis_markdown is pkg.analysis.render_analysis_markdown
-    assert pkg.pages.render_data_markdown is pkg.data_page.render_data_markdown
-
     from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 
-    assert pkg.pages.STANDARD_TIERS is STANDARD_TIERS
     assert pkg.common.STANDARD_TIERS is STANDARD_TIERS
 
 

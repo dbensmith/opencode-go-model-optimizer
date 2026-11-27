@@ -140,7 +140,7 @@ def test_diff_snapshots_auto_mode_with_benchmarks():
 
 
 def test_capability_changes_detected_and_rendered():
-    from opencode_go_model_optimizer.formatters.output import format_diff_table
+    from opencode_go_model_optimizer.formatters import format_diff_table
 
     old = NormalizedModel(
         id="cap", limit=ModelLimit(context=100, output=10), aa_iq=50.0, speed_tps=100.0

@@ -23,7 +23,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
     select_tiers,
 )
-from opencode_go_model_optimizer.formatters.output import explain_tiers, settings_payload
+from opencode_go_model_optimizer.formatters import explain_tiers, settings_payload
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
     PLANS,

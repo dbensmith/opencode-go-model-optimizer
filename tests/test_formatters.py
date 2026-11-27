@@ -8,7 +8,6 @@ import pytest
 from opencode_go_model_optimizer import formatters
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import ModelChange, SnapshotDiff
-from opencode_go_model_optimizer.formatters import output as compat_output
 from opencode_go_model_optimizer.formatters.diff import (
     _format_diff_value,
     format_diff_json,
@@ -34,7 +33,6 @@ from opencode_go_model_optimizer.formatters.select import (
 )
 from opencode_go_model_optimizer.formatters.table import (
     _append_column,
-    _render_table,
     format_multiplier,
     render_table,
 )
@@ -351,7 +349,7 @@ def test_render_table_column_mismatch():
         ["val1", "val2"],
         ["valA", "valB", "valC", "extraValD"],
     ]
-    rendered = _render_table(headers, rows)
+    rendered = render_table(headers, rows)
     assert "Col1" in rendered
     assert "Col2" in rendered
     assert "Col3" in rendered
@@ -525,10 +523,8 @@ def test_explain_tiers_next_change_none():
     assert "next_price_change" not in expl["heavy"]
 
 
-def test_formatters_output_reexports_and_package_all():
-    expected_reexports = {
-        "_format_diff_value": _format_diff_value,
-        "_render_table": _render_table,
+def test_formatters_package_all():
+    expected_exports = {
         "render_table": render_table,
         "settings_payload": settings_payload,
         "explain_tiers": explain_tiers,
@@ -543,29 +539,11 @@ def test_formatters_output_reexports_and_package_all():
         "format_diff_json": format_diff_json,
         "format_diff_table": format_diff_table,
     }
-    for name, symbol in expected_reexports.items():
-        assert getattr(compat_output, name) is symbol
-
-    for public_name in (
-        "explain_tiers",
-        "format_diff_json",
-        "format_diff_table",
-        "format_rank_json",
-        "format_rank_table",
-        "format_select_compact",
-        "format_select_env",
-        "format_select_github_output",
-        "format_select_json",
-        "format_select_table",
-        "render_table",
-        "settings_payload",
-        "tier_display_names",
-    ):
+    for public_name, symbol in expected_exports.items():
         assert public_name in formatters.__all__
-        assert getattr(formatters, public_name) is expected_reexports[public_name]
-
-    assert render_table is _render_table
-    assert compat_output.format_select_compact({"heavy": "opencode-go/a"}) == "heavy opencode-go/a"
+        assert getattr(formatters, public_name) is symbol
+    assert _format_diff_value(None) == "-"
+    assert formatters.format_select_compact({"heavy": "opencode-go/a"}) == "heavy opencode-go/a"
 
 
 def test_append_column_and_render_table():

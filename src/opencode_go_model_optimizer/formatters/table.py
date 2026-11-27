@@ -128,6 +128,3 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
     out_lines.append(sep)
 
     return "\n".join(out_lines)
-
-
-_render_table = render_table

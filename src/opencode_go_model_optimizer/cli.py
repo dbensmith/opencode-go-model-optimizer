@@ -31,7 +31,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     resolve_mode,
     select_tiers,
 )
-from opencode_go_model_optimizer.formatters.output import (
+from opencode_go_model_optimizer.formatters import (
     explain_tiers,
     format_diff_json,
     format_diff_table,

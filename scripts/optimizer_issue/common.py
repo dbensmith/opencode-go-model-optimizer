@@ -33,10 +33,6 @@ _RANKED_CATALOG_COLUMN_NAMES = (
     "Release",
     "Privacy",
 )
-_RANKED_CATALOG_HEADERS = (
-    "| " + " | ".join(_RANKED_CATALOG_COLUMN_NAMES) + " |",
-    "| " + " | ".join("---" for _ in _RANKED_CATALOG_COLUMN_NAMES) + " |",
-)
 
 
 def _fmt_allowance(val: Any) -> str:
@@ -288,11 +284,6 @@ def _ranked_catalog_cells(m: dict[str, Any]) -> list[str]:
     ]
 
 
-def _ranked_catalog_row(m: dict[str, Any]) -> str:
-    """Render one full-catalog markdown table row from a rank JSON model entry."""
-    return "| " + " | ".join(_ranked_catalog_cells(m)) + " |"
-
-
 def _render_ranked_catalog_rows(rank_models: list[dict[str, Any]]) -> list[str]:
     """Render the full ranked catalog Markdown table and composition pie chart."""
     lines = render_markdown_table(
@@ -346,5 +337,5 @@ def _load_rank_models(path: str | None) -> list[dict[str, Any]]:
     if isinstance(rank_data, list):
         return rank_data
     if isinstance(rank_data, dict):
-        return rank_data.get("models") or rank_data.get("rankings") or []
+        return rank_data.get("models") or []
     return []

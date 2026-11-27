@@ -10,6 +10,10 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from opencode_go_model_optimizer.ingest.artificial_analysis import (
+    _to_float,
+    fetch_aa_benchmarks,
+)
 from opencode_go_model_optimizer.ingest.catalogue import (
     _extract_model_limit,
     _extract_token_cost,
@@ -45,10 +49,8 @@ from opencode_go_model_optimizer.ingest.models_dev import (
     parse_models_dev,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
-    _to_float,
     apply_plan,
     create_snapshot,
-    fetch_aa_benchmarks,
     fetch_and_build_snapshot,
     get_cache_snapshot_path,
     load_cached_snapshot,
@@ -1642,13 +1644,10 @@ def test_fetch_and_build_warns_when_console_profiles_are_unavailable():
 
 def test_artificial_analysis_module_exports_and_lookup():
     from opencode_go_model_optimizer import ingest
-    from opencode_go_model_optimizer.ingest import artificial_analysis, snapshot
+    from opencode_go_model_optimizer.ingest import artificial_analysis
 
     assert ingest.fetch_aa_benchmarks is artificial_analysis.fetch_aa_benchmarks
     assert ingest.lookup_aa_benchmark is artificial_analysis.lookup_aa_benchmark
-    assert snapshot.fetch_aa_benchmarks is artificial_analysis.fetch_aa_benchmarks
-    assert snapshot.lookup_aa_benchmark is artificial_analysis.lookup_aa_benchmark
-    assert snapshot._to_float is artificial_analysis._to_float
 
     model = NormalizedModel(id="glm-5", name="GLM-5")
     benchmarks = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
