@@ -1,4 +1,4 @@
-"""Shared Markdown, Mermaid, and settings rendering helpers."""
+"""Shared value, Markdown, Mermaid, and settings rendering helpers."""
 
 from __future__ import annotations
 
@@ -36,7 +36,9 @@ def format_allowance_value(
     if val == "unlimited":
         return unlimited_label
     if is_number(val):
-        if math.isinf(val) or math.isnan(val):
+        if math.isinf(val):
+            return unlimited_label
+        if math.isnan(val):
             return str(val)
         return f"${val:g}" if compact else f"${val:.2f}"
     return str(val)
@@ -47,7 +49,7 @@ def format_cost_value(
     *,
     compact: bool = False,
     suffix: str = "/1M",
-    free_label: str = "Free",
+    zero_is_free: bool = True,
 ) -> str:
     """Format an output token cost value for Markdown tables."""
     if val is None:
@@ -55,8 +57,80 @@ def format_cost_value(
     if is_number(val):
         if compact:
             return f"${val:g}"
-        return free_label if val == 0 else f"${val:.2f}{suffix}"
+        return "Free" if zero_is_free and val == 0 else f"${val:.2f}{suffix}"
     return str(val)
+
+
+def format_int(val: Any) -> str:
+    """Format a count with grouping, preserving unlimited and unknown values."""
+    if val is None:
+        return "-"
+    if val == "unlimited":
+        return "Unlimited"
+    if is_number(val):
+        return f"{int(val):,}" if float(val).is_integer() else f"{val:,.1f}"
+    return str(val)
+
+
+def format_float(val: Any, decimals: int = 1) -> str:
+    """Format a numeric value to a fixed precision, preserving unknown values."""
+    if val is None:
+        return "-"
+    if is_number(val):
+        return f"{val:.{decimals}f}"
+    return str(val)
+
+
+def format_burn(val: Any, decimals: int = 1) -> str:
+    """Format a quota burn percentage, or ``-`` when it is unavailable."""
+    if is_number(val):
+        return f"{val:.{decimals}f}%"
+    return "-"
+
+
+def format_pareto(val: Any) -> str:
+    """Format a Pareto-frontier flag for display."""
+    if val is None:
+        return "-"
+    return "Yes" if val else "No"
+
+
+def format_multiplier(multiplier: float | None, next_change: dict[str, Any] | None = None) -> str:
+    """Format a price multiplier and optional upcoming ``{multiplier, at}`` change."""
+    if multiplier is None:
+        return "-"
+    cell = f"x{multiplier:.3g}"
+    if next_change and next_change.get("at") and next_change.get("multiplier") is not None:
+        cell += f" (-> x{next_change['multiplier']:.3g} @ {next_change['at']})"
+    return cell
+
+
+def format_privacy(privacy: dict[str, Any] | None) -> str:
+    """Format serialized privacy metadata as a human-readable summary."""
+    if not privacy:
+        return "No privacy metadata"
+    parts: list[str] = []
+    if privacy.get("zdr"):
+        parts.append("ZDR (0d retention)")
+    elif privacy.get("retention_days") is not None:
+        parts.append(f"{privacy['retention_days']}d retention")
+    else:
+        parts.append("Retention unspecified")
+    parts.append("trains on data" if privacy.get("trains_on_data") else "no training")
+    if privacy.get("requires_global_region"):
+        parts.append("requires Global region")
+    if privacy.get("agreement_valid_until"):
+        parts.append(f"agreement valid through {privacy['agreement_valid_until']}")
+    if privacy.get("note"):
+        parts.append(str(privacy["note"]))
+    return "; ".join(parts)
+
+
+def round_chart_num(val: Any) -> float | int:
+    """Return a finite chart number rounded to four decimal places, or zero."""
+    if is_number(val) and not math.isinf(val) and not math.isnan(val):
+        return int(val) if float(val).is_integer() else round(float(val), 4)
+    return 0
 
 
 def render_markdown_table(

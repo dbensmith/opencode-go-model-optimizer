@@ -9,13 +9,16 @@ from typing import Any
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
     format_allowance_value,
+    format_burn,
     format_cost_value,
+    format_float,
+    format_int,
+    format_privacy,
     is_number,
     render_markdown_table,
     render_mermaid_pie,
     render_run_settings_lines,
 )
-from opencode_go_model_optimizer.formatters.table import format_multiplier
 
 _RANKED_CATALOG_COLUMN_NAMES = (
     "Rank",
@@ -31,68 +34,6 @@ _RANKED_CATALOG_COLUMN_NAMES = (
     "Release",
     "Privacy",
 )
-
-
-def _fmt_allowance(val: Any) -> str:
-    return format_allowance_value(val, compact=False, unlimited_label="Unlimited")
-
-
-def _fmt_output_cost(val: Any) -> str:
-    return format_cost_value(val, compact=False, suffix="/1M", free_label="Free")
-
-
-def _fmt_int(val: Any) -> str:
-    if val is None:
-        return "-"
-    if val == "unlimited":
-        return "Unlimited"
-    if is_number(val):
-        return f"{int(val):,}" if float(val).is_integer() else f"{val:,.1f}"
-    return str(val)
-
-
-def _fmt_float(val: Any, decimals: int = 1) -> str:
-    if val is None:
-        return "-"
-    if is_number(val):
-        return f"{val:.{decimals}f}"
-    return str(val)
-
-
-def _fmt_burn(val: Any, decimals: int = 1) -> str:
-    if is_number(val):
-        return f"{val:.{decimals}f}%"
-    return "-"
-
-
-def _fmt_pareto(val: Any) -> str:
-    if val is None:
-        return "-"
-    return "Yes" if val else "No"
-
-
-def _fmt_multiplier(ex: dict[str, Any]) -> str:
-    return format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change"))
-
-
-def _fmt_privacy(privacy: dict[str, Any] | None) -> str:
-    if not privacy:
-        return "No privacy metadata"
-    parts: list[str] = []
-    if privacy.get("zdr"):
-        parts.append("ZDR (0d retention)")
-    elif privacy.get("retention_days") is not None:
-        parts.append(f"{privacy['retention_days']}d retention")
-    else:
-        parts.append("Retention unspecified")
-    parts.append("trains on data" if privacy.get("trains_on_data") else "no training")
-    if privacy.get("requires_global_region"):
-        parts.append("requires Global region")
-    if privacy.get("agreement_valid_until"):
-        parts.append(f"agreement valid through {privacy['agreement_valid_until']}")
-    if privacy.get("note"):
-        parts.append(str(privacy["note"]))
-    return "; ".join(parts)
 
 
 def _normalize_site_url(site_url: str | None) -> str | None:
@@ -196,11 +137,11 @@ def _ranked_catalog_cells(m: dict[str, Any]) -> list[str]:
     """Extract cell values for one full-catalog markdown table row."""
     model_id = m["full_id"]
     tier = m.get("tier", "-")
-    bpe_s = _fmt_float(m.get("bpe"), 3)
-    iq_s = _fmt_float(m.get("aa_iq"), 1)
-    eng_s = _fmt_float(m.get("aa_coding"), 1)
-    burn_s = _fmt_burn(_model_burn_pct(m))
-    allowance_s = _fmt_allowance(m.get("monthly_allowance"))
+    bpe_s = format_float(m.get("bpe"), 3)
+    iq_s = format_float(m.get("aa_iq"), 1)
+    eng_s = format_float(m.get("aa_coding"), 1)
+    burn_s = format_burn(_model_burn_pct(m))
+    allowance_s = format_allowance_value(m.get("monthly_allowance"))
 
     if m.get("is_zero_cost"):
         output_s = "Free"
@@ -208,21 +149,21 @@ def _ranked_catalog_cells(m: dict[str, Any]) -> list[str]:
         cost_dict = m.get("cost") or {}
         output_cost = cost_dict.get("output")
         if output_cost is not None:
-            output_s = _fmt_output_cost(output_cost)
+            output_s = format_cost_value(output_cost)
         else:
-            output_s = _fmt_output_cost(m.get("output_cost_per_1m"))
+            output_s = format_cost_value(m.get("output_cost_per_1m"))
 
     limit_dict = m.get("limit") or {}
     ctx_val = limit_dict.get("context") if limit_dict else None
     if ctx_val is None:
         ctx_val = m.get("context")
-    ctx_s = _fmt_int(ctx_val)
+    ctx_s = format_int(ctx_val)
 
     rank_val = m.get("rank")
     rank_s = str(rank_val) if rank_val is not None else "-"
 
     release = m.get("release_date") or "-"
-    priv = _fmt_privacy(m.get("privacy"))
+    priv = format_privacy(m.get("privacy"))
     return [
         rank_s,
         f"`{model_id}`",

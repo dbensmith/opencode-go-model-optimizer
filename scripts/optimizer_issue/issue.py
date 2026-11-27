@@ -5,6 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from opencode_go_model_optimizer.formatters.markdown import (
+    format_allowance_value,
+    format_burn,
+    format_cost_value,
+    format_float,
+    format_int,
+    format_multiplier,
+    format_pareto,
+    format_privacy,
     is_number,
     render_details_block,
     render_markdown_table,
@@ -14,14 +22,6 @@ from opencode_go_model_optimizer.formatters.markdown import (
 )
 
 from .common import (
-    _fmt_allowance,
-    _fmt_burn,
-    _fmt_float,
-    _fmt_int,
-    _fmt_multiplier,
-    _fmt_output_cost,
-    _fmt_pareto,
-    _fmt_privacy,
     _normalize_site_url,
     _ordered_tiers,
     _render_ranked_catalog_rows,
@@ -42,7 +42,7 @@ def _tier_flowchart_label(tier: str, explanations: dict[str, Any], tiers: dict[s
         return f"{tier}: None"
     ex = explanations.get(tier) or {}
     clean_id = pick.removeprefix("opencode-go/")
-    allow_str = _fmt_allowance(ex.get("monthly_allowance"))
+    allow_str = format_allowance_value(ex.get("monthly_allowance"))
     burn_val = ex.get("quota_burn_pct")
     burn_part = f"{burn_val:.1f}% burn" if is_number(burn_val) else "- burn"
     return f"{tier}: {clean_id} ({allow_str}, {burn_part})"
@@ -170,19 +170,19 @@ def _render_tier_explanations(
             continue
 
         lines.append(
-            f"- **Pricing & Allowance**: {_fmt_allowance(ex.get('monthly_allowance'))} monthly allowance, "
-            f"{_fmt_output_cost(ex.get('output_cost_per_1m'))} output cost, "
+            f"- **Pricing & Allowance**: {format_allowance_value(ex.get('monthly_allowance'))} monthly allowance, "
+            f"{format_cost_value(ex.get('output_cost_per_1m'))} output cost, "
             f"${ex.get('turn_cost_usd', 0.0):.4f}/turn"
             + (
-                f", price multiplier `{_fmt_multiplier(ex)}`"
+                f", price multiplier `{format_multiplier(ex.get('price_multiplier'), ex.get('next_price_change'))}`"
                 if ex.get("price_multiplier") is not None
                 else ""
             )
             + "."
         )
-        burn_str = _fmt_burn(ex.get("quota_burn_pct"), 2)
-        req_5h = _fmt_int(ex.get("requests_per_5h"))
-        req_mo = _fmt_int(ex.get("requests_per_month"))
+        burn_str = format_burn(ex.get("quota_burn_pct"), 2)
+        req_5h = format_int(ex.get("requests_per_5h"))
+        req_mo = format_int(ex.get("requests_per_month"))
         basis = ex.get("burn_basis_used") or "-"
         lines.append(
             f"- **Quota Burn**: {burn_str} per 1k turns (basis: `{basis}`); "
@@ -192,14 +192,14 @@ def _render_tier_explanations(
             ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto")
         ):
             lines.append(
-                f"- **Benchmarks & Pareto**: IQ `{_fmt_float(ex.get('aa_iq'), 1)}`, "
-                f"Coding `{_fmt_float(ex.get('aa_coding'), 1)}`, "
-                f"Speed `{_fmt_float(ex.get('speed_tps'), 1)} tok/s`, "
-                f"BPE `{_fmt_float(ex.get('bpe'), 3)}`, "
-                f"Pareto frontier `{_fmt_pareto(ex.get('is_pareto'))}`."
+                f"- **Benchmarks & Pareto**: IQ `{format_float(ex.get('aa_iq'), 1)}`, "
+                f"Coding `{format_float(ex.get('aa_coding'), 1)}`, "
+                f"Speed `{format_float(ex.get('speed_tps'), 1)} tok/s`, "
+                f"BPE `{format_float(ex.get('bpe'), 3)}`, "
+                f"Pareto frontier `{format_pareto(ex.get('is_pareto'))}`."
             )
         if ex.get("privacy") is not None:
-            priv_text = _fmt_privacy(ex.get("privacy")).rstrip(".")
+            priv_text = format_privacy(ex.get("privacy")).rstrip(".")
             lines.append(f"- **Privacy**: {priv_text}.")
     return lines
 
@@ -298,24 +298,24 @@ def render_issue_markdown(
         model_id = _tier_pick_id(tier, explanations, tiers)
         if any(ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps")):
             has_aa_data = True
-        burn_str = _fmt_burn(ex.get("quota_burn_pct"))
+        burn_str = format_burn(ex.get("quota_burn_pct"))
         turn_cost = ex.get("turn_cost_usd")
         turn_str = f"${turn_cost:.4f}" if is_number(turn_cost) else "-"
         choice_rows.append(
             [
                 f"**{tier}**",
                 f"`{model_id}`",
-                _fmt_allowance(ex.get("monthly_allowance")),
-                _fmt_output_cost(ex.get("output_cost_per_1m")),
-                _fmt_int(ex.get("context")),
-                _fmt_float(ex.get("aa_iq"), 1),
-                _fmt_float(ex.get("aa_coding"), 1),
-                _fmt_float(ex.get("speed_tps"), 1),
-                _fmt_float(ex.get("bpe"), 3),
-                _fmt_pareto(ex.get("is_pareto")),
+                format_allowance_value(ex.get("monthly_allowance")),
+                format_cost_value(ex.get("output_cost_per_1m")),
+                format_int(ex.get("context")),
+                format_float(ex.get("aa_iq"), 1),
+                format_float(ex.get("aa_coding"), 1),
+                format_float(ex.get("speed_tps"), 1),
+                format_float(ex.get("bpe"), 3),
+                format_pareto(ex.get("is_pareto")),
                 burn_str,
                 turn_str,
-                _fmt_multiplier(ex),
+                format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change")),
             ]
         )
 

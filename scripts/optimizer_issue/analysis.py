@@ -12,6 +12,10 @@ from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
 )
 from opencode_go_model_optimizer.formatters.markdown import (
+    format_allowance_value,
+    format_burn,
+    format_cost_value,
+    format_float,
     is_number,
     render_markdown_table,
     render_mermaid_flowchart,
@@ -21,10 +25,6 @@ from opencode_go_model_optimizer.formatters.markdown import (
 
 from .charts import generate_analysis_svgs
 from .common import (
-    _fmt_allowance,
-    _fmt_burn,
-    _fmt_float,
-    _fmt_output_cost,
     _model_burn_pct,
     _model_quality,
     _normalize_site_url,
@@ -157,9 +157,9 @@ def _render_multi_plan_section(
                     f"**{tier}**",
                     f"`{pick}`",
                     fallback_str,
-                    _fmt_allowance(ex.get("monthly_allowance")),
-                    _fmt_output_cost(ex.get("output_cost_per_1m")),
-                    _fmt_burn(burn),
+                    format_allowance_value(ex.get("monthly_allowance")),
+                    format_cost_value(ex.get("output_cost_per_1m")),
+                    format_burn(burn),
                 ]
             )
 
@@ -229,12 +229,12 @@ def _pareto_rows(
         rows.append(
             [
                 f"`{m['full_id']}`",
-                _fmt_float(m.get("aa_iq"), 1),
-                _fmt_float(m.get("aa_coding"), 1),
+                format_float(m.get("aa_iq"), 1),
+                format_float(m.get("aa_coding"), 1),
                 f"`{q:.1f}`",
-                _fmt_burn(burn),
-                _fmt_allowance(m.get("monthly_allowance")),
-                _fmt_float(value, 2),
+                format_burn(burn),
+                format_allowance_value(m.get("monthly_allowance")),
+                format_float(value, 2),
                 ", ".join(bands),
             ]
         )

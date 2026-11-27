@@ -33,14 +33,7 @@ from opencode_go_model_optimizer.ingest.models import (
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
 from opencode_go_model_optimizer.numbers import json_allowance, json_multiplier
-from opencode_go_model_optimizer.report_markdown import (
-    _bucket_exclusion_reason,
-    _fmt_cost,
-    _format_allowance,
-    _format_cluster_range,
-    _round_chart_num,
-    render_markdown,
-)
+from opencode_go_model_optimizer.report_markdown import render_markdown
 
 SCHEMA_VERSION = 1
 TOP_N = 3
@@ -282,12 +275,7 @@ __all__ = [
     "HOW_DECIDED",
     "SCHEMA_VERSION",
     "TOP_N",
-    "_bucket_exclusion_reason",
     "_candidate_row",
-    "_fmt_cost",
-    "_format_allowance",
-    "_format_cluster_range",
-    "_round_chart_num",
     "_strip_aa",
     "assert_no_aa",
     "build_report",
