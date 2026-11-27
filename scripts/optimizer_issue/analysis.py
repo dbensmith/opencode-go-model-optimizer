@@ -130,16 +130,6 @@ def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-def _extract_fallback_ids(raw_fallbacks: list[Any]) -> list[str]:
-    fallback_ids: list[str] = []
-    for fb in raw_fallbacks:
-        if isinstance(fb, str):
-            fallback_ids.append(fb)
-        elif isinstance(fb, dict) and fb.get("model_id"):
-            fallback_ids.append(str(fb["model_id"]))
-    return fallback_ids
-
-
 def _render_multi_plan_section(
     plan_payloads: dict[str, dict[str, Any]],
     generated_svgs: list[str],
@@ -161,9 +151,7 @@ def _render_multi_plan_section(
                 continue
             ex = explanations.get(tier) or {}
             pick = ex.get("model_id") or tiers_dict.get(tier) or "None"
-            fallback_ids = _extract_fallback_ids(
-                fallbacks_map.get(tier) or ex.get("fallbacks") or []
-            )
+            fallback_ids = [str(fb) for fb in fallbacks_map.get(tier) or []]
             fallback_str = ", ".join(f"`{fid}`" for fid in fallback_ids) if fallback_ids else "-"
             burn = _model_burn_pct(ex)
             table_rows.append(
