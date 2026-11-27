@@ -64,7 +64,7 @@ def catalogue_eligibility_reason(m: NormalizedModel, *, require_chat: bool) -> s
 
 
 def privacy_reason(m: NormalizedModel, c: SelectionCriteria) -> str | None:
-    """Return the privacy exclusion reason with the report's existing precedence."""
+    """Return why privacy criteria exclude a model."""
     p = m.privacy
     if p is None:
         if c.require_zdr or c.max_retention_days is not None:
@@ -72,21 +72,17 @@ def privacy_reason(m: NormalizedModel, c: SelectionCriteria) -> str | None:
         return None
     if p.requires_global_region and not c.allow_global_region:
         return "requires Global workspace region (enable --allow-global-region)"
-    training_reason = None
     if p.trains_on_data:
         if _is_free_candidate(m):
-            training_reason = "free model trains on request data (enable --allow-free-training)"
-            training_allowed = c.allow_free_training
-        else:
-            training_reason = "paid model trains on request data (enable --allow-paid-training)"
-            training_allowed = c.allow_paid_training
-        if not training_allowed:
-            return training_reason
+            if not c.allow_free_training:
+                return "free model trains on request data (enable --allow-free-training)"
+        elif not c.allow_paid_training:
+            return "paid model trains on request data (enable --allow-paid-training)"
     if (c.require_zdr and p.zdr is not True) or (
         c.max_retention_days is not None
         and (p.retention_days is None or p.retention_days > c.max_retention_days)
     ):
-        return training_reason or "excluded by privacy criteria"
+        return "excluded by privacy criteria"
     return None
 
 
