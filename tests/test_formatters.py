@@ -1,25 +1,39 @@
 """Tests for output formatters."""
 
 import json
+from datetime import UTC, datetime
 
+import pytest
+
+from opencode_go_model_optimizer import formatters
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.diff import ModelChange, SnapshotDiff
-from opencode_go_model_optimizer.formatters.output import (
+from opencode_go_model_optimizer.formatters import output as compat_output
+from opencode_go_model_optimizer.formatters.diff import (
     _format_diff_value,
-    _render_table,
-    explain_tiers,
     format_diff_json,
     format_diff_table,
-    format_rank_json,
-    format_rank_table,
+)
+from opencode_go_model_optimizer.formatters.rank import format_rank_json, format_rank_table
+from opencode_go_model_optimizer.formatters.select import (
+    explain_tiers,
     format_select_compact,
     format_select_env,
     format_select_github_output,
     format_select_json,
     format_select_table,
+    settings_payload,
     tier_display_names,
 )
-from opencode_go_model_optimizer.ingest.models import ModelLimit, NormalizedModel, TokenCost
+from opencode_go_model_optimizer.formatters.table import _append_column, _render_table, render_table
+from opencode_go_model_optimizer.ingest.models import (
+    ModelLimit,
+    NormalizedModel,
+    PriceMultiplier,
+    Privacy,
+    RequestEstimate,
+    TokenCost,
+)
 
 
 def test_format_select_json():
@@ -497,3 +511,176 @@ def test_explain_tiers_next_change_none():
     criteria = SelectionCriteria(at=datetime(2026, 11, 10, tzinfo=UTC))
     expl = explain_tiers({"heavy": "m1"}, [m], criteria=criteria)
     assert "next_price_change" not in expl["heavy"]
+
+
+def test_formatters_output_reexports_and_package_all():
+    expected_reexports = {
+        "_format_diff_value": _format_diff_value,
+        "_render_table": _render_table,
+        "render_table": render_table,
+        "settings_payload": settings_payload,
+        "explain_tiers": explain_tiers,
+        "tier_display_names": tier_display_names,
+        "format_select_json": format_select_json,
+        "format_select_compact": format_select_compact,
+        "format_select_env": format_select_env,
+        "format_select_github_output": format_select_github_output,
+        "format_select_table": format_select_table,
+        "format_rank_json": format_rank_json,
+        "format_rank_table": format_rank_table,
+        "format_diff_json": format_diff_json,
+        "format_diff_table": format_diff_table,
+    }
+    for name, symbol in expected_reexports.items():
+        assert getattr(compat_output, name) is symbol
+
+    for public_name in (
+        "explain_tiers",
+        "format_diff_json",
+        "format_diff_table",
+        "format_rank_json",
+        "format_rank_table",
+        "format_select_compact",
+        "format_select_env",
+        "format_select_github_output",
+        "format_select_json",
+        "format_select_table",
+        "render_table",
+        "settings_payload",
+        "tier_display_names",
+    ):
+        assert public_name in formatters.__all__
+        assert getattr(formatters, public_name) is expected_reexports[public_name]
+
+    assert render_table is _render_table
+    assert compat_output.format_select_compact({"heavy": "opencode-go/a"}) == "heavy opencode-go/a"
+
+
+def test_append_column_and_render_table():
+    headers = ["A", "B"]
+    rows = [["1", "2"], ["3", "4"]]
+    _append_column(headers, rows, "C", ["5", "6"])
+    assert headers == ["A", "B", "C"]
+    assert rows == [["1", "2", "5"], ["3", "4", "6"]]
+    rendered = render_table(headers, rows)
+    assert "| A | B | C |" in rendered
+    assert "| 3 | 4 | 6 |" in rendered
+
+    with pytest.raises(ValueError):
+        _append_column(headers, rows, "D", ["only-one"])
+
+
+def test_format_select_table_explain_multiplier_and_missing_padding():
+    future_mult = PriceMultiplier(factor=2.0, when={"date": {"gte": "2026-12-01"}})
+    m1 = NormalizedModel(
+        id="mod-mult",
+        provider_id="opencode-go",
+        name="Mod Mult",
+        monthly_allowance=60.0,
+        cost=TokenCost(input=1.0, output=2.0),
+        limit=ModelLimit(context=128000),
+        aa_iq=80.0,
+        bpe=1.2,
+        composite_burn_pct=12.5,
+        multipliers=[future_mult],
+    )
+    m1.price_multiplier = 1.0
+    m2 = NormalizedModel(
+        id="mod-plain",
+        provider_id="opencode-go",
+        name="Mod Plain",
+        monthly_allowance=30.0,
+        cost=TokenCost(input=0.5, output=1.0),
+    )
+    tiers = {
+        "heavy": "opencode-go/mod-mult",
+        "balanced": "opencode-go/mod-plain",
+        "light": "opencode-go/missing",
+        "free": "",
+    }
+    criteria = SelectionCriteria(at=datetime(2026, 11, 10, tzinfo=UTC))
+    table = format_select_table(tiers, [m1, m2], plan="go", explain=True, criteria=criteria)
+
+    data_rows = [line for line in table.splitlines() if line.startswith("| ")]
+    # Header + 4 tier rows, every row has 11 pipe-separated columns (12 pipes)
+    assert len(data_rows) == 5
+    for line in data_rows:
+        assert line.count("|") == 12
+    assert "Price x" in data_rows[0]
+    assert "x1 (-> x2 @ 2026-12-01T00:00+00:00)" in data_rows[1]
+    assert "| light" in data_rows[3] and "opencode-go/missing" in data_rows[3]
+    assert "| free" in data_rows[4] and "| None " in data_rows[4]
+
+
+def test_format_rank_table_optional_columns_and_empty():
+    m1 = NormalizedModel(
+        id="rank-1",
+        rank=1,
+        tier="heavy",
+        bpe=1.1,
+        aa_iq=85.0,
+        composite_burn_pct=15.0,
+        monthly_allowance=60.0,
+        cost=TokenCost(output=2.0),
+        release_date="2026-10-01",
+        limit=ModelLimit(context=200000),
+        privacy=Privacy(zdr=True, trains_on_data=False),
+    )
+    m1.request_estimate = RequestEstimate(per_5h=50.0, per_week=200.0, per_month=900.0)
+    m1.price_multiplier = 1.5
+    m2 = NormalizedModel(
+        id="rank-2",
+        rank=2,
+        status="preview",
+        privacy=Privacy(
+            retention_days=30,
+            trains_on_data=True,
+            requires_global_region=True,
+            limited_regions=True,
+        ),
+    )
+
+    for mode in ("pareto", "allowance"):
+        tbl = format_rank_table([m1, m2], mode=mode)
+        assert "Req/month" in tbl
+        assert "Privacy" in tbl
+        assert "Price x" in tbl
+        assert "900" in tbl
+        assert "ZDR" in tbl
+        assert "30d,train,global,limited" in tbl
+        assert "x1.5" in tbl
+
+    empty_tbl = format_rank_table([], mode="pareto")
+    assert "Rank" in empty_tbl
+    assert "BPE" in empty_tbl
+    assert "Price x" not in empty_tbl
+
+
+def test_settings_payload_and_diff_privacy_changes():
+    criteria = SelectionCriteria(
+        mode="pareto",
+        top_n=2,
+        profile="coding",
+        skip_models={"b", "a"},
+        preferred_tiers={"heavy": "m1"},
+        token_mix=(1000, 500, 200),
+        weights=(0.6, 0.3, 0.1),
+        at=datetime(2026, 11, 10, 12, 0, tzinfo=UTC),
+    )
+    payload = settings_payload(criteria)
+    assert payload["mode"] == "pareto"
+    assert payload["skip"] == ["a", "b"]
+    assert payload["prefer"] == {"heavy": "m1"}
+    assert payload["tokens"] == [1000, 500, 200]
+    assert payload["weights"] == [0.6, 0.3, 0.1]
+    assert payload["at"] == "2026-11-10T12:00:00+00:00"
+
+    diff = SnapshotDiff(
+        plan="go",
+        privacy_changes={"mod": {"zdr": (False, True)}},
+        capability_changes={"mod": {"context": (128000, 256000)}},
+    )
+    tbl = format_diff_table(diff)
+    assert "Capability / benchmark changes:" in tbl
+    assert "Privacy / region changes:" in tbl
+    assert "256000" in tbl
