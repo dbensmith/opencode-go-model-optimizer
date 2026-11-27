@@ -4,6 +4,7 @@ import bisect
 import math
 from collections.abc import Callable, Sequence
 from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 
 from opencode_go_model_optimizer.engine.allowance import tie_break_key
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -13,12 +14,52 @@ STD_IN = 750
 STD_CACHE = 60000
 STD_OUT = 250
 
-WORKLOAD_PROFILES: dict[str, tuple[int, int, int]] = {
-    "general": (STD_IN, STD_CACHE, STD_OUT),
-    "coding": (1500, 100000, 800),
-    "reasoning": (1000, 40000, 2000),
-    "fast": (500, 20000, 150),
+
+@dataclass(frozen=True)
+class WorkloadProfile:
+    """Token mix and quality-weighting parameters for a workload profile."""
+
+    token_mix: tuple[int, int, int]
+    iq_weight: float
+    coding_weight: float
+    speed_scaled: bool = False
+
+
+PROFILE_SPECS: dict[str, WorkloadProfile] = {
+    "general": WorkloadProfile(
+        token_mix=(STD_IN, STD_CACHE, STD_OUT),
+        iq_weight=0.7,
+        coding_weight=0.3,
+        speed_scaled=False,
+    ),
+    "coding": WorkloadProfile(
+        token_mix=(1500, 100000, 800),
+        iq_weight=0.4,
+        coding_weight=0.6,
+        speed_scaled=False,
+    ),
+    "reasoning": WorkloadProfile(
+        token_mix=(1000, 40000, 2000),
+        iq_weight=0.85,
+        coding_weight=0.15,
+        speed_scaled=False,
+    ),
+    "fast": WorkloadProfile(
+        token_mix=(500, 20000, 150),
+        iq_weight=0.7,
+        coding_weight=0.3,
+        speed_scaled=True,
+    ),
 }
+
+WORKLOAD_PROFILES: dict[str, tuple[int, int, int]] = {
+    name: spec.token_mix for name, spec in PROFILE_SPECS.items()
+}
+
+
+def model_burn(m: NormalizedModel) -> float:
+    """Return the model's composite burn percentage, defaulting to infinity when unset."""
+    return m.composite_burn_pct if m.composite_burn_pct is not None else float("inf")
 
 
 def compute_turn_cost(
@@ -29,11 +70,8 @@ def compute_turn_cost(
     """Compute the cost in USD of a standardized agentic turn for a given profile."""
     if m.is_zero_cost:
         return 0.0
-    t_in, t_cache, t_out = (
-        token_mix
-        if token_mix is not None
-        else WORKLOAD_PROFILES.get(profile, (STD_IN, STD_CACHE, STD_OUT))
-    )
+    spec = PROFILE_SPECS.get(profile, PROFILE_SPECS["general"])
+    t_in, t_cache, t_out = token_mix if token_mix is not None else spec.token_mix
     return (t_in * m.cost.input + t_cache * m.cost.cache_read + t_out * m.cost.output) / 1_000_000.0
 
 
@@ -108,16 +146,12 @@ def effective_quality(
     weights: tuple[float, float] | None = None,
 ) -> float:
     """Compute effective quality score combining intelligence and coding indices."""
+    spec = PROFILE_SPECS.get(profile, PROFILE_SPECS["general"])
     if m.aa_iq is not None and m.aa_coding is not None:
-        if weights is not None:
-            iq_weight, coding_weight = weights
-            base_q = iq_weight * m.aa_iq + coding_weight * m.aa_coding
-        elif profile == "coding":
-            base_q = 0.4 * m.aa_iq + 0.6 * m.aa_coding
-        elif profile == "reasoning":
-            base_q = 0.85 * m.aa_iq + 0.15 * m.aa_coding
-        else:
-            base_q = 0.7 * m.aa_iq + 0.3 * m.aa_coding
+        iq_weight, coding_weight = (
+            weights if weights is not None else (spec.iq_weight, spec.coding_weight)
+        )
+        base_q = iq_weight * m.aa_iq + coding_weight * m.aa_coding
     elif m.aa_iq is not None:
         base_q = float(m.aa_iq)
     elif m.aa_coding is not None:
@@ -125,7 +159,7 @@ def effective_quality(
     else:
         base_q = 0.0
 
-    if profile == "fast" and base_q > 0 and m.speed_tps is not None and m.speed_tps > 0:
+    if spec.speed_scaled and base_q > 0 and m.speed_tps is not None and m.speed_tps > 0:
         return base_q * (0.85 + 0.15 * min(2.0, m.speed_tps / 100.0))
     return base_q
 
