@@ -1281,3 +1281,14 @@ def test_select_strict_empty_tier(tmp_path, capsys):
         "opencode-go-model-optimizer: error: no model available for tier(s): "
         "heavy, balanced, light, free"
     ) in captured.err
+
+
+def test_parse_at_utc_normalization_and_validation():
+    naive = parse_args(["select", "--at", "2026-06-01T12:00:00"]).at
+    assert naive == datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    offset = parse_args(["select", "--at", "2026-06-01T14:00:00+02:00"]).at
+    assert offset == datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    with pytest.raises(SystemExit):
+        parse_args(["select", "--at", "not-a-timestamp"])
