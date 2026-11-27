@@ -1,5 +1,9 @@
 """Ingestion modules for OpenCode Go Model Optimizer."""
 
+from opencode_go_model_optimizer.ingest.artificial_analysis import (
+    fetch_aa_benchmarks,
+    lookup_aa_benchmark,
+)
 from opencode_go_model_optimizer.ingest.catalogue import (
     apply_request_estimates,
     estimate_requests,
@@ -60,6 +64,7 @@ __all__ = [
     "apply_request_estimates",
     "create_snapshot",
     "estimate_requests",
+    "fetch_aa_benchmarks",
     "fetch_and_build_snapshot",
     "fetch_catalogue",
     "fetch_console_profiles",
@@ -68,6 +73,7 @@ __all__ = [
     "get_cache_snapshot_path",
     "load_cached_snapshot",
     "load_snapshot",
+    "lookup_aa_benchmark",
     "merge_catalogue_metadata",
     "model_from_dict",
     "norm_name",

@@ -1638,3 +1638,19 @@ def test_fetch_and_build_warns_when_console_profiles_are_unavailable():
         snap = fetch_and_build_snapshot(plan="go")
     assert snap.models[0].request_estimates == {}
     assert any("console request profiles" in w for w in snap.warnings)
+
+
+def test_artificial_analysis_module_exports_and_lookup():
+    from opencode_go_model_optimizer import ingest
+    from opencode_go_model_optimizer.ingest import artificial_analysis, snapshot
+
+    assert ingest.fetch_aa_benchmarks is artificial_analysis.fetch_aa_benchmarks
+    assert ingest.lookup_aa_benchmark is artificial_analysis.lookup_aa_benchmark
+    assert snapshot.fetch_aa_benchmarks is artificial_analysis.fetch_aa_benchmarks
+    assert snapshot.lookup_aa_benchmark is artificial_analysis.lookup_aa_benchmark
+    assert snapshot._to_float is artificial_analysis._to_float
+
+    model = NormalizedModel(id="glm-5", name="GLM-5")
+    benchmarks = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
+    assert artificial_analysis.lookup_aa_benchmark(model, benchmarks) == benchmarks["glm5"]
+    assert artificial_analysis.lookup_aa_benchmark(model, {}) is None
