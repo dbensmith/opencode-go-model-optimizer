@@ -13,7 +13,6 @@ from opencode_go_model_optimizer.engine.tiers import select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.docs import parse_privacy
 from opencode_go_model_optimizer.ingest.models import (
-    NormalizedModel,
     Privacy,
     Snapshot,
     TokenCost,
@@ -25,6 +24,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 from tests.conftest import CATALOGUE_HTTP_DATA as OC
 from tests.conftest import MDX_TEXT as MDX
+from tests.factories import make_model
 
 
 def test_parse_privacy_fixture():
@@ -69,7 +69,7 @@ def test_merge_privacy_catalogue_and_warnings():
 
 
 def test_warning_for_missing_privacy_row():
-    m = NormalizedModel(id="x", name="X")
+    m = make_model("x", name="X")
     warnings: list[str] = []
     merge_privacy([m], parse_privacy(MDX), warnings)
     assert m.privacy is None
@@ -78,9 +78,9 @@ def test_warning_for_missing_privacy_row():
 
 def test_missing_privacy_warning_only_covers_active_chat_models():
     models = [
-        NormalizedModel(id="active-chat"),
-        NormalizedModel(id="active-embedding", model_type="embedding"),
-        NormalizedModel(id="old-chat", status="deprecated"),
+        make_model("active-chat"),
+        make_model("active-embedding", model_type="embedding"),
+        make_model("old-chat", status="deprecated"),
     ]
     warnings: list[str] = []
 
@@ -97,8 +97,8 @@ def test_old_snapshot_without_privacy_loads():
 
 
 def _m(mid, privacy=None, out=0.0, allowance=None, release_date=""):
-    return NormalizedModel(
-        id=mid,
+    return make_model(
+        mid,
         name=mid,
         cost=TokenCost(input=out, output=out),
         monthly_allowance=allowance,
@@ -133,8 +133,8 @@ def test_passes_privacy(kw, privacy, ok):
 def test_passes_privacy_training_controls():
     paid_train = _m("paid", Privacy(trains_on_data=True), out=1.0, allowance=15.0)
     paid_clean = _m("paid-clean", Privacy(trains_on_data=False), out=1.0, allowance=15.0)
-    consent_train = NormalizedModel(
-        id="consent",
+    consent_train = make_model(
+        "consent",
         is_contributor=True,
         cost=TokenCost(input=1.0, output=1.0),
         monthly_allowance=15.0,
@@ -309,8 +309,8 @@ def test_parse_privacy_two_column_retention_table():
 
 
 def test_merge_privacy_keeps_catalogue_flags_and_adds_docs_retention():
-    m = NormalizedModel(
-        id="alpha",
+    m = make_model(
+        "alpha",
         name="Alpha",
         privacy=Privacy(
             trains_on_data=True,
