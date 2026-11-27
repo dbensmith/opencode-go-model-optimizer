@@ -6,12 +6,9 @@ from pydantic import BaseModel, Field
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, resolve_mode, select_tiers
-from opencode_go_model_optimizer.ingest.models import (
-    NormalizedModel,
-    Snapshot,
-    serialize_inf_float,
-)
+from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
+from opencode_go_model_optimizer.numbers import serialize_inf_float
 
 ChangeType = Literal["added", "removed", "deprecated", "modified"]
 

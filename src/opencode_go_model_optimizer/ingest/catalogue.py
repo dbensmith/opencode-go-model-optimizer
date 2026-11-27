@@ -19,9 +19,9 @@ from opencode_go_model_optimizer.ingest.models import (
     Privacy,
     RequestEstimate,
     TokenCost,
-    parse_inf_float,
     publishes_monthly_allowance,
 )
+from opencode_go_model_optimizer.numbers import coerce_nested_float, parse_inf_float
 
 DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
 HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
@@ -29,29 +29,6 @@ HEADER_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+/[a-zA-Z0-9._\-]+$")
 _FIVE_HOUR_FRACTION = 0.2  # docs: the 5-hour window is 20% of the monthly allowance
 _WEEK_FRACTION = 0.5  # docs: the weekly window is 50% of the monthly allowance
 _MONTH_FRACTION = 1.0
-
-
-def _safe_float(val: Any) -> float:
-    """Safely convert value to float, handling nested dicts, strings, and nulls."""
-    if val is None or isinstance(val, bool):
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    if isinstance(val, dict):
-        for k in ("price", "default", "standard"):
-            if k in val and not isinstance(val[k], bool) and isinstance(val[k], (int, float, str)):
-                return _safe_float(val[k])
-        for v in val.values():
-            if not isinstance(v, bool) and isinstance(v, (int, float, str)):
-                try:
-                    return float(v)
-                except ValueError, TypeError:
-                    continue
-        return 0.0
-    try:
-        return float(val)
-    except ValueError, TypeError:
-        return 0.0
 
 
 def _extract_token_cost(cost_raw: Any) -> TokenCost:
@@ -77,10 +54,10 @@ def _extract_token_cost(cost_raw: Any) -> TokenCost:
     cache_write = cache_obj.get("write", 0.0) if isinstance(cache_obj, dict) else 0.0
 
     return TokenCost(
-        input=_safe_float(inp_price),
-        output=_safe_float(out_price),
-        cache_read=_safe_float(cache_read),
-        cache_write=_safe_float(cache_write),
+        input=coerce_nested_float(inp_price),
+        output=coerce_nested_float(out_price),
+        cache_read=coerce_nested_float(cache_read),
+        cache_write=coerce_nested_float(cache_write),
     )
 
 

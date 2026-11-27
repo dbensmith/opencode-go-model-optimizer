@@ -510,6 +510,7 @@ Code lives in `src/opencode_go_model_optimizer/`, one package per pipeline stage
 | `engine/` | Selection logic: `pareto`, `allowance`, `pricing`, `criteria`, `tiers`, `diff` |
 | `formatters/` | Output renderers per command (`select`, `rank`, `diff`) plus shared `table` and `markdown` helpers; the package `__init__` is the public entry point |
 | `cli_parser.py`, `cli.py` | Argument parsing and command dispatch |
+| `numbers.py` | Shared numeric coercion and infinity serialization |
 | `report.py`, `report_markdown.py` | The `report` command and its Markdown output |
 
 `scripts/render_optimizer_issue.py` and `scripts/optimizer_issue/` render the CI issue and Docsify pages from the optimizer's JSON outputs.

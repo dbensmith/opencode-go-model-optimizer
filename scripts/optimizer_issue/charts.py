@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from opencode_go_model_optimizer.engine.tiers import PAID_TIERS
+from opencode_go_model_optimizer.numbers import to_float
 
 from .common import _model_burn_pct, _model_id, _model_quality
 
@@ -53,7 +54,7 @@ _SVG_CSS_STYLES = """
 def _as_float(val: Any) -> float | None:
     """Return float(val) for real numeric values, excluding booleans."""
     if isinstance(val, (int, float)) and not isinstance(val, bool):
-        return float(val)
+        return to_float(val)
     return None
 
 

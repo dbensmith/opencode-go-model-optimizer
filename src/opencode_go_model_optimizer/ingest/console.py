@@ -16,6 +16,7 @@ from urllib.parse import urljoin
 import httpx
 
 from opencode_go_model_optimizer.ingest.http import client_scope
+from opencode_go_model_optimizer.numbers import to_float
 
 CONSOLE_PAGE_URL = "https://opencode.ai/console/go"
 
@@ -38,7 +39,7 @@ class RequestProfiles:
 
 
 def _number(value: str) -> int:
-    return round(float(value))
+    return round(to_float(value))
 
 
 def parse_console_profiles(js: str, source_url: str = "") -> RequestProfiles | None:
