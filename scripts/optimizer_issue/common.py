@@ -8,30 +8,41 @@ from typing import Any
 
 from opencode_go_model_optimizer.engine.pareto import effective_quality
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
+from opencode_go_model_optimizer.formatters.markdown import (
+    format_allowance_value,
+    format_cost_value,
+    render_markdown_table,
+    render_mermaid_pie,
+    render_run_settings_lines,
+)
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
+_RANKED_CATALOG_COLUMN_NAMES = (
+    "Rank",
+    "Model ID",
+    "Tier",
+    "BPE",
+    "AA IQ",
+    "Engineering",
+    "Burn %",
+    "Allowance",
+    "Output Cost",
+    "Context",
+    "Release",
+    "Privacy",
+)
 _RANKED_CATALOG_HEADERS = (
-    "| Rank | Model ID | Tier | BPE | AA IQ | Engineering | Burn % | Allowance | Output Cost | Context | Release | Privacy |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| " + " | ".join(_RANKED_CATALOG_COLUMN_NAMES) + " |",
+    "| " + " | ".join("---" for _ in _RANKED_CATALOG_COLUMN_NAMES) + " |",
 )
 
 
 def _fmt_allowance(val: Any) -> str:
-    if val is None:
-        return "-"
-    if val == "unlimited":
-        return "Unlimited"
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
-        return f"${val:.2f}"
-    return str(val)
+    return format_allowance_value(val, compact=False, unlimited_label="Unlimited")
 
 
 def _fmt_output_cost(val: Any) -> str:
-    if val is None:
-        return "-"
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
-        return "Free" if val == 0 else f"${val:.2f}/1M"
-    return str(val)
+    return format_cost_value(val, compact=False, suffix="/1M", free_label="Free")
 
 
 def _fmt_int(val: Any) -> str:
@@ -204,37 +215,53 @@ def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[s
     settings = payload.get("settings") or {}
     if not settings:
         return []
-    lines = [
+    return [
         "",
-        "### Run Settings",
-        "",
-        f"- **Mode**: `{settings.get('mode', default_mode)}` | **Profile**: `{settings.get('profile', 'general')}` "
-        f"| **Price basis**: `{settings.get('price_basis', '-')}` | **Burn basis**: `{settings.get('burn_basis', '-')}` "
-        f"| **Top N**: `{settings.get('top_n', 1)}`",
-        f"- **Global regions**: {'allowed' if settings.get('allow_global_region') else 'blocked'} "
-        f"| **Paid training**: {'allowed' if settings.get('allow_paid_training') else 'blocked'} "
-        f"| **Free training**: {'allowed' if settings.get('allow_free_training') else 'blocked'}",
-        f"- **Filters**: max retention `{settings.get('max_retention_days') or 'none'}` "
-        f"| ZDR required `{settings.get('require_zdr', False)}` "
-        f"| min context `{settings.get('min_context', 0)}` "
-        f"| min output `{settings.get('min_output', 0)}` "
-        f"| max output cost `{settings.get('max_output_cost') or 'none'}` "
-        f"| max burn `{settings.get('max_burn') or 'none'}`",
+        *render_run_settings_lines(
+            settings,
+            heading="### Run Settings",
+            default_mode=default_mode,
+            default_top_n=1,
+        ),
     ]
-    skip = settings.get("skip") or []
-    prefer = settings.get("prefer") or {}
-    if skip or prefer:
-        extras = []
-        if skip:
-            extras.append(f"skip `{', '.join(skip)}`")
-        if prefer:
-            extras.append("prefer " + ", ".join(f"`{k}={v}`" for k, v in prefer.items()))
-        lines.append("- **Overrides**: " + " | ".join(extras))
+
+
+def _render_report_header(
+    heading: str,
+    payload: dict[str, Any],
+    *,
+    default_mode: str,
+    run_url: str | None,
+    site_base: str | None,
+    include_pages_home: bool,
+) -> list[str]:
+    """Render the common metadata header shared by issue and analysis pages."""
+    plan = payload.get("plan", "go")
+    mode = payload.get("mode", default_mode)
+    evaluated_at = payload.get("evaluated_at", "-")
+    snapshot = payload.get("snapshot") or {}
+    snap_source = snapshot.get("source", "-")
+    fetched_at = snapshot.get("fetched_at", "-")
+    benchmark_source = snapshot.get("benchmark_source", "none")
+
+    lines = [
+        heading,
+        "",
+        f"- **Updated**: `{evaluated_at}`",
+        f"- **Plan**: `{plan}` | **Mode**: `{mode}` | **Snapshot**: `{snap_source}` (`{fetched_at}`) | **Benchmarks**: `{benchmark_source}`",
+    ]
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+    if site_base:
+        if include_pages_home:
+            lines.append(f"- **GitHub Pages**: {site_base}")
+        lines.append(f"- **All data & other choices**: {_site_page(site_base, 'data')}")
+    lines.extend(_format_settings_lines(payload, mode))
     return lines
 
 
-def _ranked_catalog_row(m: dict[str, Any]) -> str:
-    """Render one full-catalog markdown table row from a rank JSON model entry."""
+def _ranked_catalog_cells(m: dict[str, Any]) -> list[str]:
+    """Extract cell values for one full-catalog markdown table row."""
     model_id = _model_id(m)
     tier = m.get("tier", "-")
     bpe_s = _fmt_float(m.get("bpe"), 3)
@@ -264,10 +291,35 @@ def _ranked_catalog_row(m: dict[str, Any]) -> str:
 
     release = m.get("release_date") or "-"
     priv = _fmt_privacy(m.get("privacy"))
-    return (
-        f"| {rank_s} | `{model_id}` | {tier} | {bpe_s} | {iq_s} | {eng_s} | {burn_s} "
-        f"| {allowance_s} | {output_s} | {ctx_s} | {release} | {priv} |"
+    return [
+        rank_s,
+        f"`{model_id}`",
+        str(tier),
+        bpe_s,
+        iq_s,
+        eng_s,
+        burn_s,
+        allowance_s,
+        output_s,
+        ctx_s,
+        str(release),
+        priv,
+    ]
+
+
+def _ranked_catalog_row(m: dict[str, Any]) -> str:
+    """Render one full-catalog markdown table row from a rank JSON model entry."""
+    return "| " + " | ".join(_ranked_catalog_cells(m)) + " |"
+
+
+def _render_ranked_catalog_rows(rank_models: list[dict[str, Any]]) -> list[str]:
+    """Render the full ranked catalog Markdown table and composition pie chart."""
+    lines = render_markdown_table(
+        _RANKED_CATALOG_COLUMN_NAMES,
+        [_ranked_catalog_cells(m) for m in rank_models],
     )
+    lines.extend(_catalog_composition_pie_lines(rank_models))
+    return lines
 
 
 def _catalog_composition_pie_lines(rank_models: list[dict[str, Any]]) -> list[str]:
@@ -293,23 +345,16 @@ def _catalog_composition_pie_lines(rank_models: list[dict[str, Any]]) -> list[st
         else:
             unbenchmarked_count += 1
 
-    pie_lines = [
-        "",
-        "```mermaid",
-        "pie showData",
-        '    title "Catalog Composition by Eligibility & Frontier Status"',
-    ]
-    slices = [
-        ("Pareto Frontier", pareto_count),
-        ("Paid (Non-Frontier)", paid_non_frontier_count),
-        ("Free / Zero-Cost", free_count),
-        ("Unbenchmarked Paid", unbenchmarked_count),
-    ]
-    for name, count in slices:
-        if count > 0:
-            pie_lines.append(f'    "{name}" : {count}')
-    pie_lines.append("```")
-    return pie_lines
+    pie_lines = render_mermaid_pie(
+        "Catalog Composition by Eligibility & Frontier Status",
+        [
+            ("Pareto Frontier", pareto_count),
+            ("Paid (Non-Frontier)", paid_non_frontier_count),
+            ("Free / Zero-Cost", free_count),
+            ("Unbenchmarked Paid", unbenchmarked_count),
+        ],
+    )
+    return ["", *pie_lines] if pie_lines else []
 
 
 def _load_rank_models(path: str | None) -> list[dict[str, Any]]:

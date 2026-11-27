@@ -23,7 +23,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
     select_tiers,
 )
-from opencode_go_model_optimizer.formatters.output import explain_tiers
+from opencode_go_model_optimizer.formatters.output import explain_tiers, settings_payload
 from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
@@ -33,6 +33,14 @@ from opencode_go_model_optimizer.ingest.models import (
     serialize_inf_float,
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
+from opencode_go_model_optimizer.report_markdown import (
+    _bucket_exclusion_reason,
+    _fmt_cost,
+    _format_allowance,
+    _format_cluster_range,
+    _round_chart_num,
+    render_markdown,
+)
 
 SCHEMA_VERSION = 1
 TOP_N = 3
@@ -206,24 +214,7 @@ def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, A
     section = {
         "plan": plan,
         "mode": "allowance",
-        "criteria": {
-            "top_n": TOP_N,
-            "price_basis": criteria.price_basis,
-            "burn_basis": criteria.burn_basis,
-            "profile": criteria.profile,
-            "allow_global_region": criteria.allow_global_region,
-            "allow_paid_training": criteria.allow_paid_training,
-            "allow_free_training": criteria.allow_free_training,
-            "max_retention_days": criteria.max_retention_days,
-            "require_zdr": criteria.require_zdr,
-            "min_context": criteria.min_context,
-            "min_output": criteria.min_output,
-            "max_output_cost": criteria.max_output_cost,
-            "max_burn": criteria.max_burn,
-            "skip": sorted(criteria.skip_models),
-            "prefer": dict(sorted(criteria.preferred_tiers.items())),
-            "at": now.isoformat(timespec="seconds"),
-        },
+        "criteria": settings_payload(criteria),
         "tiers": {t: tiers[t]["model_id"] or "" for t in STANDARD_TIERS},
         "fallbacks": {t: tiers[t]["fallbacks"] for t in STANDARD_TIERS},
         "explanations": tiers,
@@ -288,267 +279,30 @@ def build_report(
     return report
 
 
-def _fmt_cost(value: Any) -> str:
-    return "-" if value is None else f"${value:g}"
-
-
-def _format_allowance(val: Any) -> str:
-    if val is None:
-        return "-"
-    if isinstance(val, (int, float)) and not math.isinf(val) and not math.isnan(val):
-        return f"${val:g}"
-    return str(val)
-
-
-def _format_cluster_range(cluster: dict[str, Any] | None) -> str:
-    if cluster and cluster.get("output_cost_per_1m_range"):
-        lo, hi = cluster["output_cost_per_1m_range"]
-        return f"${lo:g}-${hi:g}/1M"
-    return "N/A"
-
-
-def _bucket_exclusion_reason(reason: str) -> str:
-    r = reason.lower()
-    if "global" in r:
-        return "Global Region Required"
-    if "not a text model" in r:
-        return "Non-text Model"
-    if "zero-priced" in r:
-        return "Incomplete Catalogue Data"
-    if "free model trains" in r:
-        return "Free Model Trains"
-    if "paid model trains" in r:
-        return "Paid Model Trains"
-    if "not active" in r or "status is" in r:
-        return "Not Active"
-    return "Unpriced / Other"
-
-
-def _round_chart_num(val: Any) -> float | int:
-    if isinstance(val, (int, float)) and not math.isinf(val) and not math.isnan(val):
-        return int(val) if float(val).is_integer() else round(float(val), 4)
-    return 0
-
-
-def render_markdown(report: dict[str, Any]) -> str:
-    """Render the report as human-readable Markdown."""
-    lines = [
-        "# OpenCode Go model tiers",
-        "",
-        f"Generated {report['generated_at']} by opencode-go-model-optimizer "
-        f"{report['tool_version']}"
-        + (f" (commit `{report['git_sha']}`)" if report["git_sha"] else "")
-        + ". Allowance mode, default criteria, top 3 per tier.",
-        "",
-    ]
-    first_plan = next(iter(report.get("plans", {}).values()), {})
-    criteria = first_plan.get("criteria") or {}
-    if criteria:
-        lines += [
-            "## Run settings",
-            "",
-            f"- **Mode**: `{criteria.get('mode', 'allowance')}` | **Profile**: `{criteria.get('profile', 'general')}` "
-            f"| **Price basis**: `{criteria.get('price_basis', '-')}` | **Burn basis**: `{criteria.get('burn_basis', '-')}` "
-            f"| **Top N**: `{criteria.get('top_n', TOP_N)}`",
-            f"- **Global regions**: {'allowed' if criteria.get('allow_global_region') else 'blocked'} "
-            f"| **Paid training**: {'allowed' if criteria.get('allow_paid_training') else 'blocked'} "
-            f"| **Free training**: {'allowed' if criteria.get('allow_free_training') else 'blocked'}",
-            f"- **Filters**: max retention `{criteria.get('max_retention_days') or 'none'}` "
-            f"| ZDR required `{criteria.get('require_zdr', False)}` "
-            f"| min context `{criteria.get('min_context', 0)}` "
-            f"| min output `{criteria.get('min_output', 0)}` "
-            f"| max output cost `{criteria.get('max_output_cost') or 'none'}` "
-            f"| max burn `{criteria.get('max_burn') or 'none'}`",
-            "",
-        ]
-
-    # Cross-Plan Overview Diagram
-    if report.get("plans"):
-        flowchart_lines = ["```mermaid", "flowchart LR"]
-        for plan, section in report["plans"].items():
-            p_id = "plan_" + "".join(c if c.isalnum() else "_" for c in str(plan))
-            flowchart_lines.append(f'    {p_id}["Plan: {plan}"]')
-            tiers_data = section.get("explanations") or {}
-            tier_keys = [t for t in STANDARD_TIERS if t in tiers_data] or list(tiers_data.keys())
-            for tier in tier_keys:
-                entry = tiers_data[tier]
-                t_id = f"{p_id}_{tier}"
-                pick = entry.get("model_id") or "None"
-                ex = entry.get("explanation", {})
-                allowance_str = _format_allowance(ex.get("monthly_allowance"))
-                cluster_str = _format_cluster_range(entry.get("cluster"))
-                label = f"{tier}: {pick} (Allowance: {allowance_str}, Cluster: {cluster_str})"
-                label_safe = label.replace('"', "'")
-                flowchart_lines.append(f'    {p_id} --> {t_id}["{label_safe}"]')
-        flowchart_lines += ["```", ""]
-        lines += flowchart_lines
-
-    for plan, section in report.get("plans", {}).items():
-        lines += [f"## Plan: {plan}", ""]
-        lines += [
-            "| Tier | Pick | Allowance | Out $/1M | Price x | Burn %/1k turns | Basis | Fallbacks |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
-        ]
-        for tier, entry in section.get("explanations", {}).items():
-            ex = entry["explanation"]
-            fb = ", ".join(f"`{f}`" for f in entry["fallbacks"]) or "-"
-            lines.append(
-                f"| {tier} | `{entry['model_id'] or '-'}` | {ex.get('monthly_allowance', '-')} "
-                f"| {_fmt_cost(ex.get('output_cost_per_1m'))} | {ex.get('price_multiplier', 1)} "
-                f"| {ex.get('quota_burn_pct', '-')} | {ex.get('burn_basis_used', '-')} | {fb} |"
-            )
-        lines += ["", "Why:", ""]
-        for tier, entry in section.get("explanations", {}).items():
-            lines.append(f"- **{tier}**: {entry['why']}")
-            cluster = entry.get("cluster")
-            if cluster and cluster["output_cost_per_1m_range"]:
-                lo, hi = cluster["output_cost_per_1m_range"]
-                lines.append(
-                    f"  - cluster of {cluster['size']} model(s), effective output "
-                    f"${lo:g}-${hi:g}/1M"
-                )
-            ex = entry["explanation"]
-            if ex.get("privacy"):
-                p = ex["privacy"]
-                lines.append(
-                    f"  - privacy: trains_on_data={p.get('trains_on_data')}, "
-                    f"retention_days={p.get('retention_days')}, zdr={p.get('zdr')}, "
-                    f"global_region_required={p.get('requires_global_region')}"
-                )
-
-        # Per-Plan Visual: xychart-beta for paid tiers
-        explanations = section.get("explanations", {})
-        has_numeric = any(
-            isinstance(
-                explanations.get(t, {}).get("explanation", {}).get(k),
-                (int, float),
-            )
-            for t in PAID_TIERS
-            for k in ("monthly_allowance", "output_cost_per_1m")
-        )
-        if has_numeric:
-            allowances = [
-                _round_chart_num(
-                    explanations.get(t, {}).get("explanation", {}).get("monthly_allowance")
-                )
-                for t in PAID_TIERS
-            ]
-            output_costs = [
-                _round_chart_num(
-                    explanations.get(t, {}).get("explanation", {}).get("output_cost_per_1m")
-                )
-                for t in PAID_TIERS
-            ]
-            x_labels = json.dumps(list(PAID_TIERS))
-            lines += [
-                "",
-                "```mermaid",
-                "xychart-beta",
-                f'    title "Plan {plan}: Tier Allowances ($) & Output Costs ($/1M)"',
-                f"    x-axis {x_labels}",
-                f"    bar {allowances}",
-                f"    line {output_costs}",
-                "```",
-            ]
-
-        lines += ["", "<details><summary>Excluded models</summary>", ""]
-        excluded = section.get("excluded", [])
-        if excluded:
-            eligible_models: set[str] = set()
-            for entry in explanations.values():
-                if entry.get("model_id"):
-                    eligible_models.add(entry["model_id"])
-                for fb in entry.get("fallbacks", []):
-                    eligible_models.add(fb)
-                for c in entry.get("candidates", []):
-                    if c.get("model_id"):
-                        eligible_models.add(c["model_id"])
-            eligible_count = len(eligible_models)
-
-            bucket_counts: dict[str, int] = {}
-            for item in excluded:
-                reasons = item.get("reasons", [])
-                bucket = _bucket_exclusion_reason(reasons[0]) if reasons else "Unpriced / Other"
-                bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
-
-            lines += [
-                "```mermaid",
-                "pie showData",
-                f'    title "Plan {plan}: Model Eligibility & Exclusion Breakdown"',
-            ]
-            if eligible_count > 0:
-                lines.append(f'    "Eligible" : {eligible_count}')
-            for bucket in [
-                "Global Region Required",
-                "Non-text Model",
-                "Incomplete Catalogue Data",
-                "Free Model Trains",
-                "Paid Model Trains",
-                "Not Active",
-                "Unpriced / Other",
-            ]:
-                if bucket_counts.get(bucket, 0) > 0:
-                    lines.append(f'    "{bucket}" : {bucket_counts[bucket]}')
-            lines += ["```", ""]
-
-            lines += ["| Model | Reason |", "| --- | --- |"]
-            lines += [f"| `{e['model_id']}` | {'; '.join(e['reasons'])} |" for e in excluded]
-        else:
-            lines.append("None.")
-        lines += ["", "</details>", ""]
-
-    lines += ["## How this was decided", ""]
-    lines += [f"- {item}" for item in report["how_decided"]]
-    lines += ["", "## Warnings", ""]
-    lines += [f"- {w}" for w in report["warnings"]] or ["None."]
-    lines += ["", "## Provenance", "", "| Source | URL | HTTP | Fetched | sha256 | Bytes |"]
-    lines.append("| --- | --- | --- | --- | --- | --- |")
-    for name, src in report["provenance"]["sources"].items():
-        lines.append(
-            f"| {name} | {src['url']} | {src['status']} | {src['fetched_at']} "
-            f"| `{src['sha256'][:16]}...` | {src['bytes']} |"
-        )
-    lines += ["", report["provenance"]["note"] + ". Full digests are in results.json.", ""]
-    lines += ["## Test results", ""]
-    tests = report.get("tests")
-    if tests is None:
-        lines.append("No test results supplied.")
-    else:
-        lines += [f"Overall: **{tests['result']}**", ""]
-        runs = tests.get("runs") or []
-        if runs:
-            passed = sum(r.get("passed", 0) for r in runs)
-            failed = sum(r.get("failed", 0) for r in runs) + sum(1 for r in runs if "error" in r)
-            skipped = sum(r.get("skipped", 0) for r in runs)
-            if passed > 0 or failed > 0 or skipped > 0:
-                lines += [
-                    "```mermaid",
-                    "pie showData",
-                    '    title "Test Suite Results"',
-                ]
-                if passed > 0:
-                    lines.append(f'    "Passed" : {passed}')
-                if failed > 0:
-                    lines.append(f'    "Failed" : {failed}')
-                if skipped > 0:
-                    lines.append(f'    "Skipped" : {skipped}')
-                lines += ["```", ""]
-        lines += ["| Run | Passed | Failed | Skipped |", "| --- | --- | --- | --- |"]
-        for run in runs:
-            lines.append(
-                f"| {run['name']} | {run['passed']} | {run['failed']} | {run['skipped']} |"
-            )
-            if run.get("error"):
-                lines.append(f"| {run['name']} | {run['error']} | | |")
-        failing = [f"`{t}`" for run in runs for t in run["failing"]]
-        if failing:
-            lines += ["", "Failing tests: " + ", ".join(failing)]
-    return "\n".join(lines) + "\n"
-
-
 def write_report(report: dict[str, Any], out_dir: str | Path) -> None:
     """Write results.json and README.md into ``out_dir``."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out / "results.json", json.dumps(report, indent=2) + "\n")
     atomic_write_text(out / "README.md", render_markdown(report))
+
+
+__all__ = [
+    "HOW_DECIDED",
+    "SCHEMA_VERSION",
+    "TOP_N",
+    "_bucket_exclusion_reason",
+    "_candidate_row",
+    "_fmt_cost",
+    "_format_allowance",
+    "_format_cluster_range",
+    "_num",
+    "_round_chart_num",
+    "_strip_aa",
+    "assert_no_aa",
+    "build_report",
+    "exclusion_reasons",
+    "render_markdown",
+    "summarize_junit",
+    "write_report",
+]

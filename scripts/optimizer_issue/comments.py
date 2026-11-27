@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from opencode_go_model_optimizer.formatters.markdown import render_markdown_table
+
 from .common import _fence_for
 
 _STDERR_SEPARATOR = "--- stderr ---"
@@ -87,17 +89,7 @@ def _format_table_cell(header: str, cell: str) -> str:
 
 def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     """Render a parsed ASCII table as GitHub-flavored markdown table lines."""
-    norm_headers = [h.strip() for h in headers]
-    lines = [
-        "| " + " | ".join(norm_headers) + " |",
-        "| " + " | ".join("---" for _ in norm_headers) + " |",
-    ]
-    for row in rows:
-        cells = [cell.strip() for cell in row[: len(norm_headers)]]
-        cells += ["-"] * (len(norm_headers) - len(cells))
-        styled = [_format_table_cell(h, c) for h, c in zip(norm_headers, cells, strict=True)]
-        lines.append("| " + " | ".join(styled) + " |")
-    return lines
+    return render_markdown_table(headers, rows, cell_formatter=_format_table_cell)
 
 
 def _ci_status_class(outcome: str) -> str:
@@ -142,12 +134,15 @@ def render_ci_comment_markdown(
 
     lines.extend(
         [
-            "| Step | Status |",
-            "| --- | --- |",
-            f"| Check code formatting (`ruff format --check`) | `{format_outcome}` |",
-            f"| Lint with ruff (`ruff check`) | `{lint_outcome}` |",
-            f"| Run test suite with coverage (`pytest`) | `{pytest_outcome}` |",
-            f"| Verify package build (`uv build`) | `{build_outcome}` |",
+            *render_markdown_table(
+                ["Step", "Status"],
+                [
+                    ["Check code formatting (`ruff format --check`)", f"`{format_outcome}`"],
+                    ["Lint with ruff (`ruff check`)", f"`{lint_outcome}`"],
+                    ["Run test suite with coverage (`pytest`)", f"`{pytest_outcome}`"],
+                    ["Verify package build (`uv build`)", f"`{build_outcome}`"],
+                ],
+            ),
             "",
             "```mermaid",
             "flowchart LR",
