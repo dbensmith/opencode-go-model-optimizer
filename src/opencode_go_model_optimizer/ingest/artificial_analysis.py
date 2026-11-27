@@ -1,6 +1,5 @@
 """Ingestor and matching helpers for Artificial Analysis benchmarks."""
 
-import math
 import re
 from typing import Any
 
@@ -9,6 +8,7 @@ import httpx
 from opencode_go_model_optimizer.ingest.docs import norm_name
 from opencode_go_model_optimizer.ingest.http import client_scope
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.numbers import finite_float
 
 AA_MODELS_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
 AA_MAX_PAGES = 20
@@ -27,26 +27,17 @@ _AA_EDITION_RE = re.compile(r"(?:[\s_-]+(?:contributor|free|preview|next))+$", r
 _AA_TRAILING_ONE_DOT_ZERO_RE = re.compile(r"(?:[\s_-]+1(?:\.0|-0))$")
 
 
-def _to_float(value: Any) -> float | None:
-    """Coerce a value to a finite float, returning None if not numeric."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        result = float(value)
-    except TypeError, ValueError:
-        return None
-    return result if math.isfinite(result) else None
-
-
 def _aa_speed_tps(item: dict[str, Any]) -> float | None:
     """Mean output tokens/sec from the ``performance_v3`` block."""
     perf = item.get("performance_v3")
-    return _to_float(perf.get("mean_output_tokens_per_second")) if isinstance(perf, dict) else None
+    return (
+        finite_float(perf.get("mean_output_tokens_per_second")) if isinstance(perf, dict) else None
+    )
 
 
 def _aa_coding_score(evals: dict[str, Any]) -> float | None:
     """Coding/engineering score: the ``artificial_analysis_engineering_index`` Capability Index."""
-    return _to_float(evals.get("artificial_analysis_engineering_index"))
+    return finite_float(evals.get("artificial_analysis_engineering_index"))
 
 
 def _is_aa_effort_variant(slug: str, name: str) -> bool:
@@ -208,7 +199,7 @@ def fetch_aa_benchmarks(
                     name = str(item.get("name") or "").strip()
                     creator = _aa_creator_name(item)
                     entry = {
-                        "iq": _to_float(evals.get("artificial_analysis_intelligence_index")),
+                        "iq": finite_float(evals.get("artificial_analysis_intelligence_index")),
                         "coding": _aa_coding_score(evals),
                         "tps": _aa_speed_tps(item),
                     }

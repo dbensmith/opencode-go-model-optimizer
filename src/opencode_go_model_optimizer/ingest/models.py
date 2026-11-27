@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
 
+from opencode_go_model_optimizer.numbers import parse_inf_float, serialize_inf_float
+
 PLANS: tuple[str, ...] = ("go", "go-plus", "go-teams")
 
 
@@ -19,28 +21,6 @@ def ensure_utc(dt: datetime) -> datetime:
 def publishes_monthly_allowance(allowances: dict[str, float]) -> bool:
     """Return whether any plan publishes a finite, positive monthly allowance."""
     return any(math.isfinite(value) and value > 0 for value in allowances.values())
-
-
-_INF_STRINGS = frozenset({"unlimited", "inf", "+inf", "infinity"})
-
-
-def parse_inf_float(value: Any, *, default: float | None = None) -> float | None:
-    """Parse numeric value or 'unlimited'/'inf' string into float (or default on failure)."""
-    if value is None or isinstance(value, bool):
-        return default
-    if isinstance(value, str) and value.strip().lower() in _INF_STRINGS:
-        return float("inf")
-    try:
-        return float(value)
-    except ValueError, TypeError:
-        return default
-
-
-def serialize_inf_float(value: float | None) -> float | str | None:
-    """Serialize float('inf') as 'unlimited' for RFC 8259 JSON compliance."""
-    if value is not None and isinstance(value, float) and math.isinf(value):
-        return "unlimited"
-    return value
 
 
 class TokenCost(BaseModel):
