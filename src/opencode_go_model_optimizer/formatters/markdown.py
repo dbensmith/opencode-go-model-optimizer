@@ -4,8 +4,24 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, TypeGuard
+
+
+def is_number(val: Any) -> TypeGuard[int | float]:
+    """Return True when ``val`` is an int or float (excluding bool)."""
+    return isinstance(val, (int, float)) and not isinstance(val, bool)
+
+
+def fence_for(text: str) -> str:
+    """Return a backtick fence longer than any backtick run in ``text``."""
+    return "`" * max(3, max(map(len, re.findall(r"`+", text)), default=0) + 1)
+
+
+def sanitize_mermaid_id(raw: str, prefix: str = "") -> str:
+    """Return a Mermaid-safe node identifier (non-alphanumerics become ``_``)."""
+    return prefix + re.sub(r"[^a-zA-Z0-9_]", "_", str(raw))
 
 
 def format_allowance_value(
@@ -19,7 +35,7 @@ def format_allowance_value(
         return "-"
     if val == "unlimited":
         return unlimited_label
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    if is_number(val):
         if math.isinf(val) or math.isnan(val):
             return str(val)
         return f"${val:g}" if compact else f"${val:.2f}"
@@ -36,7 +52,7 @@ def format_cost_value(
     """Format an output token cost value for Markdown tables."""
     if val is None:
         return "-"
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    if is_number(val):
         if compact:
             return f"${val:g}"
         return free_label if val == 0 else f"${val:.2f}{suffix}"
@@ -112,6 +128,54 @@ def render_mermaid_xychart(
         out.append(f"    line {json.dumps(series)}")
     out.append("```")
     return out
+
+
+def render_mermaid_flowchart(
+    nodes: Iterable[tuple[str, str]],
+    edges: Iterable[tuple[str, str] | tuple[str, str, str]] = (),
+) -> list[str]:
+    """Render a Mermaid ``flowchart LR`` from ``(id, label)`` nodes and edges.
+
+    An edge is ``(src, dst)`` or ``(src, dst, dst_label)``; a label declares the
+    target node inline (``src --> dst["label"]``). Returns ``[]`` when empty.
+    """
+
+    def label(text: str) -> str:
+        safe = str(text).replace('"', "'")
+        return f'["{safe}"]'
+
+    body = [f"    {sanitize_mermaid_id(i)}{label(t)}" for i, t in nodes]
+    for src, dst, *dst_label in edges:
+        target = sanitize_mermaid_id(dst) + (label(dst_label[0]) if dst_label else "")
+        body.append(f"    {sanitize_mermaid_id(src)} --> {target}")
+    return ["```mermaid", "flowchart LR", *body, "```"] if body else []
+
+
+def render_details_block(
+    summary_html: str,
+    body: str,
+    *,
+    open_by_default: bool = False,
+) -> list[str]:
+    """Render a collapsible ``<details>`` wrapping a fenced text block.
+
+    Returns ``[]`` if ``body`` is blank.
+    """
+    text = body.strip()
+    if not text:
+        return []
+    fence = fence_for(text)
+    tag = "<details open>" if open_by_default else "<details>"
+    return [
+        tag,
+        f"<summary>{summary_html}</summary>",
+        "",
+        f"{fence}text",
+        text,
+        fence,
+        "",
+        "</details>",
+    ]
 
 
 def render_run_settings_lines(

@@ -9,10 +9,13 @@ from opencode_go_model_optimizer.engine.tiers import PAID_TIERS, STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
     format_allowance_value,
     format_cost_value,
+    is_number,
     render_markdown_table,
+    render_mermaid_flowchart,
     render_mermaid_pie,
     render_mermaid_xychart,
     render_run_settings_lines,
+    sanitize_mermaid_id,
 )
 
 _EXCLUSION_BUCKETS = (
@@ -59,16 +62,17 @@ def _bucket_exclusion_reason(reason: str) -> str:
 
 
 def _round_chart_num(val: Any) -> float | int:
-    if isinstance(val, (int, float)) and not math.isinf(val) and not math.isnan(val):
+    if is_number(val) and not math.isinf(val) and not math.isnan(val):
         return int(val) if float(val).is_integer() else round(float(val), 4)
     return 0
 
 
 def _render_cross_plan_flowchart(plans: dict[str, Any]) -> list[str]:
-    lines = ["```mermaid", "flowchart LR"]
+    nodes: list[tuple[str, str]] = []
+    edges: list[tuple[str, str, str]] = []
     for plan, section in plans.items():
-        p_id = "plan_" + "".join(c if c.isalnum() else "_" for c in str(plan))
-        lines.append(f'    {p_id}["Plan: {plan}"]')
+        p_id = sanitize_mermaid_id(str(plan), prefix="plan_")
+        nodes.append((p_id, f"Plan: {plan}"))
         tiers_data = section.get("explanations") or {}
         tier_keys = [t for t in STANDARD_TIERS if t in tiers_data] or list(tiers_data.keys())
         for tier in tier_keys:
@@ -78,12 +82,10 @@ def _render_cross_plan_flowchart(plans: dict[str, Any]) -> list[str]:
             ex = entry.get("explanation", {})
             allowance_str = _format_allowance(ex.get("monthly_allowance"))
             cluster_str = _format_cluster_range(entry.get("cluster"))
-            label = f"{tier}: {pick} (Allowance: {allowance_str}, Cluster: {cluster_str})".replace(
-                '"', "'"
-            )
-            lines.append(f'    {p_id} --> {t_id}["{label}"]')
-    lines += ["```", ""]
-    return lines
+            label = f"{tier}: {pick} (Allowance: {allowance_str}, Cluster: {cluster_str})"
+            edges.append((p_id, t_id, label))
+    lines = render_mermaid_flowchart(nodes, edges)
+    return [*lines, ""] if lines else []
 
 
 def _render_plan_markdown(plan: str, section: dict[str, Any]) -> list[str]:
@@ -140,7 +142,7 @@ def _render_plan_markdown(plan: str, section: dict[str, Any]) -> list[str]:
             )
 
     has_numeric = any(
-        isinstance(explanations.get(t, {}).get("explanation", {}).get(k), (int, float))
+        is_number(explanations.get(t, {}).get("explanation", {}).get(k))
         for t in PAID_TIERS
         for k in ("monthly_allowance", "output_cost_per_1m")
     )

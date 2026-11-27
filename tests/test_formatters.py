@@ -14,6 +14,13 @@ from opencode_go_model_optimizer.formatters.diff import (
     format_diff_json,
     format_diff_table,
 )
+from opencode_go_model_optimizer.formatters.markdown import (
+    fence_for,
+    is_number,
+    render_details_block,
+    render_mermaid_flowchart,
+    sanitize_mermaid_id,
+)
 from opencode_go_model_optimizer.formatters.rank import format_rank_json, format_rank_table
 from opencode_go_model_optimizer.formatters.select import (
     explain_tiers,
@@ -25,7 +32,12 @@ from opencode_go_model_optimizer.formatters.select import (
     settings_payload,
     tier_display_names,
 )
-from opencode_go_model_optimizer.formatters.table import _append_column, _render_table, render_table
+from opencode_go_model_optimizer.formatters.table import (
+    _append_column,
+    _render_table,
+    format_multiplier,
+    render_table,
+)
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
     NormalizedModel,
@@ -684,3 +696,54 @@ def test_settings_payload_and_diff_privacy_changes():
     assert "Capability / benchmark changes:" in tbl
     assert "Privacy / region changes:" in tbl
     assert "256000" in tbl
+
+
+def test_markdown_shared_helpers():
+    assert is_number(1)
+    assert is_number(1.5)
+    assert not is_number(True)
+    assert not is_number("1")
+    assert not is_number(None)
+
+    assert fence_for("plain text") == "```"
+    assert fence_for("contains ``` backticks") == "````"
+
+    assert sanitize_mermaid_id("go-plus/model.v1", prefix="T_") == "T_go_plus_model_v1"
+
+    assert render_mermaid_flowchart([]) == []
+    flow = render_mermaid_flowchart(
+        [("Root", 'Plan "go"')],
+        [("Root", "T_heavy", 'heavy: "m1"'), ("T_heavy", "T_fb")],
+    )
+    assert flow == [
+        "```mermaid",
+        "flowchart LR",
+        "    Root[\"Plan 'go'\"]",
+        "    Root --> T_heavy[\"heavy: 'm1'\"]",
+        "    T_heavy --> T_fb",
+        "```",
+    ]
+
+    assert render_details_block("Summary", "   \n  ") == []
+    details = render_details_block(
+        "<code>cmd</code> output",
+        "line 1\n```nested```\nline 2\n",
+        open_by_default=True,
+    )
+    assert details == [
+        "<details open>",
+        "<summary><code>cmd</code> output</summary>",
+        "",
+        "````text",
+        "line 1\n```nested```\nline 2",
+        "````",
+        "",
+        "</details>",
+    ]
+
+    assert format_multiplier(None) == "-"
+    assert format_multiplier(1.5) == "x1.5"
+    assert (
+        format_multiplier(1.0, {"at": "2026-12-01T00:00+00:00", "multiplier": 2.0})
+        == "x1 (-> x2 @ 2026-12-01T00:00+00:00)"
+    )

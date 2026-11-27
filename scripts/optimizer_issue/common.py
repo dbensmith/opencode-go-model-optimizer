@@ -11,10 +11,12 @@ from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
     format_allowance_value,
     format_cost_value,
+    is_number,
     render_markdown_table,
     render_mermaid_pie,
     render_run_settings_lines,
 )
+from opencode_go_model_optimizer.formatters.table import format_multiplier
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 _RANKED_CATALOG_COLUMN_NAMES = (
@@ -50,7 +52,7 @@ def _fmt_int(val: Any) -> str:
         return "-"
     if val == "unlimited":
         return "Unlimited"
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    if is_number(val):
         return f"{int(val):,}" if float(val).is_integer() else f"{val:,.1f}"
     return str(val)
 
@@ -58,13 +60,13 @@ def _fmt_int(val: Any) -> str:
 def _fmt_float(val: Any, decimals: int = 1) -> str:
     if val is None:
         return "-"
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    if is_number(val):
         return f"{val:.{decimals}f}"
     return str(val)
 
 
 def _fmt_burn(val: Any, decimals: int = 1) -> str:
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    if is_number(val):
         return f"{val:.{decimals}f}%"
     return "-"
 
@@ -76,14 +78,7 @@ def _fmt_pareto(val: Any) -> str:
 
 
 def _fmt_multiplier(ex: dict[str, Any]) -> str:
-    mult = ex.get("price_multiplier")
-    if mult is None:
-        return "-"
-    cell = f"x{mult:.3g}"
-    change = ex.get("next_price_change")
-    if isinstance(change, dict) and change.get("at") and change.get("multiplier") is not None:
-        cell += f" (-> x{change['multiplier']:.3g} @ {change['at']})"
-    return cell
+    return format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change"))
 
 
 def _fmt_privacy(privacy: dict[str, Any] | None) -> str:
@@ -123,20 +118,6 @@ def _site_page(site_url: str, page: str) -> str:
     return f"{site_url}#/{page.lstrip('/')}"
 
 
-def _fence_for(text: str) -> str:
-    """Return a backtick fence longer than any backtick run in text."""
-    longest = 0
-    current = 0
-    for ch in text:
-        if ch == "`":
-            current += 1
-            if current > longest:
-                longest = current
-        else:
-            current = 0
-    return "`" * max(3, longest + 1)
-
-
 def _model_id(m: dict[str, Any], default: str = "unknown") -> str:
     """Return the preferred model identifier string from a serialized model entry."""
     return str(m.get("full_id") or m.get("id") or m.get("model_id") or default)
@@ -147,7 +128,7 @@ def _model_burn_pct(m: dict[str, Any]) -> float | None:
     burn = m.get("composite_burn_pct")
     if burn is None:
         burn = m.get("quota_burn_pct")
-    if isinstance(burn, (int, float)) and not isinstance(burn, bool):
+    if is_number(burn):
         return float(burn)
     return None
 

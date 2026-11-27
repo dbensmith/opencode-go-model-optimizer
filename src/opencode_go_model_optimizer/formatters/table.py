@@ -60,13 +60,18 @@ def _fmt_context(m: NormalizedModel) -> str:
     return f"{m.limit.context:,}" if m.limit.context else "-"
 
 
-def _multiplier_cell(m: NormalizedModel, change: dict[str, Any] | None = None) -> str:
-    if m.price_multiplier is None:
+def format_multiplier(multiplier: float | None, next_change: dict[str, Any] | None = None) -> str:
+    """Format a price multiplier and optional upcoming ``{multiplier, at}`` change."""
+    if multiplier is None:
         return "-"
-    cell = f"x{m.price_multiplier:.3g}"
-    if change:
-        cell += f" (-> x{change['multiplier']:.3g} @ {change['at']})"
+    cell = f"x{multiplier:.3g}"
+    if next_change and next_change.get("at") and next_change.get("multiplier") is not None:
+        cell += f" (-> x{next_change['multiplier']:.3g} @ {next_change['at']})"
     return cell
+
+
+def _multiplier_cell(m: NormalizedModel, change: dict[str, Any] | None = None) -> str:
+    return format_multiplier(m.price_multiplier, change)
 
 
 def _privacy_cell(m: NormalizedModel) -> str:
