@@ -1,4 +1,4 @@
-"""Shared formatting, URL, catalog, quality, and JSON loading helpers."""
+"""Shared formatting, URL, catalog, and JSON loading helpers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.pareto import effective_quality
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
     format_allowance_value,
@@ -17,7 +16,6 @@ from opencode_go_model_optimizer.formatters.markdown import (
     render_run_settings_lines,
 )
 from opencode_go_model_optimizer.formatters.table import format_multiplier
-from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 _RANKED_CATALOG_COLUMN_NAMES = (
     "Rank",
@@ -129,6 +127,11 @@ def _model_burn_pct(m: dict[str, Any]) -> float | None:
     return None
 
 
+def _model_quality(m: dict[str, Any]) -> float:
+    """Read effective quality from a serialized model entry."""
+    return float(m.get("effective_quality") or 0.0)
+
+
 def _ordered_tiers(explanations: dict[str, Any], tiers: dict[str, Any]) -> list[str]:
     """Order tiers according to STANDARD_TIERS, preserving any extra explanation keys."""
     ordered = [t for t in STANDARD_TIERS if t in explanations or t in tiers]
@@ -136,55 +139,6 @@ def _ordered_tiers(explanations: dict[str, Any], tiers: dict[str, Any]) -> list[
         if tier not in ordered:
             ordered.append(tier)
     return ordered
-
-
-def _extract_quality_params(
-    select_payload: dict[str, Any] | None,
-) -> tuple[str, tuple[float, float] | None]:
-    """Extract ``(profile, weights)`` from a select payload's settings."""
-    if not select_payload:
-        return "general", None
-    settings = select_payload.get("settings") or {}
-    profile = str(settings.get("profile") or select_payload.get("profile") or "general")
-    raw_weights = settings.get("weights")
-    weights: tuple[float, float] | None = None
-    if (
-        isinstance(raw_weights, (list, tuple))
-        and len(raw_weights) == 2
-        and not any(isinstance(w, bool) for w in raw_weights)
-    ):
-        try:
-            weights = (float(raw_weights[0]), float(raw_weights[1]))
-        except ValueError, TypeError:
-            weights = None
-    return profile, weights
-
-
-def _model_quality(
-    m: dict[str, Any],
-    profile: str = "general",
-    weights: tuple[float, float] | None = None,
-) -> float:
-    """Compute effective quality for a serialized model dict via the engine."""
-    model = NormalizedModel(
-        id=_model_id(m),
-        aa_iq=m.get("aa_iq"),
-        aa_coding=m.get("aa_coding"),
-        speed_tps=m.get("speed_tps"),
-    )
-    return effective_quality(model, profile=profile, weights=weights)
-
-
-def _model_quality_and_value(
-    m: dict[str, Any],
-    profile: str = "general",
-    weights: tuple[float, float] | None = None,
-) -> tuple[float, float]:
-    """Return ``(effective_quality, quality_per_burn_value)`` for a serialized model dict."""
-    quality = _model_quality(m, profile=profile, weights=weights)
-    burn = _model_burn_pct(m)
-    value = (quality / burn) if burn is not None and burn > 0 and quality > 0 else 0.0
-    return quality, value
 
 
 def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[str]:

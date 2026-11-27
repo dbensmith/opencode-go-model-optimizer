@@ -161,6 +161,7 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
             "bpe": 1.0,
             "aa_iq": 90.0,
             "aa_coding": 95.0,
+            "effective_quality": 88.5,
             "composite_burn_pct": 47.2,
             "monthly_allowance": 30.0,
             "cost": {"output": 10.0},
@@ -176,6 +177,7 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
             "bpe": 0.5,
             "aa_iq": 60.0,
             "aa_coding": 65.0,
+            "effective_quality": 61.5,
             "composite_burn_pct": 20.0,
             "cost": {"output": 4.0},
             "limit": {"context": 131072},
@@ -187,6 +189,7 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
             "full_id": "opencode-go/model-free",
             "tier": "free",
             "is_zero_cost": True,
+            "effective_quality": 0.0,
             "quota_burn_pct": 0.0,
             "limit": {"context": 262144},
             "rank": 3,
@@ -538,6 +541,7 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         bpe=1.0,
         aa_iq=90.0,
         aa_coding=95.0,
+        effective_quality=88.5,
         composite_burn_pct=50.0,
         monthly_allowance=30.0,
         cost={"output": 10.0},
@@ -554,6 +558,7 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         bpe=0.9,
         aa_iq=60.0,
         aa_coding=65.0,
+        effective_quality=61.5,
         composite_burn_pct=20.0,
         monthly_allowance=15.0,
         cost={"output": 0.0},
@@ -730,8 +735,8 @@ def test_optimizer_issue_submodule_structure() -> None:
     assert pkg.common.STANDARD_TIERS is STANDARD_TIERS
 
 
-def test_render_analysis_markdown_honors_profile_and_weights(tmp_path: Path) -> None:
-    """render_analysis_markdown computes quality/value via engine.pareto.effective_quality."""
+def test_render_analysis_markdown_uses_stored_quality(tmp_path: Path) -> None:
+    """The renderer consumes effective_quality from rank JSON instead of recomputing it."""
     rank_models = [
         {
             "full_id": "opencode-go/model-a",
@@ -739,6 +744,7 @@ def test_render_analysis_markdown_honors_profile_and_weights(tmp_path: Path) -> 
             "aa_iq": 80.0,
             "aa_coding": 95.0,
             "speed_tps": 150.0,
+            "effective_quality": 89.0,
             "composite_burn_pct": 50.0,
             "monthly_allowance": 30.0,
             "is_pareto": True,
@@ -750,6 +756,7 @@ def test_render_analysis_markdown_honors_profile_and_weights(tmp_path: Path) -> 
             "aa_iq": 60.0,
             "aa_coding": 90.0,
             "speed_tps": 120.0,
+            "effective_quality": 78.0,
             "composite_burn_pct": 70.0,
             "monthly_allowance": 20.0,
             "is_pareto": False,
@@ -757,47 +764,20 @@ def test_render_analysis_markdown_honors_profile_and_weights(tmp_path: Path) -> 
         },
     ]
 
-    # 1. coding profile: 0.4 * 80 + 0.6 * 95 = 89.0 (general would be 84.5), value = 89 / 50 = 1.78
-    coding_md = _MOD.render_analysis_markdown(
-        select_payload={
-            "plan": "go",
-            "mode": "pareto",
-            "evaluated_at": "2026-11-16T00:00:00+00:00",
-            "settings": {"profile": "coding", "weights": None},
-        },
-        rank_models=rank_models,
-    )
-    assert "- **Top Frontier Quality**: `89.0`" in coding_md
-    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `89.0` | 50.0% | $30.00 | 1.78 |" in coding_md
-    assert "`84.5`" not in coding_md
-
-    # 2. explicit weights [0.2, 0.8]: 0.2 * 80 + 0.8 * 95 = 92.0, value = 92 / 50 = 1.84
-    weighted_md = _MOD.render_analysis_markdown(
-        select_payload={
-            "plan": "go",
-            "mode": "pareto",
-            "evaluated_at": "2026-11-16T00:00:00+00:00",
-            "settings": {"profile": "general", "weights": [0.2, 0.8]},
-        },
-        rank_models=rank_models,
-    )
-    assert "- **Top Frontier Quality**: `92.0`" in weighted_md
-    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `92.0` | 50.0% | $30.00 | 1.84 |" in weighted_md
-
-    # 3. fast profile: base_q = 0.7*80 + 0.3*95 = 84.5; speed 150 -> * (0.85 + 0.15 * 1.5) = 90.8375
     charts_dir = tmp_path / "charts"
-    fast_md = _MOD.render_analysis_markdown(
+    md = _MOD.render_analysis_markdown(
         select_payload={
             "plan": "go",
             "mode": "pareto",
             "evaluated_at": "2026-11-16T00:00:00+00:00",
-            "settings": {"profile": "fast", "weights": None},
+            "settings": {"profile": "fast", "weights": [0.2, 0.8]},
         },
         rank_models=rank_models,
         charts_dir=charts_dir,
     )
-    assert "- **Top Frontier Quality**: `90.8`" in fast_md
-    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `90.8` | 50.0% | $30.00 | 1.82 |" in fast_md
+    assert "- **Top Frontier Quality**: `89.0`" in md
+    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `89.0` | 50.0% | $30.00 | 1.78 |" in md
+    assert "`84.5`" not in md
     assert (charts_dir / "pareto-frontier.svg").is_file()
 
 
@@ -837,6 +817,7 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
                     "full_id": "opencode-go/model-a",
                     "aa_iq": 80.0,
                     "aa_coding": 95.0,
+                    "effective_quality": 89.0,
                     "composite_burn_pct": 50.0,
                     "monthly_allowance": 30.0,
                     "is_pareto": True,
@@ -945,7 +926,15 @@ def test_generate_analysis_svgs_without_plans_and_boolean_allowance(tmp_path: Pa
     generated = _MOD.generate_analysis_svgs(
         charts_dir=charts_dir,
         pareto_models=[],
-        rank_models=[{"full_id": "opencode-go/m1", "aa_iq": 80.0, "aa_coding": 85.0, "rank": 1}],
+        rank_models=[
+            {
+                "full_id": "opencode-go/m1",
+                "aa_iq": 80.0,
+                "aa_coding": 85.0,
+                "effective_quality": 82.5,
+                "rank": 1,
+            }
+        ],
         plan_payloads=None,
         top_quality=85.0,
         heavy_cutoff=76.5,

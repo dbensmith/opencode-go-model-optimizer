@@ -212,12 +212,15 @@ def test_assert_no_aa_rejects_benchmark_keys():
         assert_no_aa({"a": [{"aa_iq": 1}]})
     with pytest.raises(ValueError, match="speed_tps"):
         assert_no_aa({"speed_tps": 1})
+    with pytest.raises(ValueError, match="effective_quality"):
+        assert_no_aa({"effective_quality": 1})
 
 
 def test_strip_aa_arbitrary_keys():
     data = {
         "name": "test",
         "aa_extra": 42,
+        "effective_quality": 84.5,
         "nested": {"aa_custom": "x", "ok": 1},
         "list": [{"aa_sub": True, "keep": 2}],
     }

@@ -7,7 +7,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.tiers import PAID_TIERS
+from opencode_go_model_optimizer.engine.tiers import (
+    BALANCED_QUALITY_RATIO,
+    HEAVY_QUALITY_RATIO,
+    PAID_TIERS,
+)
 
 from .common import _model_burn_pct, _model_id, _model_quality
 
@@ -77,24 +81,12 @@ def _svg_legend(items: Sequence[tuple[float, str, str]], y: float) -> list[str]:
     return out
 
 
-def _pareto_quality(
-    model: dict[str, Any],
-    profile: str,
-    weights: tuple[float, float] | None,
-) -> float:
-    raw = _as_float(model.get("_quality"))
-    return raw if raw is not None else _model_quality(model, profile=profile, weights=weights)
-
-
 def _render_pareto_frontier_svg(
     pareto_models: list[dict[str, Any]],
     rank_models: list[dict[str, Any]],
     top_quality: float,
     heavy_cutoff: float,
     balanced_cutoff: float,
-    *,
-    profile: str = "general",
-    weights: tuple[float, float] | None = None,
 ) -> str:
     """Render the live Pareto frontier scatter & step-curve SVG."""
     ml, mr, mt, mb = 65, 35, 55, 55
@@ -103,7 +95,13 @@ def _render_pareto_frontier_svg(
     all_burns = [burn for m in rank_models if (burn := _model_burn_pct(m)) is not None]
     x_max = max([*all_burns, 100.0]) * 1.08
     y_max = (
-        max([top_quality, *(_pareto_quality(m, profile, weights) for m in pareto_models), 100.0])
+        max(
+            [
+                top_quality,
+                *(_model_quality(m) for m in pareto_models),
+                100.0,
+            ]
+        )
         * 1.08
     )
 
@@ -126,7 +124,7 @@ def _render_pareto_frontier_svg(
             y_h,
             "var(--band-heavy)",
             "var(--c-green)",
-            f"Heavy Band (≥90%: {heavy_cutoff:.1f})",
+            f"Heavy Band (≥{HEAVY_QUALITY_RATIO:.0%}: {heavy_cutoff:.1f})",
         ),
         (
             balanced_cutoff,
@@ -134,7 +132,7 @@ def _render_pareto_frontier_svg(
             y_b,
             "var(--band-balanced)",
             "var(--c-blue)",
-            f"Balanced Band (≥60%: {balanced_cutoff:.1f})",
+            f"Balanced Band (≥{BALANCED_QUALITY_RATIO:.0%}: {balanced_cutoff:.1f})",
         ),
     )
     for cutoff, top, bottom, fill, text_fill, label in bands:
@@ -171,7 +169,7 @@ def _render_pareto_frontier_svg(
             continue
         if (burn := _model_burn_pct(m)) is None:
             continue
-        q = _model_quality(m, profile=profile, weights=weights)
+        q = _model_quality(m)
         svg.append(
             f'<circle cx="{to_x(burn):.1f}" cy="{to_y(q):.1f}" r="4" fill="var(--c-slate)" opacity="0.45"/>'
         )
@@ -181,7 +179,7 @@ def _render_pareto_frontier_svg(
         pts = [
             (
                 to_x(b := (_model_burn_pct(m) or 0.0)),
-                to_y(q := _pareto_quality(m, profile, weights)),
+                to_y(q := _model_quality(m)),
                 b,
                 q,
                 m,
@@ -323,9 +321,6 @@ def generate_analysis_svgs(
     top_quality: float,
     heavy_cutoff: float,
     balanced_cutoff: float,
-    *,
-    profile: str = "general",
-    weights: tuple[float, float] | None = None,
 ) -> list[str]:
     """Generate crisp, self-contained SVG charts for live Pareto analysis."""
     charts_dir.mkdir(parents=True, exist_ok=True)
@@ -338,8 +333,6 @@ def generate_analysis_svgs(
                 top_quality,
                 heavy_cutoff,
                 balanced_cutoff,
-                profile=profile,
-                weights=weights,
             ),
         ),
         ("catalog-ranking.svg", _render_catalog_ranking_svg(rank_models)),

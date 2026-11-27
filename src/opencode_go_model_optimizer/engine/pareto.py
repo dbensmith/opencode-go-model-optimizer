@@ -260,6 +260,7 @@ def evaluate_pareto(
     for m in models:
         m.bpe = None
         m.is_pareto = None
+        m.effective_quality = effective_quality(m, profile=profile, weights=weights)
         m.composite_burn_pct = compute_burn_pct(
             m, profile=profile, token_mix=token_mix, basis=burn_basis
         )
@@ -270,10 +271,7 @@ def evaluate_pareto(
         return models
 
     # 2. Compute BPE over benchmarked pool
-    qb_list = [
-        (effective_quality(m, profile=profile, weights=weights), m.composite_burn_pct or 0.0)
-        for m in benchmarked
-    ]
+    qb_list = [(m.effective_quality or 0.0, m.composite_burn_pct or 0.0) for m in benchmarked]
 
     # Precompute min_burn_at_q using single-pass min_burn_by_q
     min_burn_by_q: dict[float, float] = {}
