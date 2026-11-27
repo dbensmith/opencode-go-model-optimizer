@@ -30,7 +30,9 @@ _AA_TRAILING_ONE_DOT_ZERO_RE = re.compile(r"(?:[\s_-]+1(?:\.0|-0))$")
 def _aa_speed_tps(item: dict[str, Any]) -> float | None:
     """Mean output tokens/sec from the ``performance_v3`` block."""
     perf = item.get("performance_v3")
-    return finite_float(perf.get("mean_output_tokens_per_second")) if isinstance(perf, dict) else None
+    return (
+        finite_float(perf.get("mean_output_tokens_per_second")) if isinstance(perf, dict) else None
+    )
 
 
 def _aa_coding_score(evals: dict[str, Any]) -> float | None:
