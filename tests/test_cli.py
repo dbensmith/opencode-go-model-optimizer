@@ -37,6 +37,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_snapshot,
 )
 from tests.conftest import CATALOGUE_HTTP_DATA, FIXTURES_DIR, create_temp_snapshot
+from tests.factories import make_model
 
 
 @pytest.fixture
@@ -503,10 +504,10 @@ def test_cli_fetch_update_reference_flag_removed():
 
 
 def testresolve_mode():
-    m_with_iq = NormalizedModel(id="m1", aa_iq=60.0)
-    m_with_coding = NormalizedModel(id="m2", aa_coding=75.0)
-    m_no_bench = NormalizedModel(id="m3")
-    m_inactive = NormalizedModel(id="m4", aa_iq=80.0, status="deprecated")
+    m_with_iq = make_model("m1", aa_iq=60.0)
+    m_with_coding = make_model("m2", aa_coding=75.0)
+    m_no_bench = make_model("m3")
+    m_inactive = make_model("m4", aa_iq=80.0, status="deprecated")
 
     # Explicit modes return as-is
     assert resolve_mode("allowance", [m_with_iq]) == "allowance"
@@ -533,7 +534,7 @@ def test_load_or_fetch_models(tmp_path):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go-plus",
-        models=[NormalizedModel(id="m1")],
+        models=[make_model("m1")],
         metadata=SnapshotMetadata(),
     )
     with patch(
@@ -569,7 +570,7 @@ def test_load_or_fetch_models(tmp_path):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go",
-        models=[NormalizedModel(id="m1", plan_allowances={"go-plus": 60.0})],
+        models=[make_model("m1", plan_allowances={"go-plus": 60.0})],
         metadata=SnapshotMetadata(),
     )
     multi_path = tmp_path / "snap_multi.json"
@@ -582,7 +583,7 @@ def test_load_or_fetch_models(tmp_path):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go",
-        models=[NormalizedModel(id="cached1", plan_allowances={"go-plus": 100.0})],
+        models=[make_model("cached1", plan_allowances={"go-plus": 100.0})],
         metadata=SnapshotMetadata(),
     )
     with (
@@ -1233,7 +1234,7 @@ def test_snapshot_source_tracking(tmp_path):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go",
-        models=[NormalizedModel(id="m1")],
+        models=[make_model("m1")],
         metadata=SnapshotMetadata(),
     )
     with patch("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", return_value=dummy):
@@ -1267,7 +1268,7 @@ def test_select_strict_empty_tier(tmp_path, capsys):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go",
-        models=[NormalizedModel(id="only", monthly_allowance=10.0)],
+        models=[make_model("only", monthly_allowance=10.0)],
         metadata=SnapshotMetadata(),
     )
     path = tmp_path / "one.json"
