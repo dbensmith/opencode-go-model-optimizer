@@ -500,6 +500,22 @@ uv run pytest
 uv run ruff check
 ```
 
+### Module layout
+
+Code lives in `src/opencode_go_model_optimizer/`, one package per pipeline stage:
+
+| Package / module | Responsibility |
+| --- | --- |
+| `ingest/` | Source fetchers (`catalogue`, `docs`, `console`, `models_dev`, `artificial_analysis`), shared types (`models`), HTTP helpers (`http`), and snapshot build/cache (`snapshot`) |
+| `engine/` | Selection logic: `pareto`, `allowance`, `pricing`, `criteria`, `tiers`, `diff` |
+| `formatters/` | Output renderers per command (`select`, `rank`, `diff`) plus shared `table` and `markdown` helpers; the package `__init__` is the public entry point |
+| `cli_parser.py`, `cli.py` | Argument parsing and command dispatch |
+| `report.py`, `report_markdown.py` | The `report` command and its Markdown output |
+
+`scripts/render_optimizer_issue.py` and `scripts/optimizer_issue/` render the CI issue and Docsify pages from the optimizer's JSON outputs.
+
+There are no backward-compatibility re-export facades. Import each name from the module that defines it (for example `fetch_aa_benchmarks` from `ingest.artificial_analysis`, not `ingest.snapshot`), and import formatters from `opencode_go_model_optimizer.formatters`.
+
 The default `pytest` run is offline and uses only synthetic fixtures. Live contract tests (`tests/live`, marked `live`) fetch the real sources and assert structural invariants only (the docs privacy table parses, every active model is matched to allowances/privacy/estimates, multipliers are understood, paid tiers are non-empty). They are skipped unless you opt in:
 
 ```bash
