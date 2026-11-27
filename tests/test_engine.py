@@ -1,5 +1,6 @@
 """Tests for ranking engines and capability tier allocator."""
 
+import json
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
@@ -31,6 +32,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     ssd,
 )
 from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
+from opencode_go_model_optimizer.formatters.rank import format_rank_json
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
@@ -732,6 +734,20 @@ def test_rank_catalog_both_modes():
     assert any(m.tier is None for m in ranked_allowance)
     # Remaining active models (e.g. preview) must be included and sorted by id
     assert any(m.id == "omega-preview" for m in ranked_allowance)
+
+
+def test_allowance_rank_json_includes_effective_quality():
+    model = NormalizedModel(
+        id="benchmarked",
+        aa_iq=80.0,
+        aa_coding=90.0,
+        monthly_allowance=15.0,
+        cost=TokenCost(output=1.0),
+    )
+    criteria = SelectionCriteria(mode="allowance", profile="coding", weights=(0.2, 0.8))
+    (item,) = json.loads(format_rank_json(rank_catalog([model], criteria)))
+
+    assert item["effective_quality"] == 88.0
 
 
 def test_allocate_tiers_unified():

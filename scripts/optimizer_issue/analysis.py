@@ -26,6 +26,7 @@ from .common import (
     _fmt_output_cost,
     _model_burn_pct,
     _model_id,
+    _model_quality,
     _normalize_site_url,
     _render_ranked_catalog_rows,
     _render_report_header,
@@ -45,7 +46,7 @@ def _quadrant_points(
             burn = _model_burn_pct(m)
             if require_burn and burn is None:
                 continue
-            quality = float(m.get("effective_quality") or 0.0)
+            quality = _model_quality(m)
             clean_id = _model_id(m, "model").removeprefix("opencode-go/")
             safe_label = re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-") or f"m-{len(pts) + 1}"
             pts.append((safe_label, burn if burn is not None else 0.0, quality))
@@ -204,7 +205,7 @@ def _collect_pareto_models(
     rank_models: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
     pareto_models = [m for m in rank_models if m.get("is_pareto")]
-    pareto_models.sort(key=lambda m: m.get("effective_quality") or 0.0, reverse=True)
+    pareto_models.sort(key=_model_quality, reverse=True)
     has_aa = any(m.get("aa_iq") is not None or m.get("aa_coding") is not None for m in rank_models)
     return pareto_models, has_aa
 
@@ -214,7 +215,7 @@ def _pareto_rows(
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for m in pareto_models:
-        q = float(m.get("effective_quality") or 0.0)
+        q = _model_quality(m)
         burn = _model_burn_pct(m)
         value = q / burn if burn is not None and burn > 0 and q > 0 else 0.0
         bands: list[str] = []
@@ -246,7 +247,7 @@ def _render_pareto_charts(
         return []
     top = pareto_models[:12]
     x_ids = [_model_id(m).removeprefix("opencode-go/").replace('"', "") for m in top]
-    q_vals = [round(float(m.get("effective_quality") or 0.0), 1) for m in top]
+    q_vals = [round(_model_quality(m), 1) for m in top]
     b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in top]
     return [
         "",
@@ -284,7 +285,7 @@ def render_analysis_markdown(
     lines.extend(["", "---", "", "### 1. Live Pareto Frontier & Quality/Value Bands", ""])
 
     pareto_models, has_aa = _collect_pareto_models(rank_models)
-    top_quality = float(pareto_models[0].get("effective_quality") or 0.0) if pareto_models else 0.0
+    top_quality = _model_quality(pareto_models[0]) if pareto_models else 0.0
     heavy_cutoff = HEAVY_QUALITY_RATIO * top_quality
     balanced_cutoff = BALANCED_QUALITY_RATIO * top_quality
 

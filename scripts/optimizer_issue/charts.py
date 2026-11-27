@@ -13,7 +13,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     PAID_TIERS,
 )
 
-from .common import _model_burn_pct, _model_id
+from .common import _model_burn_pct, _model_id, _model_quality
 
 _SVG_CSS_STYLES = """
     :root {
@@ -98,7 +98,7 @@ def _render_pareto_frontier_svg(
         max(
             [
                 top_quality,
-                *(_as_float(m.get("effective_quality")) or 0.0 for m in pareto_models),
+                *(_model_quality(m) for m in pareto_models),
                 100.0,
             ]
         )
@@ -169,7 +169,7 @@ def _render_pareto_frontier_svg(
             continue
         if (burn := _model_burn_pct(m)) is None:
             continue
-        q = _as_float(m.get("effective_quality")) or 0.0
+        q = _model_quality(m)
         svg.append(
             f'<circle cx="{to_x(burn):.1f}" cy="{to_y(q):.1f}" r="4" fill="var(--c-slate)" opacity="0.45"/>'
         )
@@ -179,7 +179,7 @@ def _render_pareto_frontier_svg(
         pts = [
             (
                 to_x(b := (_model_burn_pct(m) or 0.0)),
-                to_y(q := (_as_float(m.get("effective_quality")) or 0.0)),
+                to_y(q := _model_quality(m)),
                 b,
                 q,
                 m,

@@ -11,6 +11,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.pareto import (
     compute_burn_pct,
+    effective_quality,
     evaluate_pareto,
     filter_benchmarked_models,
     fisher_jenks_3_clusters,
@@ -369,6 +370,16 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
             tier_by_full_id[full_id] = tier_name
 
     return [
-        m.model_copy(update={"rank": idx, "tier": tier_by_full_id.get(m.full_id)})
+        m.model_copy(
+            update={
+                "rank": idx,
+                "tier": tier_by_full_id.get(m.full_id),
+                "effective_quality": (
+                    m.effective_quality
+                    if m.effective_quality is not None
+                    else effective_quality(m, profile=c.profile, weights=c.weights)
+                ),
+            }
+        )
         for idx, m in enumerate(ranked, start=1)
     ]

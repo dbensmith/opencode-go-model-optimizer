@@ -127,6 +127,11 @@ def _model_burn_pct(m: dict[str, Any]) -> float | None:
     return None
 
 
+def _model_quality(m: dict[str, Any]) -> float:
+    """Read effective quality from a serialized model entry."""
+    return float(m.get("effective_quality") or 0.0)
+
+
 def _ordered_tiers(explanations: dict[str, Any], tiers: dict[str, Any]) -> list[str]:
     """Order tiers according to STANDARD_TIERS, preserving any extra explanation keys."""
     ordered = [t for t in STANDARD_TIERS if t in explanations or t in tiers]
