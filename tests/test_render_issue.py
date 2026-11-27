@@ -1,11 +1,14 @@
 """Tests for scripts/render_optimizer_issue.py."""
 
+import importlib
 import importlib.util
 import json
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import pytest
 
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "render_optimizer_issue.py"
 _SPEC = importlib.util.spec_from_file_location("render_optimizer_issue", _SCRIPT_PATH)
@@ -692,3 +695,238 @@ def test_render_ci_comment_cli(tmp_path: Path) -> None:
     assert "<!-- ci-job-results-comment" in content
     assert "`1234567890ab`" in content
     assert "| Check code formatting (`ruff format --check`) | `success` |" in content
+
+
+def test_optimizer_issue_submodule_structure() -> None:
+    """scripts/render_optimizer_issue.py delegates to focused scripts/optimizer_issue submodules."""
+    package_dir = _SCRIPT_PATH.parent / "optimizer_issue"
+    for filename in ("__init__.py", "common.py", "charts.py", "pages.py", "comments.py"):
+        assert (package_dir / filename).is_file(), f"Missing submodule file: {filename}"
+
+    pkg = importlib.import_module("optimizer_issue")
+    for name in ("common", "charts", "pages", "comments"):
+        assert importlib.import_module(f"optimizer_issue.{name}") is not None
+
+    for public_fn in (
+        "generate_analysis_svgs",
+        "render_analysis_markdown",
+        "render_ci_comment_markdown",
+        "render_data_markdown",
+        "render_issue_markdown",
+        "render_optimizer_output_comment",
+    ):
+        assert getattr(_MOD, public_fn) is getattr(pkg, public_fn)
+
+    from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
+
+    assert pkg.pages.STANDARD_TIERS is STANDARD_TIERS
+    assert pkg.common.STANDARD_TIERS is STANDARD_TIERS
+
+
+def test_render_analysis_markdown_honors_profile_and_weights(tmp_path: Path) -> None:
+    """render_analysis_markdown computes quality/value via engine.pareto.effective_quality."""
+    rank_models = [
+        {
+            "full_id": "opencode-go/model-a",
+            "id": "model-a",
+            "aa_iq": 80.0,
+            "aa_coding": 95.0,
+            "speed_tps": 150.0,
+            "composite_burn_pct": 50.0,
+            "monthly_allowance": 30.0,
+            "is_pareto": True,
+            "rank": 1,
+        },
+        {
+            "full_id": "opencode-go/model-dominated",
+            "id": "model-dominated",
+            "aa_iq": 60.0,
+            "aa_coding": 90.0,
+            "speed_tps": 120.0,
+            "composite_burn_pct": 70.0,
+            "monthly_allowance": 20.0,
+            "is_pareto": False,
+            "rank": 2,
+        },
+    ]
+
+    # 1. coding profile: 0.4 * 80 + 0.6 * 95 = 89.0 (general would be 84.5), value = 89 / 50 = 1.78
+    coding_md = _MOD.render_analysis_markdown(
+        select_payload={
+            "plan": "go",
+            "mode": "pareto",
+            "evaluated_at": "2026-11-16T00:00:00+00:00",
+            "settings": {"profile": "coding", "weights": None},
+        },
+        rank_models=rank_models,
+    )
+    assert "- **Top Frontier Quality**: `89.0`" in coding_md
+    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `89.0` | 50.0% | $30.00 | 1.78 |" in coding_md
+    assert "`84.5`" not in coding_md
+
+    # 2. explicit weights [0.2, 0.8]: 0.2 * 80 + 0.8 * 95 = 92.0, value = 92 / 50 = 1.84
+    weighted_md = _MOD.render_analysis_markdown(
+        select_payload={
+            "plan": "go",
+            "mode": "pareto",
+            "evaluated_at": "2026-11-16T00:00:00+00:00",
+            "settings": {"profile": "general", "weights": [0.2, 0.8]},
+        },
+        rank_models=rank_models,
+    )
+    assert "- **Top Frontier Quality**: `92.0`" in weighted_md
+    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `92.0` | 50.0% | $30.00 | 1.84 |" in weighted_md
+
+    # 3. fast profile: base_q = 0.7*80 + 0.3*95 = 84.5; speed 150 -> * (0.85 + 0.15 * 1.5) = 90.8375
+    charts_dir = tmp_path / "charts"
+    fast_md = _MOD.render_analysis_markdown(
+        select_payload={
+            "plan": "go",
+            "mode": "pareto",
+            "evaluated_at": "2026-11-16T00:00:00+00:00",
+            "settings": {"profile": "fast", "weights": None},
+        },
+        rank_models=rank_models,
+        charts_dir=charts_dir,
+    )
+    assert "- **Top Frontier Quality**: `90.8`" in fast_md
+    assert "| `opencode-go/model-a` | 80.0 | 95.0 | `90.8` | 50.0% | $30.00 | 1.82 |" in fast_md
+    assert (charts_dir / "pareto-frontier.svg").is_file()
+
+
+def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
+    """Running scripts/render_optimizer_issue.py from outside repo root works cleanly."""
+    select_path = tmp_path / "select.json"
+    select_path.write_text(
+        json.dumps(
+            {
+                "plan": "go",
+                "mode": "pareto",
+                "evaluated_at": "2026-11-16T00:00:00+00:00",
+                "snapshot": {
+                    "source": "live",
+                    "fetched_at": "2026-11-16T00:00:00+00:00",
+                    "benchmark_source": "aa_live",
+                },
+                "settings": {"profile": "coding", "weights": None},
+                "tiers": {"heavy": "opencode-go/model-a"},
+                "explanations": {
+                    "heavy": {
+                        "model_id": "opencode-go/model-a",
+                        "monthly_allowance": 30.0,
+                        "output_cost_per_1m": 10.0,
+                        "quota_burn_pct": 50.0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    rank_path = tmp_path / "rank.json"
+    rank_path.write_text(
+        json.dumps(
+            [
+                {
+                    "full_id": "opencode-go/model-a",
+                    "aa_iq": 80.0,
+                    "aa_coding": 95.0,
+                    "composite_burn_pct": 50.0,
+                    "monthly_allowance": 30.0,
+                    "is_pareto": True,
+                    "rank": 1,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    issue_out = tmp_path / "issue.md"
+    analysis_out = tmp_path / "analysis.md"
+    data_out = tmp_path / "data.md"
+    charts_dir = tmp_path / "charts"
+
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--json",
+            str(select_path),
+            "--rank-json",
+            str(rank_path),
+            "--charts-dir",
+            str(charts_dir),
+            "--output",
+            str(issue_out),
+            "--analysis-output",
+            str(analysis_out),
+            "--data-output",
+            str(data_out),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    assert "Latest Tier Selections" in issue_out.read_text(encoding="utf-8")
+    assert "- **Top Frontier Quality**: `89.0`" in analysis_out.read_text(encoding="utf-8")
+    assert "All Data & Other Choices" in data_out.read_text(encoding="utf-8")
+    assert (charts_dir / "pareto-frontier.svg").is_file()
+
+
+def test_main_loads_select_and_rank_json_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main() loads args.json and args.rank_json only once even with --analysis-output."""
+    select_path = tmp_path / "select.json"
+    select_path.write_text(
+        json.dumps(
+            {
+                "plan": "go",
+                "mode": "pareto",
+                "evaluated_at": "2026-11-16T00:00:00+00:00",
+                "tiers": {"heavy": "opencode-go/model-a"},
+                "explanations": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    rank_path = tmp_path / "rank.json"
+    rank_path.write_text(json.dumps([]), encoding="utf-8")
+
+    load_json_calls = 0
+    real_load_json = _MOD._load_json
+
+    def counting_load_json(path: str) -> object:
+        nonlocal load_json_calls
+        if path == str(select_path):
+            load_json_calls += 1
+        return real_load_json(path)
+
+    rank_calls = 0
+    real_load_rank = _MOD._load_rank_models
+
+    def counting_load_rank(path: str | None) -> list[dict[str, object]]:
+        nonlocal rank_calls
+        rank_calls += 1
+        return real_load_rank(path)
+
+    monkeypatch.setattr(_MOD, "_load_json", counting_load_json)
+    monkeypatch.setattr(_MOD, "_load_rank_models", counting_load_rank)
+
+    rc = _MOD.main(
+        [
+            "--json",
+            str(select_path),
+            "--rank-json",
+            str(rank_path),
+            "--output",
+            str(tmp_path / "issue.md"),
+            "--analysis-output",
+            str(tmp_path / "analysis.md"),
+            "--data-output",
+            str(tmp_path / "data.md"),
+        ]
+    )
+    assert rc == 0
+    assert load_json_calls == 1
+    assert rank_calls == 1
