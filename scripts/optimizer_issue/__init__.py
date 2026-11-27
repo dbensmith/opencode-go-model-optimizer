@@ -1,8 +1,10 @@
 """Modular rendering helpers for optimizer GitHub issues, Docsify pages, SVG charts, and PR comments."""
 
+from .analysis import render_analysis_markdown
 from .charts import generate_analysis_svgs
 from .comments import render_ci_comment_markdown, render_optimizer_output_comment
-from .pages import render_analysis_markdown, render_data_markdown, render_issue_markdown
+from .data_page import render_data_markdown
+from .issue import render_issue_markdown
 
 __all__ = [
     "generate_analysis_svgs",

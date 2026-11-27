@@ -700,11 +700,20 @@ def test_render_ci_comment_cli(tmp_path: Path) -> None:
 def test_optimizer_issue_submodule_structure() -> None:
     """scripts/render_optimizer_issue.py delegates to focused scripts/optimizer_issue submodules."""
     package_dir = _SCRIPT_PATH.parent / "optimizer_issue"
-    for filename in ("__init__.py", "common.py", "charts.py", "pages.py", "comments.py"):
+    for filename in (
+        "__init__.py",
+        "common.py",
+        "charts.py",
+        "issue.py",
+        "analysis.py",
+        "data_page.py",
+        "pages.py",
+        "comments.py",
+    ):
         assert (package_dir / filename).is_file(), f"Missing submodule file: {filename}"
 
     pkg = importlib.import_module("optimizer_issue")
-    for name in ("common", "charts", "pages", "comments"):
+    for name in ("common", "charts", "issue", "analysis", "data_page", "pages", "comments"):
         assert importlib.import_module(f"optimizer_issue.{name}") is not None
 
     for public_fn in (
@@ -716,6 +725,10 @@ def test_optimizer_issue_submodule_structure() -> None:
         "render_optimizer_output_comment",
     ):
         assert getattr(_MOD, public_fn) is getattr(pkg, public_fn)
+
+    assert pkg.pages.render_issue_markdown is pkg.issue.render_issue_markdown
+    assert pkg.pages.render_analysis_markdown is pkg.analysis.render_analysis_markdown
+    assert pkg.pages.render_data_markdown is pkg.data_page.render_data_markdown
 
     from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 
