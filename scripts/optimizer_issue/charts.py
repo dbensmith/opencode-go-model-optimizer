@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -57,78 +57,24 @@ def _as_float(val: Any) -> float | None:
     return None
 
 
-def _fmt_coord(val: float) -> str:
-    return f"{val:.1f}"
-
-
-def _svg_rect(
-    x: float | None,
-    y: float | None,
-    width: float,
-    height: float,
-    fill: str,
-    *,
-    rx: int | None = None,
-) -> str:
-    attrs: list[str] = []
-    if x is not None:
-        attrs.append(f'x="{_fmt_coord(x)}"')
-    if y is not None:
-        attrs.append(f'y="{_fmt_coord(y)}"')
-    attrs.append(f'width="{_fmt_coord(width)}"')
-    attrs.append(f'height="{_fmt_coord(height)}"')
-    if rx is not None:
-        attrs.append(f'rx="{rx}"')
-    attrs.append(f'fill="{fill}"')
-    return f"<rect {' '.join(attrs)}/>"
-
-
-def _svg_line(x1: float, y1: float, x2: float, y2: float, stroke: str, stroke_width: float) -> str:
-    return (
-        f'<line x1="{_fmt_coord(x1)}" y1="{_fmt_coord(y1)}" '
-        f'x2="{_fmt_coord(x2)}" y2="{_fmt_coord(y2)}" '
-        f'stroke="{stroke}" stroke-width="{stroke_width}"/>'
-    )
-
-
-def _svg_text(
-    x: float,
-    y: float,
-    content: str,
-    *,
-    font_size: int,
-    fill: str,
-    anchor: str | None = None,
-    weight: str | None = None,
-    transform: str | None = None,
-) -> str:
-    attrs = [f'x="{_fmt_coord(x)}"', f'y="{_fmt_coord(y)}"']
-    if anchor:
-        attrs.append(f'text-anchor="{anchor}"')
-    attrs.append(f'font-size="{font_size}"')
-    if weight:
-        attrs.append(f'font-weight="{weight}"')
-    attrs.append(f'fill="{fill}"')
-    if transform:
-        attrs.append(f'transform="{transform}"')
-    return f"<text {' '.join(attrs)}>{html.escape(content)}</text>"
-
-
-def _svg_legend(items: Sequence[tuple[float, str, str]], *, y: float) -> list[str]:
-    elements: list[str] = []
-    for x, fill, label in items:
-        elements.append(_svg_rect(x, y, 10, 10, fill, rx=2))
-        elements.append(_svg_text(x + 15, y + 9, label, font_size=11, fill="var(--text-muted)"))
-    return elements
-
-
 def _svg_preamble(width: int, height: int) -> list[str]:
     """Return opening SVG tags, shared theme CSS, and rounded background rect."""
     return [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="100%" height="100%">',
         f"<style>{_SVG_CSS_STYLES}</style>",
-        _svg_rect(None, None, width, height, "var(--bg)", rx=8),
+        f'<rect width="{width}" height="{height}" rx="8" fill="var(--bg)"/>',
     ]
+
+
+def _svg_legend(items: Sequence[tuple[float, str, str]], y: float) -> list[str]:
+    """Render horizontal color-swatch legend entries."""
+    out: list[str] = []
+    for x, fill, label in items:
+        out.append(f'<rect x="{x}" y="{y}" width="10" height="10" rx="2" fill="{fill}"/>')
+        out.append(
+            f'<text x="{x + 15}" y="{y + 9}" font-size="11" fill="var(--text-muted)">{html.escape(label)}</text>'
+        )
+    return out
 
 
 def _pareto_quality(
@@ -136,20 +82,42 @@ def _pareto_quality(
     profile: str,
     weights: tuple[float, float] | None,
 ) -> float:
-    raw_quality = _as_float(model.get("_quality"))
-    if raw_quality is not None:
-        return raw_quality
-    return _model_quality(model, profile=profile, weights=weights)
+    raw = _as_float(model.get("_quality"))
+    return raw if raw is not None else _model_quality(model, profile=profile, weights=weights)
 
 
-def _pareto_bands(
-    ml: int,
-    pw: int,
-    to_y: Callable[[float], float],
-    y_max: float,
+def _render_pareto_frontier_svg(
+    pareto_models: list[dict[str, Any]],
+    rank_models: list[dict[str, Any]],
+    top_quality: float,
     heavy_cutoff: float,
     balanced_cutoff: float,
-) -> list[str]:
+    *,
+    profile: str = "general",
+    weights: tuple[float, float] | None = None,
+) -> str:
+    """Render the live Pareto frontier scatter & step-curve SVG."""
+    ml, mr, mt, mb = 65, 35, 55, 55
+    pw, ph = 800 - ml - mr, 420 - mt - mb
+
+    all_burns = [burn for m in rank_models if (burn := _model_burn_pct(m)) is not None]
+    x_max = max([*all_burns, 100.0]) * 1.08
+    y_max = (
+        max([top_quality, *(_pareto_quality(m, profile, weights) for m in pareto_models), 100.0])
+        * 1.08
+    )
+
+    def to_x(burn: float) -> float:
+        return ml + (burn / x_max) * pw
+
+    def to_y(quality: float) -> float:
+        return mt + ph - (quality / y_max) * ph
+
+    svg = [
+        *_svg_preamble(800, 420),
+        '<text x="400" y="30" text-anchor="middle" font-size="15" font-weight="bold" fill="var(--text)">Live Pareto Frontier: Effective Quality vs Quota Burn %</text>',
+    ]
+
     y_top, y_h, y_b = to_y(y_max), to_y(heavy_cutoff), to_y(balanced_cutoff)
     bands = (
         (
@@ -169,181 +137,75 @@ def _pareto_bands(
             f"Balanced Band (≥60%: {balanced_cutoff:.1f})",
         ),
     )
-    elements: list[str] = []
-    for cutoff, top, bottom, band_fill, text_fill, label in bands:
-        if cutoff <= 0:
-            continue
-        elements.append(_svg_rect(ml, top, pw, max(0.0, bottom - top), band_fill))
-        elements.append(
-            _svg_text(ml + 10, top + 16, label, font_size=11, weight="600", fill=text_fill)
-        )
-    return elements
+    for cutoff, top, bottom, fill, text_fill, label in bands:
+        if cutoff > 0:
+            svg.append(
+                f'<rect x="{ml}" y="{top:.1f}" width="{pw}" height="{max(0.0, bottom - top):.1f}" fill="{fill}"/>'
+            )
+            svg.append(
+                f'<text x="{ml + 10}" y="{top + 16:.1f}" font-size="11" font-weight="600" fill="{text_fill}">{label}</text>'
+            )
 
-
-def _pareto_grid_and_axes(
-    ml: int,
-    mt: int,
-    pw: int,
-    ph: int,
-    x_max: float,
-    y_max: float,
-    to_x: Callable[[float], float],
-    to_y: Callable[[float], float],
-) -> list[str]:
-    elements: list[str] = []
     for frac in (0.2, 0.4, 0.6, 0.8, 1.0):
-        gy = to_y(frac * y_max)
-        gx = to_x(frac * x_max)
-        elements.extend(
+        gy, gx = to_y(frac * y_max), to_x(frac * x_max)
+        svg.extend(
             [
-                _svg_line(ml, gy, ml + pw, gy, "var(--grid)", 1),
-                _svg_text(
-                    ml - 8,
-                    gy + 4,
-                    str(int(frac * y_max)),
-                    font_size=10,
-                    fill="var(--text-muted)",
-                    anchor="end",
-                ),
-                _svg_line(gx, mt, gx, mt + ph, "var(--grid)", 1),
-                _svg_text(
-                    gx,
-                    mt + ph + 16,
-                    f"{int(frac * x_max)}%",
-                    font_size=10,
-                    fill="var(--text-muted)",
-                    anchor="middle",
-                ),
+                f'<line x1="{ml}" y1="{gy:.1f}" x2="{ml + pw}" y2="{gy:.1f}" stroke="var(--grid)" stroke-width="1"/>',
+                f'<text x="{ml - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="10" fill="var(--text-muted)">{int(frac * y_max)}</text>',
+                f'<line x1="{gx:.1f}" y1="{mt}" x2="{gx:.1f}" y2="{mt + ph}" stroke="var(--grid)" stroke-width="1"/>',
+                f'<text x="{gx:.1f}" y="{mt + ph + 16}" text-anchor="middle" font-size="10" fill="var(--text-muted)">{int(frac * x_max)}%</text>',
             ]
         )
 
-    elements.extend(
+    svg.extend(
         [
-            _svg_line(ml, mt, ml, mt + ph, "var(--border)", 1.5),
-            _svg_line(ml, mt + ph, ml + pw, mt + ph, "var(--border)", 1.5),
-            _svg_text(
-                ml + pw / 2,
-                405,
-                "Quota Burn %",
-                font_size=12,
-                fill="var(--text-muted)",
-                anchor="middle",
-            ),
-            _svg_text(
-                18,
-                mt + ph / 2,
-                "Effective Quality",
-                font_size=12,
-                fill="var(--text-muted)",
-                anchor="middle",
-                transform=f"rotate(-90, 18, {mt + ph / 2:.1f})",
-            ),
+            f'<line x1="{ml}" y1="{mt}" x2="{ml}" y2="{mt + ph}" stroke="var(--border)" stroke-width="1.5"/>',
+            f'<line x1="{ml}" y1="{mt + ph}" x2="{ml + pw}" y2="{mt + ph}" stroke="var(--border)" stroke-width="1.5"/>',
+            f'<text x="{ml + pw / 2:.1f}" y="405" text-anchor="middle" font-size="12" fill="var(--text-muted)">Quota Burn %</text>',
+            f'<text x="18" y="{mt + ph / 2:.1f}" text-anchor="middle" font-size="12" fill="var(--text-muted)" transform="rotate(-90, 18, {mt + ph / 2:.1f})">Effective Quality</text>',
         ]
     )
-    return elements
 
-
-def _pareto_points_and_frontier(
-    pareto_models: list[dict[str, Any]],
-    rank_models: list[dict[str, Any]],
-    to_x: Callable[[float], float],
-    to_y: Callable[[float], float],
-    profile: str,
-    weights: tuple[float, float] | None,
-) -> list[str]:
-    elements: list[str] = []
     for m in rank_models:
         if m.get("is_pareto") or (m.get("aa_iq") is None and m.get("aa_coding") is None):
             continue
-        burn = _model_burn_pct(m)
-        if burn is None:
+        if (burn := _model_burn_pct(m)) is None:
             continue
         q = _model_quality(m, profile=profile, weights=weights)
-        elements.append(
+        svg.append(
             f'<circle cx="{to_x(burn):.1f}" cy="{to_y(q):.1f}" r="4" fill="var(--c-slate)" opacity="0.45"/>'
         )
 
     sorted_frontier = sorted(pareto_models, key=lambda x: _model_burn_pct(x) or 0.0)
-    if not sorted_frontier:
-        return elements
-
-    pts = [
-        (
-            to_x(burn := (_model_burn_pct(m) or 0.0)),
-            to_y(q := _pareto_quality(m, profile, weights)),
-            burn,
-            q,
-            m,
-        )
-        for m in sorted_frontier
-    ]
-    segments = [f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"] + [
-        f"L {pts[i][0]:.1f} {pts[i - 1][1]:.1f} L {pts[i][0]:.1f} {pts[i][1]:.1f}"
-        for i in range(1, len(pts))
-    ]
-    elements.append(
-        f'<path d="{" ".join(segments)}" fill="none" stroke="var(--c-blue)" stroke-width="2.5" stroke-dasharray="4,3"/>'
-    )
-    for cx, cy, burn, q, m in pts:
-        short_id = _model_id(m, "model").removeprefix("opencode-go/")
-        elements.append(
-            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5.5" fill="var(--bg)" stroke="var(--c-blue)" stroke-width="2.5"/>'
-        )
-        elements.append(
-            _svg_text(
-                cx + 8,
-                cy - 6,
-                f"{short_id} ({burn:.1f}%, {q:.1f})",
-                font_size=11,
-                weight="600",
-                fill="var(--text)",
+    if sorted_frontier:
+        pts = [
+            (
+                to_x(b := (_model_burn_pct(m) or 0.0)),
+                to_y(q := _pareto_quality(m, profile, weights)),
+                b,
+                q,
+                m,
             )
+            for m in sorted_frontier
+        ]
+        segs = [f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"] + [
+            f"L {pts[i][0]:.1f} {pts[i - 1][1]:.1f} L {pts[i][0]:.1f} {pts[i][1]:.1f}"
+            for i in range(1, len(pts))
+        ]
+        svg.append(
+            f'<path d="{" ".join(segs)}" fill="none" stroke="var(--c-blue)" stroke-width="2.5" stroke-dasharray="4,3"/>'
         )
-    return elements
+        for cx, cy, burn, q, m in pts:
+            short_id = _model_id(m, "model").removeprefix("opencode-go/")
+            svg.append(
+                f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5.5" fill="var(--bg)" stroke="var(--c-blue)" stroke-width="2.5"/>'
+            )
+            svg.append(
+                f'<text x="{cx + 8:.1f}" y="{cy - 6:.1f}" font-size="11" font-weight="600" fill="var(--text)">'
+                f"{html.escape(short_id)} ({burn:.1f}%, {q:.1f})</text>"
+            )
 
-
-def _render_pareto_frontier_svg(
-    pareto_models: list[dict[str, Any]],
-    rank_models: list[dict[str, Any]],
-    top_quality: float,
-    heavy_cutoff: float,
-    balanced_cutoff: float,
-    *,
-    profile: str = "general",
-    weights: tuple[float, float] | None = None,
-) -> str:
-    """Render the live Pareto frontier scatter & step-curve SVG."""
-    ml, mr, mt, mb = 65, 35, 55, 55
-    pw = 800 - ml - mr
-    ph = 420 - mt - mb
-
-    all_burns = [burn for m in rank_models if (burn := _model_burn_pct(m)) is not None]
-    x_max = max([*all_burns, 100.0]) * 1.08
-    pareto_qualities = [_pareto_quality(m, profile, weights) for m in pareto_models]
-    y_max = max([top_quality, *pareto_qualities, 100.0]) * 1.08
-
-    def to_x(burn: float) -> float:
-        return ml + (burn / x_max) * pw
-
-    def to_y(quality: float) -> float:
-        return mt + ph - (quality / y_max) * ph
-
-    svg = [
-        *_svg_preamble(800, 420),
-        _svg_text(
-            400,
-            30,
-            "Live Pareto Frontier: Effective Quality vs Quota Burn %",
-            font_size=15,
-            weight="bold",
-            fill="var(--text)",
-            anchor="middle",
-        ),
-        *_pareto_bands(ml, pw, to_y, y_max, heavy_cutoff, balanced_cutoff),
-        *_pareto_grid_and_axes(ml, mt, pw, ph, x_max, y_max, to_x, to_y),
-        *_pareto_points_and_frontier(pareto_models, rank_models, to_x, to_y, profile, weights),
-        "</svg>",
-    ]
+    svg.append("</svg>")
     return "\n".join(svg)
 
 
@@ -351,27 +213,19 @@ def _render_catalog_ranking_svg(rank_models: list[dict[str, Any]]) -> str:
     """Render the horizontal bar breakdown SVG for top ranked catalog models."""
     top_models = rank_models[:12]
     row_h, header_h, footer_h = 42, 55, 35
-    svg_h = header_h + len(top_models) * row_h + footer_h
     c_ml, c_mr = 190, 70
     bar_max_w = 800 - c_ml - c_mr
 
     svg = [
-        *_svg_preamble(800, svg_h),
-        _svg_text(
-            30,
-            28,
-            "Ranked Model Catalog: Benchmark Scores & Quota Burn",
-            font_size=15,
-            weight="bold",
-            fill="var(--text)",
-        ),
+        *_svg_preamble(800, header_h + len(top_models) * row_h + footer_h),
+        '<text x="30" y="28" font-size="15" font-weight="bold" fill="var(--text)">Ranked Model Catalog: Benchmark Scores &amp; Quota Burn</text>',
         *_svg_legend(
             (
                 (480, "var(--c-blue)", "AA IQ"),
                 (560, "var(--c-green)", "Engineering"),
                 (665, "var(--c-amber)", "Quota Burn %"),
             ),
-            y=18,
+            18,
         ),
     ]
 
@@ -380,33 +234,27 @@ def _render_catalog_ranking_svg(rank_models: list[dict[str, Any]]) -> str:
         short_id = _model_id(m).removeprefix("opencode-go/")
         rank_val = m.get("rank")
         rank_s = f"#{rank_val}" if rank_val is not None else f"#{i + 1}"
-
         svg.append(
-            _svg_text(
-                c_ml - 12,
-                y_base + 22,
-                f"{rank_s} {short_id}",
-                font_size=12,
-                weight="500",
-                fill="var(--text)",
-                anchor="end",
-            )
+            f'<text x="{c_ml - 12}" y="{y_base + 22}" text-anchor="end" font-size="12" font-weight="500" fill="var(--text)">'
+            f"{rank_s} {html.escape(short_id)}</text>"
         )
 
-        iq = float(m.get("aa_iq") or 0.0)
-        coding = float(m.get("aa_coding") or 0.0)
-        burn = _model_burn_pct(m) or 0.0
-
-        bars = (
+        iq, coding, burn = (
+            float(m.get("aa_iq") or 0.0),
+            float(m.get("aa_coding") or 0.0),
+            _model_burn_pct(m) or 0.0,
+        )
+        for val, y_pos, fill, label in (
             (iq, y_base + 6, "var(--c-blue)", f"{iq:.1f}"),
             (coding, y_base + 16, "var(--c-green)", f"{coding:.1f}"),
             (min(burn, 100.0), y_base + 26, "var(--c-amber)", f"{burn:.1f}%"),
-        )
-        for val, y_pos, fill, label in bars:
+        ):
             width = max(0.0, min(bar_max_w, (val / 100.0) * bar_max_w))
-            svg.append(_svg_rect(c_ml, y_pos, width, 7, fill, rx=3))
             svg.append(
-                _svg_text(c_ml + width + 6, y_pos + 7, label, font_size=9, fill="var(--text-muted)")
+                f'<rect x="{c_ml}" y="{y_pos}" width="{width:.1f}" height="7" rx="3" fill="{fill}"/>'
+            )
+            svg.append(
+                f'<text x="{c_ml + width + 6:.1f}" y="{y_pos + 7}" font-size="9" fill="var(--text-muted)">{label}</text>'
             )
 
     svg.append("</svg>")
@@ -417,8 +265,7 @@ def _render_multi_plan_comparison_svg(plan_payloads: dict[str, dict[str, Any]]) 
     """Render the multi-plan monthly allowance vs quota burn comparison SVG."""
     plans = list(plan_payloads.keys())
     p_ml, p_mr, p_mt, p_mb = 60, 30, 60, 55
-    p_pw = 800 - p_ml - p_mr
-    p_ph = 360 - p_mt - p_mb
+    p_pw, p_ph = 800 - p_ml - p_mr, 360 - p_mt - p_mb
 
     all_vals: list[float] = [100.0]
     for p_name in plans:
@@ -433,21 +280,9 @@ def _render_multi_plan_comparison_svg(plan_payloads: dict[str, dict[str, Any]]) 
 
     svg = [
         *_svg_preamble(800, 360),
-        _svg_text(
-            400,
-            28,
-            "Multi-Plan Comparison: Monthly Allowance ($) vs Quota Burn (%)",
-            font_size=15,
-            weight="bold",
-            fill="var(--text)",
-            anchor="middle",
-        ),
+        '<text x="400" y="28" text-anchor="middle" font-size="15" font-weight="bold" fill="var(--text)">Multi-Plan Comparison: Monthly Allowance ($) vs Quota Burn (%)</text>',
         *_svg_legend(
-            (
-                (280, "var(--c-blue)", "Allowance ($)"),
-                (420, "var(--c-amber)", "Quota Burn %"),
-            ),
-            y=40,
+            ((280, "var(--c-blue)", "Allowance ($)"), (420, "var(--c-amber)", "Quota Burn %")), 40
         ),
     ]
 
@@ -457,48 +292,27 @@ def _render_multi_plan_comparison_svg(plan_payloads: dict[str, dict[str, Any]]) 
     for t_idx, tier in enumerate(PAID_TIERS):
         tier_x = p_ml + t_idx * tier_w
         svg.append(
-            _svg_text(
-                tier_x + tier_w / 2,
-                345,
-                tier,
-                font_size=13,
-                weight="600",
-                fill="var(--text)",
-                anchor="middle",
-            )
+            f'<text x="{tier_x + tier_w / 2:.1f}" y="345" text-anchor="middle" font-size="13" font-weight="600" fill="var(--text)">{tier}</text>'
         )
-
         for p_idx, p_name in enumerate(plans):
             ex = (plan_payloads[p_name].get("explanations") or {}).get(tier) or {}
             allow_f = _as_float(ex.get("monthly_allowance")) or 0.0
             burn_f = _model_burn_pct(ex) or 0.0
-
             slot_x = tier_x + (tier_w * 0.06) + p_idx * plan_slot_w
             h_allow = max(0.0, (allow_f / p_max_val) * p_ph)
             h_burn = max(0.0, (min(burn_f, p_max_val) / p_max_val) * p_ph)
-
-            svg.append(_svg_rect(slot_x, p_mt + p_ph - h_allow, bw, h_allow, "var(--c-blue)", rx=2))
             svg.append(
-                _svg_rect(slot_x + bw + 2, p_mt + p_ph - h_burn, bw, h_burn, "var(--c-amber)", rx=2)
+                f'<rect x="{slot_x:.1f}" y="{p_mt + p_ph - h_allow:.1f}" width="{bw:.1f}" height="{h_allow:.1f}" rx="2" fill="var(--c-blue)"/>'
             )
             svg.append(
-                _svg_text(
-                    slot_x + bw,
-                    p_mt + p_ph + 14,
-                    p_name,
-                    font_size=9,
-                    fill="var(--text-muted)",
-                    anchor="middle",
-                )
+                f'<rect x="{slot_x + bw + 2:.1f}" y="{p_mt + p_ph - h_burn:.1f}" width="{bw:.1f}" height="{h_burn:.1f}" rx="2" fill="var(--c-amber)"/>'
+            )
+            svg.append(
+                f'<text x="{slot_x + bw:.1f}" y="{p_mt + p_ph + 14}" text-anchor="middle" font-size="9" fill="var(--text-muted)">{html.escape(p_name)}</text>'
             )
 
     svg.append("</svg>")
     return "\n".join(svg)
-
-
-def _write_svg(charts_dir: Path, filename: str, content: str) -> str:
-    (charts_dir / filename).write_text(content, encoding="utf-8")
-    return filename
 
 
 def generate_analysis_svgs(
@@ -515,7 +329,7 @@ def generate_analysis_svgs(
 ) -> list[str]:
     """Generate crisp, self-contained SVG charts for live Pareto analysis."""
     charts_dir.mkdir(parents=True, exist_ok=True)
-    specs: list[tuple[str, str]] = [
+    specs = [
         (
             "pareto-frontier.svg",
             _render_pareto_frontier_svg(
@@ -534,4 +348,6 @@ def generate_analysis_svgs(
         specs.append(
             ("multi-plan-comparison.svg", _render_multi_plan_comparison_svg(plan_payloads))
         )
-    return [_write_svg(charts_dir, name, content) for name, content in specs]
+    for filename, content in specs:
+        (charts_dir / filename).write_text(content, encoding="utf-8")
+    return [filename for filename, _ in specs]

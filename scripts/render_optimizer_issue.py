@@ -35,75 +35,24 @@ __all__ = [
     "render_optimizer_output_comment",
 ]
 
-_ARG_SPECS: tuple[tuple[tuple[str, ...], dict[str, Any]], ...] = (
-    (("--json",), {"default": None, "help": "Path to select --format json --explain file"}),
+_OPTIONAL_FLAGS: tuple[tuple[str, str], ...] = (
+    ("--json", "Path to select --format json --explain file"),
+    ("--script-output", "Optional path to full script output (stdout/stderr)"),
+    ("--run-url", "Optional GitHub Actions run URL"),
+    ("--ci-dir", "Optional path to CI logs directory (out/ci)"),
     (
-        ("--script-output",),
-        {"default": None, "help": "Optional path to full script output (stdout/stderr)"},
+        "--optimizer-output",
+        "Path to the actual optimizer output (stdout plus stderr) to post as a PR comment",
     ),
-    (("--run-url",), {"default": None, "help": "Optional GitHub Actions run URL"}),
-    (("--ci-dir",), {"default": None, "help": "Optional path to CI logs directory (out/ci)"}),
-    (
-        ("--optimizer-output",),
-        {
-            "default": None,
-            "help": "Path to the actual optimizer output (stdout plus stderr) to post as a PR comment",
-        },
-    ),
-    (
-        ("--benchmarks",),
-        {
-            "default": None,
-            "choices": ["live", "unavailable"],
-            "help": "Benchmark availability shown in the optimizer output comment header",
-        },
-    ),
-    (
-        ("--command",),
-        {"default": None, "help": "Command line shown in the optimizer output comment header"},
-    ),
-    (
-        ("--status",),
-        {
-            "default": None,
-            "help": "Optimizer exit status shown in the optimizer output comment header",
-        },
-    ),
-    (("--sha",), {"default": None, "help": "Optional commit SHA for CI report"}),
-    (("--format-outcome",), {"default": "unknown", "help": "Format step outcome"}),
-    (("--lint-outcome",), {"default": "unknown", "help": "Lint step outcome"}),
-    (("--pytest-outcome",), {"default": "unknown", "help": "Pytest step outcome"}),
-    (("--build-outcome",), {"default": "unknown", "help": "Build step outcome"}),
-    (("--rank-json",), {"default": None, "help": "Optional path to rank --format json file"}),
-    (
-        ("--plan-json",),
-        {
-            "action": "append",
-            "default": [],
-            "help": "Repeatable PLAN=PATH for select --format json --explain payloads",
-        },
-    ),
-    (
-        ("--free-matrix-json",),
-        {"default": None, "help": "Optional path to free matrix JSON list file"},
-    ),
-    (
-        ("--site-url",),
-        {
-            "default": None,
-            "help": "Optional published GitHub Pages site URL (full dataset location)",
-        },
-    ),
-    (("-o", "--output"), {"default": None, "help": "Output markdown path (default: stdout)"}),
-    (("--analysis-output",), {"default": None, "help": "Optional path to write analysis.md"}),
-    (
-        ("--charts-dir",),
-        {"default": None, "help": "Optional directory to output generated SVG analysis charts"},
-    ),
-    (
-        ("--data-output",),
-        {"default": None, "help": "Optional path to write the all-data index page (data.md)"},
-    ),
+    ("--command", "Command line shown in the optimizer output comment header"),
+    ("--status", "Optimizer exit status shown in the optimizer output comment header"),
+    ("--sha", "Optional commit SHA for CI report"),
+    ("--rank-json", "Optional path to rank --format json file"),
+    ("--free-matrix-json", "Optional path to free matrix JSON list file"),
+    ("--site-url", "Optional published GitHub Pages site URL (full dataset location)"),
+    ("--analysis-output", "Optional path to write analysis.md"),
+    ("--charts-dir", "Optional directory to output generated SVG analysis charts"),
+    ("--data-output", "Optional path to write the all-data index page (data.md)"),
 )
 
 
@@ -122,8 +71,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Render GitHub-pretty markdown from optimizer JSON and script output, "
         "CI results, or the raw optimizer output."
     )
-    for flags, kwargs in _ARG_SPECS:
-        parser.add_argument(*flags, **kwargs)
+    for flag, help_text in _OPTIONAL_FLAGS:
+        parser.add_argument(flag, default=None, help=help_text)
+    for step in ("format", "lint", "pytest", "build"):
+        parser.add_argument(
+            f"--{step}-outcome", default="unknown", help=f"{step.capitalize()} step outcome"
+        )
+    parser.add_argument(
+        "--benchmarks",
+        default=None,
+        choices=["live", "unavailable"],
+        help="Benchmark availability shown in the optimizer output comment header",
+    )
+    parser.add_argument(
+        "--plan-json",
+        action="append",
+        default=[],
+        help="Repeatable PLAN=PATH for select --format json --explain payloads",
+    )
+    parser.add_argument(
+        "-o", "--output", default=None, help="Output markdown path (default: stdout)"
+    )
     return parser.parse_args(argv)
 
 
@@ -131,35 +99,25 @@ def _render_primary_markdown(
     args: argparse.Namespace,
 ) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]] | None]:
     if args.ci_dir:
+        outcomes = {s: getattr(args, f"{s}_outcome") for s in ("format", "lint", "pytest", "build")}
         return (
             render_ci_comment_markdown(
-                ci_dir=args.ci_dir,
-                run_url=args.run_url,
-                sha=args.sha,
-                outcomes={
-                    "format": args.format_outcome,
-                    "lint": args.lint_outcome,
-                    "pytest": args.pytest_outcome,
-                    "build": args.build_outcome,
-                },
+                ci_dir=args.ci_dir, run_url=args.run_url, sha=args.sha, outcomes=outcomes
             ),
             None,
             None,
         )
 
     if args.optimizer_output:
-        return (
-            render_optimizer_output_comment(
-                output=args.optimizer_output,
-                run_url=args.run_url or None,
-                sha=args.sha or None,
-                command=args.command or None,
-                benchmarks=args.benchmarks or None,
-                status=args.status,
-            ),
-            None,
-            None,
+        md = render_optimizer_output_comment(
+            output=args.optimizer_output,
+            run_url=args.run_url or None,
+            sha=args.sha or None,
+            command=args.command or None,
+            benchmarks=args.benchmarks or None,
+            status=args.status,
         )
+        return md, None, None
 
     if args.json:
         select_payload = _load_json(args.json)
@@ -167,27 +125,16 @@ def _render_primary_markdown(
         script_output = (
             Path(args.script_output).read_text(encoding="utf-8") if args.script_output else ""
         )
-        markdown = render_issue_markdown(
+        md = render_issue_markdown(
             select_payload,
             script_output=script_output,
             run_url=args.run_url or None,
             rank_models=rank_models,
             site_url=args.site_url or None,
         )
-        return markdown, select_payload, rank_models
+        return md, select_payload, rank_models
 
     return None, None, None
-
-
-def _load_plan_payloads(items: list[str]) -> dict[str, dict[str, Any]]:
-    payloads: dict[str, dict[str, Any]] = {}
-    for item in items:
-        if "=" not in item:
-            continue
-        plan_name, plan_path = item.split("=", 1)
-        if Path(plan_path).is_file():
-            payloads[plan_name] = _load_json(plan_path)
-    return payloads
 
 
 def _write_site_pages(
@@ -196,11 +143,18 @@ def _write_site_pages(
     rank_models: list[dict[str, Any]] | None,
 ) -> None:
     if args.analysis_output:
-        plan_payloads = _load_plan_payloads(args.plan_json)
-        free_matrix: list[dict[str, Any]] | None = None
-        if args.free_matrix_json and Path(args.free_matrix_json).is_file():
-            free_matrix = _load_json(args.free_matrix_json)
-
+        plan_payloads = {
+            name: _load_json(path)
+            for item in args.plan_json
+            if "=" in item
+            and Path(path := item.split("=", 1)[1]).is_file()
+            and (name := item.split("=", 1)[0]) is not None
+        }
+        free_matrix = (
+            _load_json(args.free_matrix_json)
+            if args.free_matrix_json and Path(args.free_matrix_json).is_file()
+            else None
+        )
         analysis_md = render_analysis_markdown(
             select_payload=select_payload,
             rank_models=rank_models,
