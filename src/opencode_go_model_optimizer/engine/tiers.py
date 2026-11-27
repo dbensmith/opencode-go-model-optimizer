@@ -15,6 +15,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     evaluate_pareto,
     filter_benchmarked_models,
     fisher_jenks_3_clusters,
+    model_burn,
 )
 from opencode_go_model_optimizer.engine.pricing import apply_price_basis
 from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
@@ -22,7 +23,8 @@ from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
 PAID_TIERS = ("heavy", "balanced", "light")
-_PAID_TIERS = PAID_TIERS
+HEAVY_QUALITY_RATIO = 0.9
+BALANCED_QUALITY_RATIO = 0.6
 
 
 def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
@@ -117,10 +119,33 @@ def _seed_selection(
     return selected, used
 
 
+def _tie_tail(m: NormalizedModel, *, include_speed: bool = False) -> tuple[object, ...]:
+    """Return optional negative speed followed by the deterministic tie-break key."""
+    if include_speed:
+        return (-(m.speed_tps or 0.0), tie_break_key(m))
+    return (tie_break_key(m),)
+
+
+def _pareto_rank_key(
+    m: NormalizedModel,
+    c: SelectionCriteria,
+    *,
+    include_speed: bool = False,
+) -> tuple[object, ...]:
+    """Sort key for Pareto-evaluated models: BPE desc, quality desc, burn asc."""
+    quality = effective_quality(m, profile=c.profile, weights=c.weights)
+    return (
+        -(m.bpe or 0.0),
+        -quality,
+        model_burn(m),
+        *_tie_tail(m, include_speed=include_speed),
+    )
+
+
 def _pick_paid_tiers(
     selected: dict[str, str], used: set[str], clusters: dict[str, list[NormalizedModel]]
 ) -> None:
-    for tier in _PAID_TIERS:
+    for tier in PAID_TIERS:
         if tier not in selected and clusters[tier]:
             _claim(selected, used, tier, clusters[tier][0])
 
@@ -135,7 +160,7 @@ def _pareto_clusters(
     ``light`` the lowest-burn frontier model. Only Pareto-optimal models are eligible. Tiers
     may share a model.
     """
-    empty: dict[str, list[NormalizedModel]] = {t: [] for t in _PAID_TIERS}
+    empty: dict[str, list[NormalizedModel]] = {t: [] for t in PAID_TIERS}
     benchmarked = filter_benchmarked_models(evaluated, c.skip_models)
     if not benchmarked:
         return empty
@@ -143,67 +168,52 @@ def _pareto_clusters(
     def quality(m: NormalizedModel) -> float:
         return effective_quality(m, profile=c.profile, weights=c.weights)
 
-    def burn(m: NormalizedModel) -> float:
-        return m.composite_burn_pct if m.composite_burn_pct is not None else float("inf")
+    def value_key(m: NormalizedModel, *, include_speed: bool) -> tuple[object, ...]:
+        q = quality(m)
+        b = model_burn(m)
+        value = q / b if b > 0 and q > 0 else 0.0
+        return (
+            not bool(m.is_pareto),
+            -value,
+            -q,
+            b,
+            -(m.bpe or 0.0),
+            *_tie_tail(m, include_speed=include_speed),
+        )
 
-    def value(m: NormalizedModel) -> float:
-        q, b = quality(m), burn(m)
-        return q / b if b > 0 and q > 0 else 0.0
-
-    def base(m: NormalizedModel) -> tuple[bool]:
-        return (not bool(m.is_pareto),)
+    def light_key(m: NormalizedModel) -> tuple[object, ...]:
+        return (
+            not bool(m.is_pareto),
+            model_burn(m),
+            -quality(m),
+            -(m.bpe or 0.0),
+            *_tie_tail(m, include_speed=True),
+        )
 
     frontier = [m for m in benchmarked if m.is_pareto] or benchmarked
     heavy_quality = max((quality(m) for m in frontier), default=0.0)
     # Heavy is the value winner among models within 10% of the best quality; balanced is the
     # value winner among models at least 60% as capable as the best. The bands keep a cheap,
     # much weaker model from being promoted just because it has a high quality/burn ratio.
-    heavy_pool = [m for m in frontier if quality(m) >= heavy_quality * 0.9] or frontier
-    balanced_pool = [m for m in frontier if quality(m) >= heavy_quality * 0.6] or frontier
+    heavy_pool = [
+        m for m in frontier if quality(m) >= heavy_quality * HEAVY_QUALITY_RATIO
+    ] or frontier
+    balanced_pool = [
+        m for m in frontier if quality(m) >= heavy_quality * BALANCED_QUALITY_RATIO
+    ] or frontier
     return {
-        "heavy": sorted(
-            heavy_pool,
-            key=lambda m: (
-                *base(m),
-                -value(m),
-                -quality(m),
-                burn(m),
-                -(m.bpe or 0.0),
-                -(m.speed_tps or 0.0),
-                tie_break_key(m),
-            ),
-        ),
-        "balanced": sorted(
-            balanced_pool,
-            key=lambda m: (
-                *base(m),
-                -value(m),
-                -quality(m),
-                burn(m),
-                -(m.bpe or 0.0),
-                tie_break_key(m),
-            ),
-        ),
-        "light": sorted(
-            frontier,
-            key=lambda m: (
-                *base(m),
-                burn(m),
-                -quality(m),
-                -(m.bpe or 0.0),
-                -(m.speed_tps or 0.0),
-                tie_break_key(m),
-            ),
-        ),
+        "heavy": sorted(heavy_pool, key=lambda m: value_key(m, include_speed=True)),
+        "balanced": sorted(balanced_pool, key=lambda m: value_key(m, include_speed=False)),
+        "light": sorted(frontier, key=light_key),
     }
 
 
 def _allowance_clusters(paid: list[NormalizedModel]) -> dict[str, list[NormalizedModel]]:
     """Cluster paid models by output cost into ranked per-tier lists."""
     if not paid:
-        return {t: [] for t in _PAID_TIERS}
+        return {t: [] for t in PAID_TIERS}
     clusters = fisher_jenks_3_clusters(paid, key=lambda m: math.log1p(m.cost.output))
-    return {tier: rank_paid_models(c) for tier, c in zip(_PAID_TIERS, clusters, strict=True)}
+    return {tier: rank_paid_models(c) for tier, c in zip(PAID_TIERS, clusters, strict=True)}
 
 
 def _allocate_allowance(
@@ -272,7 +282,7 @@ def _allocate_pareto(
     _pick_paid_tiers(selected, used, clusters)
 
     # No benchmarked/Pareto model at all: fall back to allowance allocation.
-    if not any(selected.get(t) for t in _PAID_TIERS):
+    if not any(selected.get(t) for t in PAID_TIERS):
         picks, _, _, _ = _allocate_allowance(
             models,
             replace(c, preferred_tiers={**c.preferred_tiers, **selected}),
@@ -309,13 +319,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         frontier = [m for m in pool if m.is_pareto]
         general_paid = sorted(
             frontier,
-            key=lambda m: (
-                -(m.bpe or 0.0),
-                -effective_quality(m, profile=c.profile, weights=c.weights),
-                m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
-                -(m.speed_tps or 0.0),
-                tie_break_key(m),
-            ),
+            key=lambda m: _pareto_rank_key(m, c, include_speed=True),
         )
 
     def fill(tier: str, pools: list[list[NormalizedModel]]) -> list[str]:
@@ -329,7 +333,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         return candidates
 
     fallbacks = {"free": fill("free", [free_ranked])}
-    for tier in _PAID_TIERS:
+    for tier in PAID_TIERS:
         fallbacks[tier] = fill(tier, [clusters[tier], general_paid])
     return TierSelection(primary, {t: fallbacks[t] for t in STANDARD_TIERS}, pool, clusters)
 
@@ -345,15 +349,7 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
     if c.mode == "pareto":
         evaluated = _evaluate(active_models, c)
         # Sort by BPE desc, effective_quality desc, composite_burn asc, tie_break_key
-        ranked = sorted(
-            evaluated,
-            key=lambda m: (
-                -(m.bpe or 0.0),
-                -effective_quality(m, profile=c.profile, weights=c.weights),
-                m.composite_burn_pct if m.composite_burn_pct is not None else float("inf"),
-                tie_break_key(m),
-            ),
-        )
+        ranked = sorted(evaluated, key=lambda m: _pareto_rank_key(m, c))
         tiers_map, _, _ = _allocate_pareto(evaluated, c, evaluated)
     else:
         tiers_map, _, free, paid = _allocate_allowance(active_models, c)

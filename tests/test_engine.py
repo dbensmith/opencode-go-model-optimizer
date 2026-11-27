@@ -1,7 +1,16 @@
 """Tests for ranking engines and capability tier allocator."""
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
+import pytest
+
+import opencode_go_model_optimizer.engine as engine_pkg
+from opencode_go_model_optimizer.engine import (
+    PROFILE_SPECS,
+    WorkloadProfile,
+    model_burn,
+)
 from opencode_go_model_optimizer.engine.allowance import (
     _desc_str_key,
     is_eligible_free,
@@ -1495,3 +1504,145 @@ def test_tier_selection_clusters_and_allocate_efficiency():
     assert ret_free is free_ranked
     assert ret_paid is paid_ranked
     assert selected["free"] == m_free.full_id
+
+
+def test_profile_specs_sync_and_exports():
+    assert set(PROFILE_SPECS.keys()) == {"general", "coding", "reasoning", "fast"}
+    assert set(WORKLOAD_PROFILES.keys()) == set(PROFILE_SPECS.keys())
+
+    for name, spec in PROFILE_SPECS.items():
+        assert isinstance(spec, WorkloadProfile)
+        assert WORKLOAD_PROFILES[name] == spec.token_mix
+
+    assert PROFILE_SPECS["general"] == WorkloadProfile(
+        token_mix=(750, 60000, 250), iq_weight=0.7, coding_weight=0.3, speed_scaled=False
+    )
+    assert PROFILE_SPECS["coding"] == WorkloadProfile(
+        token_mix=(1500, 100000, 800), iq_weight=0.4, coding_weight=0.6, speed_scaled=False
+    )
+    assert PROFILE_SPECS["reasoning"] == WorkloadProfile(
+        token_mix=(1000, 40000, 2000), iq_weight=0.85, coding_weight=0.15, speed_scaled=False
+    )
+    assert PROFILE_SPECS["fast"] == WorkloadProfile(
+        token_mix=(500, 20000, 150), iq_weight=0.7, coding_weight=0.3, speed_scaled=True
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        PROFILE_SPECS["general"].iq_weight = 0.5  # type: ignore[misc]
+
+    for sym in ("WorkloadProfile", "PROFILE_SPECS", "model_burn"):
+        assert sym in engine_pkg.__all__
+        assert hasattr(engine_pkg, sym)
+
+
+def test_model_burn_handles_none_and_numeric():
+    assert model_burn(NormalizedModel(id="none-burn", composite_burn_pct=None)) == float("inf")
+    assert model_burn(NormalizedModel(id="zero-burn", composite_burn_pct=0.0)) == 0.0
+    assert model_burn(NormalizedModel(id="num-burn", composite_burn_pct=12.5)) == 12.5
+
+
+def test_pareto_cluster_and_rank_tie_breaking_preserved():
+    def frontier_model(
+        mid: str,
+        *,
+        iq: float,
+        burn: float,
+        bpe: float,
+        speed_tps: float,
+        release_date: str,
+    ) -> NormalizedModel:
+        return NormalizedModel(
+            id=mid,
+            aa_iq=iq,
+            is_pareto=True,
+            bpe=bpe,
+            composite_burn_pct=burn,
+            monthly_allowance=100.0,
+            cost=TokenCost(output=5.0),
+            speed_tps=speed_tps,
+            release_date=release_date,
+        )
+
+    # Heavy tier tie-break: same quality/burn/bpe -> speed_tps wins over newer release_date
+    h_fast = frontier_model(
+        "h-fast", iq=100.0, burn=20.0, bpe=1.0, speed_tps=200.0, release_date="2026-01-01"
+    )
+    h_newer = frontier_model(
+        "h-newer", iq=100.0, burn=20.0, bpe=1.0, speed_tps=50.0, release_date="2026-10-01"
+    )
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        heavy_sel = select_tiers([h_newer, h_fast], SelectionCriteria(mode="pareto", top_n=2))
+    assert [m.id for m in heavy_sel.clusters["heavy"]] == ["h-fast", "h-newer"]
+    assert heavy_sel.primary["heavy"] == "opencode-go/h-fast"
+
+    # Balanced tier tie-break: does NOT include speed_tps, so newer release_date wins over speed
+    # Keep a higher-quality model outside the balanced value winner so both tie in balanced_pool.
+    b_top = frontier_model(
+        "b-top", iq=100.0, burn=50.0, bpe=1.0, speed_tps=100.0, release_date="2026-05-01"
+    )
+    b_fast = frontier_model(
+        "b-fast", iq=70.0, burn=10.0, bpe=0.9, speed_tps=300.0, release_date="2026-01-01"
+    )
+    b_newer = frontier_model(
+        "b-newer", iq=70.0, burn=10.0, bpe=0.9, speed_tps=20.0, release_date="2026-10-01"
+    )
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        bal_sel = select_tiers([b_top, b_fast, b_newer], SelectionCriteria(mode="pareto", top_n=3))
+    assert [m.id for m in bal_sel.clusters["balanced"][:2]] == ["b-newer", "b-fast"]
+    assert bal_sel.primary["balanced"] == "opencode-go/b-newer"
+
+    # Light tier tie-break: burn asc first, then speed_tps desc before release_date
+    l_cheapest = frontier_model(
+        "l-cheap", iq=20.0, burn=1.0, bpe=1.0, speed_tps=10.0, release_date="2026-01-01"
+    )
+    l_tied_fast = frontier_model(
+        "l-tied-fast", iq=30.0, burn=2.0, bpe=0.8, speed_tps=200.0, release_date="2026-01-01"
+    )
+    l_tied_newer = frontier_model(
+        "l-tied-newer", iq=30.0, burn=2.0, bpe=0.8, speed_tps=10.0, release_date="2026-10-01"
+    )
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        light_sel = select_tiers(
+            [l_tied_newer, l_tied_fast, l_cheapest], SelectionCriteria(mode="pareto")
+        )
+    assert [m.id for m in light_sel.clusters["light"]] == [
+        "l-cheap",
+        "l-tied-fast",
+        "l-tied-newer",
+    ]
+
+    # select_tiers general_paid fallback includes speed_tps while rank_catalog does NOT
+    m_anchor = frontier_model(
+        "m-anchor", iq=100.0, burn=50.0, bpe=1.0, speed_tps=50.0, release_date="2026-05-01"
+    )
+    m_sub_fast = frontier_model(
+        "m-sub-fast", iq=50.0, burn=5.0, bpe=0.8, speed_tps=250.0, release_date="2026-01-01"
+    )
+    m_sub_newer = frontier_model(
+        "m-sub-newer", iq=50.0, burn=5.0, bpe=0.8, speed_tps=25.0, release_date="2026-11-01"
+    )
+    pool = [m_anchor, m_sub_newer, m_sub_fast]
+    with patch(
+        "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
+        side_effect=lambda models, **kwargs: models,
+    ):
+        sel = select_tiers(pool, SelectionCriteria(mode="pareto", top_n=3))
+        ranked = rank_catalog(pool, SelectionCriteria(mode="pareto"))
+
+    # heavy_pool has only m_anchor, so remaining candidates come from general_paid (speed_tps wins)
+    assert sel.candidates["heavy"] == [
+        "opencode-go/m-anchor",
+        "opencode-go/m-sub-fast",
+        "opencode-go/m-sub-newer",
+    ]
+    # rank_catalog omits speed_tps, so release_date breaks the tie in favor of m-sub-newer
+    assert [m.id for m in ranked] == ["m-anchor", "m-sub-newer", "m-sub-fast"]

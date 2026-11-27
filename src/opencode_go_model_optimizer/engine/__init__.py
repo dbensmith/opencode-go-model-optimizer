@@ -15,7 +15,9 @@ from opencode_go_model_optimizer.engine.diff import (
 )
 from opencode_go_model_optimizer.engine.pareto import (
     BURN_BASES,
+    PROFILE_SPECS,
     WORKLOAD_PROFILES,
+    WorkloadProfile,
     compute_burn_pct,
     compute_quota_burn_pct,
     compute_turn_cost,
@@ -23,6 +25,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     evaluate_pareto,
     filter_benchmarked_models,
     fisher_jenks_3_clusters,
+    model_burn,
 )
 from opencode_go_model_optimizer.engine.pricing import (
     PRICE_BASES,
@@ -41,12 +44,14 @@ __all__ = [
     "BURN_BASES",
     "PAID_TIERS",
     "PRICE_BASES",
+    "PROFILE_SPECS",
     "STANDARD_TIERS",
     "WORKLOAD_PROFILES",
     "ModelChange",
     "SelectionCriteria",
     "SnapshotDiff",
     "TierSelection",
+    "WorkloadProfile",
     "apply_price_basis",
     "compute_burn_pct",
     "compute_quota_burn_pct",
@@ -58,6 +63,7 @@ __all__ = [
     "fisher_jenks_3_clusters",
     "is_eligible_free",
     "is_eligible_paid",
+    "model_burn",
     "passes_privacy",
     "rank_catalog",
     "rank_free_models",
