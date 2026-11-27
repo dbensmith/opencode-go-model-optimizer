@@ -13,7 +13,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     PAID_TIERS,
 )
 
-from .common import _model_burn_pct, _model_id, _model_quality
+from .common import _model_burn_pct, _model_quality, _short_id
 
 _SVG_CSS_STYLES = """
     :root {
@@ -194,7 +194,7 @@ def _render_pareto_frontier_svg(
             f'<path d="{" ".join(segs)}" fill="none" stroke="var(--c-blue)" stroke-width="2.5" stroke-dasharray="4,3"/>'
         )
         for cx, cy, burn, q, m in pts:
-            short_id = _model_id(m, "model").removeprefix("opencode-go/")
+            short_id = _short_id(m)
             svg.append(
                 f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5.5" fill="var(--bg)" stroke="var(--c-blue)" stroke-width="2.5"/>'
             )
@@ -229,7 +229,7 @@ def _render_catalog_ranking_svg(rank_models: list[dict[str, Any]]) -> str:
 
     for i, m in enumerate(top_models):
         y_base = header_h + i * row_h
-        short_id = _model_id(m).removeprefix("opencode-go/")
+        short_id = _short_id(m)
         rank_val = m.get("rank")
         rank_s = f"#{rank_val}" if rank_val is not None else f"#{i + 1}"
         svg.append(
@@ -272,7 +272,7 @@ def _render_multi_plan_comparison_svg(plan_payloads: dict[str, dict[str, Any]]) 
             ex = explanations.get(tier) or {}
             if (allow := _as_float(ex.get("monthly_allowance"))) is not None:
                 all_vals.append(allow)
-            if (burn := _model_burn_pct(ex)) is not None:
+            if (burn := _as_float(ex.get("quota_burn_pct"))) is not None:
                 all_vals.append(burn)
     p_max_val = max(all_vals) * 1.1
 
@@ -295,7 +295,7 @@ def _render_multi_plan_comparison_svg(plan_payloads: dict[str, dict[str, Any]]) 
         for p_idx, p_name in enumerate(plans):
             ex = (plan_payloads[p_name].get("explanations") or {}).get(tier) or {}
             allow_f = _as_float(ex.get("monthly_allowance")) or 0.0
-            burn_f = _model_burn_pct(ex) or 0.0
+            burn_f = _as_float(ex.get("quota_burn_pct")) or 0.0
             slot_x = tier_x + (tier_w * 0.06) + p_idx * plan_slot_w
             h_allow = max(0.0, (allow_f / p_max_val) * p_ph)
             h_burn = max(0.0, (min(burn_f, p_max_val) / p_max_val) * p_ph)

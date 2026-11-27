@@ -190,7 +190,7 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
             "tier": "free",
             "is_zero_cost": True,
             "effective_quality": 0.0,
-            "quota_burn_pct": 0.0,
+            "composite_burn_pct": 0.0,
             "limit": {"context": 262144},
             "rank": 3,
         },

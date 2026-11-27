@@ -17,10 +17,6 @@ def _burn_basis(
     return c.profile, c.token_mix, c.burn_basis
 
 
-def _count(value: float) -> float | int | str:
-    return "unlimited" if math.isinf(value) else int(value) if value.is_integer() else value
-
-
 def _requests_cell(m: NormalizedModel) -> str:
     est = m.request_estimate
     if est is None:

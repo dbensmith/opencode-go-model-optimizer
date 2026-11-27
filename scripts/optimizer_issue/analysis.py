@@ -12,6 +12,7 @@ from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
 )
 from opencode_go_model_optimizer.formatters.markdown import (
+    is_number,
     render_markdown_table,
     render_mermaid_flowchart,
     render_mermaid_xychart,
@@ -25,11 +26,12 @@ from .common import (
     _fmt_float,
     _fmt_output_cost,
     _model_burn_pct,
-    _model_id,
     _model_quality,
     _normalize_site_url,
     _render_ranked_catalog_rows,
     _render_report_header,
+    _short_id,
+    _tier_pick_id,
 )
 
 
@@ -47,7 +49,7 @@ def _quadrant_points(
             if require_burn and burn is None:
                 continue
             quality = _model_quality(m)
-            clean_id = _model_id(m, "model").removeprefix("opencode-go/")
+            clean_id = _short_id(m)
             safe_label = re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-") or f"m-{len(pts) + 1}"
             pts.append((safe_label, burn if burn is not None else 0.0, quality))
         return pts
@@ -145,10 +147,10 @@ def _render_multi_plan_section(
             if tier not in tiers_dict and tier not in explanations and tier not in fallbacks_map:
                 continue
             ex = explanations.get(tier) or {}
-            pick = ex.get("model_id") or tiers_dict.get(tier) or "None"
+            pick = _tier_pick_id(tier, explanations, tiers_dict)
             fallback_ids = [str(fb) for fb in fallbacks_map.get(tier) or []]
             fallback_str = ", ".join(f"`{fid}`" for fid in fallback_ids) if fallback_ids else "-"
-            burn = _model_burn_pct(ex)
+            burn = ex.get("quota_burn_pct")
             table_rows.append(
                 [
                     f"`{p_name}`",
@@ -166,8 +168,8 @@ def _render_multi_plan_section(
                 tier_label += f" (fb: {fallback_ids[0].removeprefix('opencode-go/')})"
             edges.append((p_node, sanitize_mermaid_id(f"{p_name}_{tier}", "T_"), tier_label))
 
-            if burn is not None:
-                burn_items.append((f"{p_name}:{tier}", round(burn, 1)))
+            if is_number(burn):
+                burn_items.append((f"{p_name}:{tier}", round(float(burn), 1)))
 
     lines = [
         "",
@@ -226,7 +228,7 @@ def _pareto_rows(
         bands.append("light")
         rows.append(
             [
-                f"`{_model_id(m)}`",
+                f"`{m['full_id']}`",
                 _fmt_float(m.get("aa_iq"), 1),
                 _fmt_float(m.get("aa_coding"), 1),
                 f"`{q:.1f}`",
@@ -246,7 +248,7 @@ def _render_pareto_charts(
     if not pareto_models:
         return []
     top = pareto_models[:12]
-    x_ids = [_model_id(m).removeprefix("opencode-go/").replace('"', "") for m in top]
+    x_ids = [_short_id(m).replace('"', "") for m in top]
     q_vals = [round(_model_quality(m), 1) for m in top]
     b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in top]
     return [

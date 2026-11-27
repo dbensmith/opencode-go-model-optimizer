@@ -28,18 +28,20 @@ from .common import (
     _render_report_header,
     _site_file,
     _site_page,
+    _tier_pick_id,
 )
 
 
 def _is_active_tier(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]) -> bool:
-    return (explanations.get(tier, {}).get("model_id") or tiers.get(tier) or "None") != "None"
+    return _tier_pick_id(tier, explanations, tiers) != "None"
 
 
 def _tier_flowchart_label(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]) -> str:
-    if not _is_active_tier(tier, explanations, tiers):
+    pick = _tier_pick_id(tier, explanations, tiers)
+    if pick == "None":
         return f"{tier}: None"
     ex = explanations.get(tier) or {}
-    clean_id = (ex.get("model_id") or tiers[tier]).removeprefix("opencode-go/")
+    clean_id = pick.removeprefix("opencode-go/")
     allow_str = _fmt_allowance(ex.get("monthly_allowance"))
     burn_val = ex.get("quota_burn_pct")
     burn_part = f"{burn_val:.1f}% burn" if is_number(burn_val) else "- burn"
@@ -161,7 +163,7 @@ def _render_tier_explanations(
 
     for tier in ordered_tiers:
         ex = explanations.get(tier) or {}
-        model_id = ex.get("model_id") or tiers.get(tier) or "None"
+        model_id = _tier_pick_id(tier, explanations, tiers)
         lines.extend(["", f"#### `{tier}` — `{model_id}`"])
         if model_id == "None" or "monthly_allowance" not in ex:
             lines.append("- No eligible model available for this tier.")
@@ -293,7 +295,7 @@ def render_issue_markdown(
     choice_rows: list[list[str]] = []
     for tier in ordered_tiers:
         ex = explanations.get(tier) or {}
-        model_id = ex.get("model_id") or tiers.get(tier) or "None"
+        model_id = _tier_pick_id(tier, explanations, tiers)
         if any(ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps")):
             has_aa_data = True
         burn_str = _fmt_burn(ex.get("quota_burn_pct"))
