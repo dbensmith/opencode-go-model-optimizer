@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
+from opencode_go_model_optimizer.engine.tiers import (
+    BALANCED_QUALITY_RATIO,
+    HEAVY_QUALITY_RATIO,
+    STANDARD_TIERS,
+)
 from opencode_go_model_optimizer.formatters.markdown import (
     render_markdown_table,
     render_mermaid_flowchart,
@@ -16,15 +20,12 @@ from opencode_go_model_optimizer.formatters.markdown import (
 
 from .charts import generate_analysis_svgs
 from .common import (
-    _extract_quality_params,
     _fmt_allowance,
     _fmt_burn,
     _fmt_float,
     _fmt_output_cost,
     _model_burn_pct,
     _model_id,
-    _model_quality,
-    _model_quality_and_value,
     _normalize_site_url,
     _render_ranked_catalog_rows,
     _render_report_header,
@@ -33,8 +34,6 @@ from .common import (
 
 def _quadrant_points(
     rank_models: list[dict[str, Any]],
-    profile: str,
-    weights: tuple[float, float] | None,
 ) -> list[tuple[str, float, float]]:
     def collect(include_zero_cost: bool, require_burn: bool) -> list[tuple[str, float, float]]:
         pts: list[tuple[str, float, float]] = []
@@ -46,7 +45,7 @@ def _quadrant_points(
             burn = _model_burn_pct(m)
             if require_burn and burn is None:
                 continue
-            quality = _model_quality(m, profile=profile, weights=weights)
+            quality = float(m.get("effective_quality") or 0.0)
             clean_id = _model_id(m, "model").removeprefix("opencode-go/")
             safe_label = re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-") or f"m-{len(pts) + 1}"
             pts.append((safe_label, burn if burn is not None else 0.0, quality))
@@ -57,13 +56,8 @@ def _quadrant_points(
     )
 
 
-def _render_quadrant_chart(
-    rank_models: list[dict[str, Any]],
-    *,
-    profile: str,
-    weights: tuple[float, float] | None,
-) -> list[str]:
-    benchmarked_models = _quadrant_points(rank_models, profile=profile, weights=weights)
+def _render_quadrant_chart(rank_models: list[dict[str, Any]]) -> list[str]:
+    benchmarked_models = _quadrant_points(rank_models)
     seen_labels: dict[str, int] = {}
     deduped_models: list[tuple[str, float, float]] = []
     for lbl, b, q in benchmarked_models[:12]:
@@ -207,14 +201,10 @@ def _render_multi_plan_section(
 
 
 def _collect_pareto_models(
-    rank_models: list[dict[str, Any]], profile: str, weights: tuple[float, float] | None
+    rank_models: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
-    pareto_models: list[dict[str, Any]] = []
-    for m in rank_models:
-        if m.get("is_pareto"):
-            quality, value = _model_quality_and_value(m, profile=profile, weights=weights)
-            pareto_models.append({**m, "_quality": quality, "_value": value})
-    pareto_models.sort(key=lambda x: x["_quality"], reverse=True)
+    pareto_models = [m for m in rank_models if m.get("is_pareto")]
+    pareto_models.sort(key=lambda m: m.get("effective_quality") or 0.0, reverse=True)
     has_aa = any(m.get("aa_iq") is not None or m.get("aa_coding") is not None for m in rank_models)
     return pareto_models, has_aa
 
@@ -224,7 +214,9 @@ def _pareto_rows(
 ) -> list[list[str]]:
     rows: list[list[str]] = []
     for m in pareto_models:
-        q = m["_quality"]
+        q = float(m.get("effective_quality") or 0.0)
+        burn = _model_burn_pct(m)
+        value = q / burn if burn is not None and burn > 0 and q > 0 else 0.0
         bands: list[str] = []
         if q >= heavy:
             bands.append("heavy")
@@ -237,9 +229,9 @@ def _pareto_rows(
                 _fmt_float(m.get("aa_iq"), 1),
                 _fmt_float(m.get("aa_coding"), 1),
                 f"`{q:.1f}`",
-                _fmt_burn(_model_burn_pct(m)),
+                _fmt_burn(burn),
                 _fmt_allowance(m.get("monthly_allowance")),
-                _fmt_float(m.get("_value"), 2),
+                _fmt_float(value, 2),
                 ", ".join(bands),
             ]
         )
@@ -249,14 +241,12 @@ def _pareto_rows(
 def _render_pareto_charts(
     pareto_models: list[dict[str, Any]],
     rank_models: list[dict[str, Any]],
-    profile: str,
-    weights: tuple[float, float] | None,
 ) -> list[str]:
     if not pareto_models:
         return []
     top = pareto_models[:12]
     x_ids = [_model_id(m).removeprefix("opencode-go/").replace('"', "") for m in top]
-    q_vals = [round(float(m["_quality"]), 1) for m in top]
+    q_vals = [round(float(m.get("effective_quality") or 0.0), 1) for m in top]
     b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in top]
     return [
         "",
@@ -267,7 +257,7 @@ def _render_pareto_charts(
             bars=[q_vals],
             lines_series=[b_vals],
         ),
-        *_render_quadrant_chart(rank_models, profile=profile, weights=weights),
+        *_render_quadrant_chart(rank_models),
     ]
 
 
@@ -282,7 +272,6 @@ def render_analysis_markdown(
 ) -> str:
     """Render comprehensive live Pareto analysis and catalog markdown (analysis.md)."""
     site_base = _normalize_site_url(site_url)
-    profile, weights = _extract_quality_params(select_payload)
 
     lines = _render_report_header(
         "## OpenCode Go Model Optimizer — Live Pareto Analysis & Catalog",
@@ -294,10 +283,10 @@ def render_analysis_markdown(
     )
     lines.extend(["", "---", "", "### 1. Live Pareto Frontier & Quality/Value Bands", ""])
 
-    pareto_models, has_aa = _collect_pareto_models(rank_models, profile, weights)
-    top_quality = pareto_models[0]["_quality"] if pareto_models else 0.0
-    heavy_cutoff = 0.9 * top_quality
-    balanced_cutoff = 0.6 * top_quality
+    pareto_models, has_aa = _collect_pareto_models(rank_models)
+    top_quality = float(pareto_models[0].get("effective_quality") or 0.0) if pareto_models else 0.0
+    heavy_cutoff = HEAVY_QUALITY_RATIO * top_quality
+    balanced_cutoff = BALANCED_QUALITY_RATIO * top_quality
 
     generated_svgs: list[str] = []
     if charts_dir:
@@ -309,15 +298,13 @@ def render_analysis_markdown(
             top_quality=top_quality,
             heavy_cutoff=heavy_cutoff,
             balanced_cutoff=balanced_cutoff,
-            profile=profile,
-            weights=weights,
         )
 
     lines.extend(
         [
             f"- **Top Frontier Quality**: `{top_quality:.1f}`",
-            f"- **Heavy Band Cutoff (≥ 90%)**: `{heavy_cutoff:.1f}`",
-            f"- **Balanced Band Cutoff (≥ 60%)**: `{balanced_cutoff:.1f}`",
+            f"- **Heavy Band Cutoff (≥ {HEAVY_QUALITY_RATIO:.0%})**: `{heavy_cutoff:.1f}`",
+            f"- **Balanced Band Cutoff (≥ {BALANCED_QUALITY_RATIO:.0%})**: `{balanced_cutoff:.1f}`",
             "",
             *render_markdown_table(
                 [
@@ -335,7 +322,7 @@ def render_analysis_markdown(
         ]
     )
 
-    lines.extend(_render_pareto_charts(pareto_models, rank_models, profile, weights))
+    lines.extend(_render_pareto_charts(pareto_models, rank_models))
 
     if "pareto-frontier.svg" in generated_svgs:
         lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])

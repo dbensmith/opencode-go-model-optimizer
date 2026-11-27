@@ -45,7 +45,7 @@ from opencode_go_model_optimizer.report_markdown import (
 SCHEMA_VERSION = 1
 TOP_N = 3
 # Explanation keys that derive from Artificial Analysis or are meaningless without it.
-_DROP_KEYS = {"aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto"}
+_DROP_KEYS = {"aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto", "effective_quality"}
 
 HOW_DECIDED = [
     "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance "

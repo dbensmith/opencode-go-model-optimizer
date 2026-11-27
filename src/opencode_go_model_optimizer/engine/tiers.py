@@ -11,7 +11,6 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.pareto import (
     compute_burn_pct,
-    effective_quality,
     evaluate_pareto,
     filter_benchmarked_models,
     fisher_jenks_3_clusters,
@@ -68,7 +67,7 @@ class TierSelection:
     """Primary pick and ordered candidates per tier, plus the models the picks came from.
 
     ``models`` is the filtered pool the selection ran on; in pareto mode these are evaluated
-    copies carrying ``bpe``/``is_pareto``/``composite_burn_pct``.
+    copies carrying ``bpe``/``is_pareto``/``composite_burn_pct``/``effective_quality``.
     """
 
     primary: dict[str, str]
@@ -131,15 +130,13 @@ def _tie_tail(m: NormalizedModel, *, include_speed: bool = False) -> tuple[objec
 
 def _pareto_rank_key(
     m: NormalizedModel,
-    c: SelectionCriteria,
     *,
     include_speed: bool = False,
 ) -> tuple[object, ...]:
     """Sort key for Pareto-evaluated models: BPE desc, quality desc, burn asc."""
-    quality = effective_quality(m, profile=c.profile, weights=c.weights)
     return (
         -(m.bpe or 0.0),
-        -quality,
+        -(m.effective_quality or 0.0),
         model_burn(m),
         *_tie_tail(m, include_speed=include_speed),
     )
@@ -169,7 +166,7 @@ def _pareto_clusters(
         return empty
 
     def quality(m: NormalizedModel) -> float:
-        return effective_quality(m, profile=c.profile, weights=c.weights)
+        return m.effective_quality or 0.0
 
     def value_key(m: NormalizedModel, *, include_speed: bool) -> tuple[object, ...]:
         q = quality(m)
@@ -330,7 +327,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         frontier = [m for m in pool if m.is_pareto]
         general_paid = sorted(
             frontier,
-            key=lambda m: _pareto_rank_key(m, c, include_speed=True),
+            key=lambda m: _pareto_rank_key(m, include_speed=True),
         )
 
     def fill(tier: str, pools: list[list[NormalizedModel]]) -> list[str]:
@@ -356,7 +353,7 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
     if c.mode == "pareto":
         evaluated = _evaluate(active_models, c)
         # Sort by BPE desc, effective_quality desc, composite_burn asc, tie_break_key
-        ranked = sorted(evaluated, key=lambda m: _pareto_rank_key(m, c))
+        ranked = sorted(evaluated, key=lambda m: _pareto_rank_key(m))
         tiers_map, _, _ = _allocate_pareto(evaluated, c, evaluated)
     else:
         tiers_map, _, free, paid = _allocate_allowance(active_models, c)

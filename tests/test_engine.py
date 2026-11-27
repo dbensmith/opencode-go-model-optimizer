@@ -220,11 +220,15 @@ def test_pareto_evaluation():
     assert len(evaluated) == len(models)
 
     by_id = {m.id: m for m in evaluated}
+    assert all(m.effective_quality is not None for m in evaluated)
+    assert by_id["alpha-max"].effective_quality == effective_quality(alpha)
+    assert by_id["beta-flash"].effective_quality == effective_quality(beta)
     assert by_id["alpha-max"].composite_burn_pct is not None
     assert by_id["beta-flash"].composite_burn_pct is not None
     assert by_id["beta-flash"].bpe is not None
     # Inputs are never mutated
     assert alpha.composite_burn_pct is None and beta.bpe is None
+    assert alpha.effective_quality is None and beta.effective_quality is None
 
 
 def test_allocate_tiers_allowance():
@@ -401,6 +405,7 @@ def test_evaluate_pareto_edge_cases():
     ]
     res = evaluate_pareto(unbenchmarked)
     assert [m.id for m in res] == [m.id for m in unbenchmarked]
+    assert [m.effective_quality for m in res] == [80.0, 80.0, 80.0, 80.0, 0.0]
     assert all(m.bpe is None for m in res)
 
     # Models with zero burn, extreme burn, and NaN guards
@@ -560,6 +565,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_pareto = NormalizedModel(
         id="m_pareto",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=True,
@@ -568,6 +574,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_non_pareto = NormalizedModel(
         id="m_non_pareto",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=False,
@@ -577,6 +584,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_lower_burn = NormalizedModel(
         id="m_lower_burn",
         aa_iq=60.0,
+        effective_quality=60.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=5.0),
         is_pareto=True,
@@ -586,6 +594,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_higher_burn = NormalizedModel(
         id="m_higher_burn",
         aa_iq=60.0,
+        effective_quality=60.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=5.0),
         is_pareto=True,
@@ -596,6 +605,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_faster = NormalizedModel(
         id="m_faster",
         aa_iq=30.0,
+        effective_quality=30.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=2.0),
         is_pareto=True,
@@ -607,6 +617,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_slower = NormalizedModel(
         id="m_slower",
         aa_iq=30.0,
+        effective_quality=30.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=2.0),
         is_pareto=True,
@@ -619,6 +630,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_newer = NormalizedModel(
         id="m_newer",
         aa_iq=30.0,
+        effective_quality=30.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=2.0),
         is_pareto=True,
@@ -630,6 +642,7 @@ def test_allocate_tiers_pareto_pick_best_sorting():
     m_older = NormalizedModel(
         id="m_older",
         aa_iq=30.0,
+        effective_quality=30.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=2.0),
         is_pareto=True,
@@ -856,6 +869,10 @@ def test_workload_profiles():
 
     evaluated_coding = evaluate_pareto(models, profile="coding")
     assert all(x.composite_burn_pct is not None for x in evaluated_coding)
+    assert all(
+        x.effective_quality == effective_quality(m, profile="coding")
+        for x, m in zip(evaluated_coding, models, strict=True)
+    )
 
     tiers_coding = _tiers_pareto(models, profile="coding")
     assert set(tiers_coding.keys()) == {"heavy", "balanced", "light", "free"}
@@ -901,6 +918,7 @@ def test_pick_best_tie_breaking_deterministic():
     m1 = NormalizedModel(
         id="model-ctx-low",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=True,
@@ -913,6 +931,7 @@ def test_pick_best_tie_breaking_deterministic():
     m2 = NormalizedModel(
         id="model-ctx-high",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=True,
@@ -925,6 +944,7 @@ def test_pick_best_tie_breaking_deterministic():
     m3 = NormalizedModel(
         id="model-ctx-high-b",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=True,
@@ -939,6 +959,7 @@ def test_pick_best_tie_breaking_deterministic():
     m_no_burn = NormalizedModel(
         id="model-no-burn",
         aa_iq=90.0,
+        effective_quality=90.0,
         monthly_allowance=100.0,
         cost=TokenCost(output=10.0),
         is_pareto=True,
@@ -969,18 +990,21 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
     m_burn_none = NormalizedModel(
         id="mod-burn-none",
         aa_iq=80.0,
+        effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=None,
     )
     m_burn_valid = NormalizedModel(
         id="mod-burn-valid",
         aa_iq=80.0,
+        effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
     )
     m_tied_burn_a = NormalizedModel(
         id="mod-tied-a",
         aa_iq=80.0,
+        effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
         limit=ModelLimit(context=500000),
@@ -988,6 +1012,7 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
     m_tied_burn_b = NormalizedModel(
         id="mod-tied-b",
         aa_iq=80.0,
+        effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
         limit=ModelLimit(context=1000000),  # Larger context beats mod-tied-a
@@ -1014,6 +1039,7 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
         monthly_allowance=100.0,
         bpe=0.99,
         is_pareto=True,
+        effective_quality=1.0,
     )
     m2_unbenchmarked = NormalizedModel(
         id="mod-2",
@@ -1023,6 +1049,7 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
         monthly_allowance=100.0,
         bpe=0.88,
         is_pareto=True,
+        effective_quality=88.0,
     )
     m3_skipped = NormalizedModel(
         id="mod-3",
@@ -1031,6 +1058,7 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
         monthly_allowance=100.0,
         bpe=0.95,
         is_pareto=True,
+        effective_quality=77.0,
     )
 
     r1, r2, r3 = evaluate_pareto([m1, m2_unbenchmarked, m3_skipped], skip_models={"mod-3"})
@@ -1038,15 +1066,18 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
     # m1 was benchmarked and evaluated
     assert r1.bpe is not None
     assert r1.is_pareto is True
+    assert r1.effective_quality == 90.0
 
-    # m2 was unbenchmarked: stale bpe and is_pareto must be cleared
+    # m2 was unbenchmarked: stale bpe, is_pareto, and effective_quality must be cleared
     assert r2.bpe is None
     assert r2.is_pareto is None
+    assert r2.effective_quality == 0.0
 
-    # m3 was skipped: burn was computed, but stale bpe and is_pareto cleared
+    # m3 was skipped: burn and quality were computed, but stale bpe and is_pareto cleared
     assert r3.composite_burn_pct is not None
     assert r3.bpe is None
     assert r3.is_pareto is None
+    assert r3.effective_quality == 95.0
 
     # The inputs keep their original values
     assert m2_unbenchmarked.bpe == 0.88 and m3_skipped.bpe == 0.95
@@ -1118,6 +1149,7 @@ def test_pareto_light_tier_ignores_dominated_models():
         return NormalizedModel(
             id=mid,
             aa_iq=iq,
+            effective_quality=iq,
             is_pareto=is_pareto,
             bpe=bpe,
             composite_burn_pct=burn,
@@ -1153,6 +1185,7 @@ def test_pareto_heavy_picks_value_winner_within_top_quality_band():
         return NormalizedModel(
             id=mid,
             aa_iq=iq,
+            effective_quality=iq,
             is_pareto=True,
             bpe=1.0,
             composite_burn_pct=burn,
@@ -1407,6 +1440,8 @@ def test_custom_token_mix_and_quality_weights():
     assert effective_quality(m, weights=(0.5, 0.5)) == 50.0
     assert effective_quality(m) == 54.0
     assert abs(effective_quality(m, weights=(1.0, 0.0)) - 60.0) < 1e-9
+    (evaluated,) = evaluate_pareto([m], weights=(0.5, 0.5))
+    assert evaluated.effective_quality == 50.0
 
     # 1000 input + 0 cached + 100 output = (1000 * 1.0 + 100 * 2.0) / 1e6
     assert abs(compute_turn_cost(m, token_mix=(1000, 0, 100)) - 0.0012) < 1e-12
@@ -1466,6 +1501,7 @@ def test_token_mix_and_weights_flow_through_pareto():
     assert [m.id for m in ranked] == ["low-burn"]
     assert ranked[0].bpe is not None
     assert ranked[0].composite_burn_pct is not None
+    assert ranked[0].effective_quality == 50.0
 
 
 def test_tier_selection_clusters_and_allocate_efficiency():
@@ -1554,6 +1590,7 @@ def test_pareto_cluster_and_rank_tie_breaking_preserved():
         return NormalizedModel(
             id=mid,
             aa_iq=iq,
+            effective_quality=iq,
             is_pareto=True,
             bpe=bpe,
             composite_burn_pct=burn,

@@ -116,6 +116,7 @@ class NormalizedModel(BaseModel):
     bpe: float | None = None
     is_pareto: bool | None = None
     composite_burn_pct: float | None = None
+    effective_quality: float | None = None
 
     # Active plan's request estimate, set by ``apply_plan`` (not serialized).
     _request_estimate: RequestEstimate | None = PrivateAttr(default=None)
