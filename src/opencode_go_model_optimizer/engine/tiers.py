@@ -8,7 +8,11 @@ from opencode_go_model_optimizer.engine.allowance import (
     rank_paid_models,
     tie_break_key,
 )
-from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
+from opencode_go_model_optimizer.engine.criteria import (
+    SelectionCriteria,
+    catalogue_eligibility_reason,
+    passes_privacy,
+)
 from opencode_go_model_optimizer.engine.pareto import (
     compute_burn_pct,
     effective_quality,
@@ -18,11 +22,7 @@ from opencode_go_model_optimizer.engine.pareto import (
     model_burn,
 )
 from opencode_go_model_optimizer.engine.pricing import apply_price_basis
-from opencode_go_model_optimizer.ingest.models import (
-    NormalizedModel,
-    is_incomplete_free_model,
-    matches_any_id,
-)
+from opencode_go_model_optimizer.ingest.models import NormalizedModel, matches_any_id
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
 PAID_TIERS = ("heavy", "balanced", "light")
@@ -108,8 +108,7 @@ def _seed_selection(
                     m
                     for m in models
                     if pref in (m.full_id, m.id)
-                    and m.status == "active"
-                    and not is_incomplete_free_model(m)
+                    and catalogue_eligibility_reason(m, require_chat=False) is None
                 ),
                 None,
             )

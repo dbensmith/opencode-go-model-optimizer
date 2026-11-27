@@ -1,9 +1,13 @@
-"""Filter and ranking knobs shared by every selection entrypoint."""
+"""Selection criteria and shared eligibility rules."""
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.ingest.models import (
+    NormalizedModel,
+    is_incomplete_free_model,
+)
 
 
 @dataclass(frozen=True)
@@ -48,26 +52,84 @@ def _is_free_candidate(m: NormalizedModel) -> bool:
     )
 
 
-def passes_privacy(m: NormalizedModel, c: SelectionCriteria) -> bool:
-    """Return True when a model satisfies the privacy and region criteria.
+def catalogue_eligibility_reason(m: NormalizedModel, *, require_chat: bool) -> str | None:
+    """Return the first status, model-type, or incomplete-catalogue exclusion reason."""
+    if m.status != "active":
+        return f"status is {m.status!r} (not active)"
+    if require_chat and m.model_type != "chat":
+        return f"not a text model (type {m.model_type!r})"
+    if is_incomplete_free_model(m):
+        return "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
+    return None
 
-    Models without privacy data pass unless a retention or ZDR requirement is set
-    (unknown is not compliant). Training is controlled separately for free and paid models.
-    """
+
+def privacy_reason(m: NormalizedModel, c: SelectionCriteria) -> str | None:
+    """Return the privacy exclusion reason with the report's existing precedence."""
     p = m.privacy
     if p is None:
-        return not (c.require_zdr or c.max_retention_days is not None)
+        if c.require_zdr or c.max_retention_days is not None:
+            return "excluded by privacy criteria"
+        return None
     if p.requires_global_region and not c.allow_global_region:
-        return False
+        return "requires Global workspace region (enable --allow-global-region)"
+    training_reason = None
     if p.trains_on_data:
         if _is_free_candidate(m):
-            if not c.allow_free_training:
-                return False
-        elif not c.allow_paid_training:
-            return False
-    if c.require_zdr and p.zdr is not True:
-        return False
-    return not (
+            training_reason = "free model trains on request data (enable --allow-free-training)"
+            training_allowed = c.allow_free_training
+        else:
+            training_reason = "paid model trains on request data (enable --allow-paid-training)"
+            training_allowed = c.allow_paid_training
+        if not training_allowed:
+            return training_reason
+    if (c.require_zdr and p.zdr is not True) or (
         c.max_retention_days is not None
         and (p.retention_days is None or p.retention_days > c.max_retention_days)
-    )
+    ):
+        return training_reason or "excluded by privacy criteria"
+    return None
+
+
+def passes_privacy(m: NormalizedModel, c: SelectionCriteria) -> bool:
+    """Return True when a model satisfies the privacy and region criteria."""
+    return privacy_reason(m, c) is None
+
+
+def _paid_eligibility_reason(m: NormalizedModel) -> str | None:
+    reason = catalogue_eligibility_reason(m, require_chat=False)
+    if reason is not None:
+        return reason
+    if m.is_zero_cost:
+        return "zero-priced model is not eligible for paid tiers"
+    allowance = m.monthly_allowance
+    if allowance is None:
+        return "unpriced: no monthly allowance published for this plan"
+    if not allowance > 0:
+        return "unpriced: allowance is zero"
+    if math.isinf(allowance):
+        return "unlimited allowance on a priced model (not eligible for paid tiers)"
+    return None
+
+
+def is_eligible_free(m: NormalizedModel) -> bool:
+    """Determine if a model is eligible for the free tier."""
+    return catalogue_eligibility_reason(m, require_chat=False) is None and _is_free_candidate(m)
+
+
+def is_eligible_paid(m: NormalizedModel) -> bool:
+    """Determine if a model is eligible for paid tiers under allowance mode."""
+    return _paid_eligibility_reason(m) is None
+
+
+def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
+    """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
+    reason = catalogue_eligibility_reason(m, require_chat=True)
+    if reason is not None:
+        return [reason]
+    reason = privacy_reason(m, c)
+    if reason is not None:
+        return [reason]
+    if is_eligible_free(m):
+        return []
+    reason = _paid_eligibility_reason(m)
+    return [reason] if reason is not None else []

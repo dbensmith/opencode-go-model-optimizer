@@ -1,13 +1,9 @@
 """Allowance ranking engine using deterministic allowance and cost heuristics."""
 
-import math
 from collections.abc import Set as AbstractSet
 
-from opencode_go_model_optimizer.ingest.models import (
-    NormalizedModel,
-    is_incomplete_free_model,
-    matches_any_id,
-)
+from opencode_go_model_optimizer.engine.criteria import is_eligible_free, is_eligible_paid
+from opencode_go_model_optimizer.ingest.models import NormalizedModel, matches_any_id
 
 
 def _desc_str_key(s: str) -> tuple[int, ...]:
@@ -18,25 +14,6 @@ def _desc_str_key(s: str) -> tuple[int, ...]:
 def tie_break_key(m: NormalizedModel) -> tuple[tuple[int, ...], int, str]:
     """Deterministic tie-breaking key: release_date desc, context desc, id asc."""
     return (_desc_str_key(m.release_date or ""), -m.limit.context, m.id)
-
-
-def is_eligible_free(m: NormalizedModel) -> bool:
-    """Determine if a model is eligible for the free tier."""
-    if m.status != "active":
-        return False
-    if m.is_zero_cost:
-        # A model the API lists with a paid allowance but no token prices is incomplete
-        # catalogue data, not a free endpoint; it is excluded from every tier instead.
-        return not is_incomplete_free_model(m)
-    return bool(m.is_contributor and (m.monthly_allowance == float("inf") or m.cost.output == 0))
-
-
-def is_eligible_paid(m: NormalizedModel) -> bool:
-    """Determine if a model is eligible for paid tiers under allowance mode."""
-    if m.status != "active" or m.is_zero_cost:
-        return False
-    allowance = m.monthly_allowance
-    return allowance is not None and allowance > 0 and not math.isinf(allowance)
 
 
 def rank_free_models(

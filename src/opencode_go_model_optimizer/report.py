@@ -5,19 +5,13 @@ Artificial Analysis data. Source provenance carries only URL, status, time, sha2
 """
 
 import json
-import math
 import os
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.engine.allowance import is_eligible_free
-from opencode_go_model_optimizer.engine.criteria import (
-    SelectionCriteria,
-    _is_free_candidate,
-    passes_privacy,
-)
+from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, exclusion_reasons
 from opencode_go_model_optimizer.engine.tiers import (
     PAID_TIERS,
     STANDARD_TIERS,
@@ -25,12 +19,7 @@ from opencode_go_model_optimizer.engine.tiers import (
 )
 from opencode_go_model_optimizer.formatters import explain_tiers, settings_payload
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
-from opencode_go_model_optimizer.ingest.models import (
-    PLANS,
-    NormalizedModel,
-    Snapshot,
-    is_incomplete_free_model,
-)
+from opencode_go_model_optimizer.ingest.models import PLANS, NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
 from opencode_go_model_optimizer.numbers import json_allowance, json_multiplier
 from opencode_go_model_optimizer.report_markdown import (
@@ -101,40 +90,6 @@ def assert_no_aa(value: Any, path: str = "$") -> None:
     elif isinstance(value, list):
         for i, v in enumerate(value):
             assert_no_aa(v, f"{path}[{i}]")
-
-
-def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
-    """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
-    if m.status != "active":
-        return [f"status is {m.status!r} (not active)"]
-    if m.model_type != "chat":
-        return [f"not a text model (type {m.model_type!r})"]
-    if is_incomplete_free_model(m):
-        return ["zero-priced but publishes a monthly allowance (incomplete catalogue data)"]
-    reasons: list[str] = []
-    p = m.privacy
-    if not passes_privacy(m, c):
-        if p is not None and p.requires_global_region and not c.allow_global_region:
-            reasons.append("requires Global workspace region (enable --allow-global-region)")
-        elif p is not None and p.trains_on_data:
-            if _is_free_candidate(m):
-                reasons.append("free model trains on request data (enable --allow-free-training)")
-            else:
-                reasons.append("paid model trains on request data (enable --allow-paid-training)")
-        else:
-            reasons.append("excluded by privacy criteria")
-    if reasons:
-        return reasons
-    if is_eligible_free(m):
-        return []
-    allowance = m.monthly_allowance
-    if allowance is None:
-        reasons.append("unpriced: no monthly allowance published for this plan")
-    elif allowance <= 0:
-        reasons.append("unpriced: allowance is zero")
-    elif math.isinf(allowance):
-        reasons.append("unlimited allowance on a priced model (not eligible for paid tiers)")
-    return reasons
 
 
 def _candidate_row(m: NormalizedModel) -> dict[str, Any]:
