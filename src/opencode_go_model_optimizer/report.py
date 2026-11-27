@@ -24,12 +24,12 @@ from opencode_go_model_optimizer.engine.tiers import (
     select_tiers,
 )
 from opencode_go_model_optimizer.formatters.output import explain_tiers, settings_payload
-from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import (
     PLANS,
     NormalizedModel,
     Snapshot,
+    is_incomplete_free_model,
     serialize_inf_float,
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
@@ -118,7 +118,7 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         return [f"status is {m.status!r} (not active)"]
     if m.model_type != "chat":
         return [f"not a text model (type {m.model_type!r})"]
-    if m.is_zero_cost and publishes_monthly_allowance(m.plan_allowances):
+    if is_incomplete_free_model(m):
         return ["zero-priced but publishes a monthly allowance (incomplete catalogue data)"]
     reasons: list[str] = []
     p = m.privacy

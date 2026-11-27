@@ -1,6 +1,9 @@
 """Data models for OpenCode Go Model Optimizer."""
 
 import math
+from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_validator
@@ -8,9 +11,19 @@ from pydantic import BaseModel, Field, PrivateAttr, field_serializer, field_vali
 PLANS: tuple[str, ...] = ("go", "go-plus", "go-teams")
 
 
+def ensure_utc(dt: datetime) -> datetime:
+    """Normalize a naive or timezone-aware datetime to UTC."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
 def normalize_plan(plan: str) -> str:
     """Normalize plan aliases (e.g. 'plus' -> 'go-plus', 'teams' -> 'go-teams')."""
     return plan if plan.startswith("go") else f"go-{plan}"
+
+
+def publishes_monthly_allowance(allowances: dict[str, float]) -> bool:
+    """Return whether any plan publishes a finite, positive monthly allowance."""
+    return any(math.isfinite(value) and value > 0 for value in allowances.values())
 
 
 _INF_STRINGS = frozenset({"unlimited", "inf", "+inf", "infinity"})
@@ -210,6 +223,31 @@ class NormalizedModel(BaseModel):
                 self.full_id = f"{self.provider_id}/{self.id}"
 
         self._update_classification_flags()
+
+
+def is_incomplete_free_model(m: NormalizedModel) -> bool:
+    """Return True when a zero-cost model publishes a finite positive monthly allowance."""
+    return m.is_zero_cost and publishes_monthly_allowance(m.plan_allowances)
+
+
+def plan_allowance_for(m: NormalizedModel, plan: str) -> float | None:
+    """Return the monthly allowance for ``plan`` (normalized alias first), or None."""
+    norm_plan = normalize_plan(plan)
+    if norm_plan in m.plan_allowances:
+        return m.plan_allowances[norm_plan]
+    return m.plan_allowances.get(plan)
+
+
+def effective_plan(snap_plan: str, requested_plan: str, models: Sequence[NormalizedModel]) -> str:
+    """Return normalized requested plan if any model has an allowance for it, else ``snap_plan``."""
+    if any(plan_allowance_for(m, requested_plan) is not None for m in models):
+        return normalize_plan(requested_plan)
+    return snap_plan
+
+
+def matches_any_id(m: NormalizedModel, ids: AbstractSet[str]) -> bool:
+    """Return True if either ``m.id`` or ``m.full_id`` is present in ``ids``."""
+    return m.id in ids or m.full_id in ids
 
 
 class SnapshotMetadata(BaseModel):

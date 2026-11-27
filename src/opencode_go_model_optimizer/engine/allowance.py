@@ -3,8 +3,11 @@
 import math
 from collections.abc import Set as AbstractSet
 
-from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
-from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.ingest.models import (
+    NormalizedModel,
+    is_incomplete_free_model,
+    matches_any_id,
+)
 
 
 def _desc_str_key(s: str) -> tuple[int, ...]:
@@ -24,7 +27,7 @@ def is_eligible_free(m: NormalizedModel) -> bool:
     if m.is_zero_cost:
         # A model the API lists with a paid allowance but no token prices is incomplete
         # catalogue data, not a free endpoint; it is excluded from every tier instead.
-        return not publishes_monthly_allowance(m.plan_allowances)
+        return not is_incomplete_free_model(m)
     return bool(m.is_contributor and (m.monthly_allowance == float("inf") or m.cost.output == 0))
 
 
@@ -42,9 +45,7 @@ def rank_free_models(
 ) -> list[NormalizedModel]:
     """Rank eligible free models by release_date DESC, context DESC, id ASC."""
     skips = skip_models or set()
-    eligible = [
-        m for m in models if is_eligible_free(m) and m.id not in skips and m.full_id not in skips
-    ]
+    eligible = [m for m in models if is_eligible_free(m) and not matches_any_id(m, skips)]
 
     return sorted(eligible, key=tie_break_key)
 
@@ -55,9 +56,7 @@ def rank_paid_models(
 ) -> list[NormalizedModel]:
     """Rank eligible paid models by allowance DESC, output cost ASC, release_date DESC, context DESC, id ASC."""
     skips = skip_models or set()
-    eligible = [
-        m for m in models if is_eligible_paid(m) and m.id not in skips and m.full_id not in skips
-    ]
+    eligible = [m for m in models if is_eligible_paid(m) and not matches_any_id(m, skips)]
 
     return sorted(
         eligible,

@@ -18,8 +18,11 @@ from opencode_go_model_optimizer.engine.pareto import (
     model_burn,
 )
 from opencode_go_model_optimizer.engine.pricing import apply_price_basis
-from opencode_go_model_optimizer.ingest.catalogue import publishes_monthly_allowance
-from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.ingest.models import (
+    NormalizedModel,
+    is_incomplete_free_model,
+    matches_any_id,
+)
 
 STANDARD_TIERS = ["heavy", "balanced", "light", "free"]
 PAID_TIERS = ("heavy", "balanced", "light")
@@ -51,7 +54,7 @@ def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[
         m
         for m in models
         if m.model_type == "chat"
-        and (not skips or (m.id not in skips and m.full_id not in skips))
+        and (not skips or not matches_any_id(m, skips))
         and passes_privacy(m, c)
         and (min_ctx <= 0 or m.limit.context >= min_ctx)
         and (min_out <= 0 or m.limit.output >= min_out)
@@ -75,7 +78,7 @@ class TierSelection:
 
 
 def _is_unused(m: NormalizedModel, used: set[str]) -> bool:
-    return m.id not in used and m.full_id not in used
+    return not matches_any_id(m, used)
 
 
 def _claim(selected: dict[str, str], used: set[str], tier: str, m: NormalizedModel) -> None:
@@ -104,9 +107,9 @@ def _seed_selection(
                 (
                     m
                     for m in models
-                    if (m.full_id == pref or m.id == pref)
+                    if pref in (m.full_id, m.id)
                     and m.status == "active"
-                    and not (m.is_zero_cost and publishes_monthly_allowance(m.plan_allowances))
+                    and not is_incomplete_free_model(m)
                 ),
                 None,
             )
@@ -295,9 +298,17 @@ def _allocate_pareto(
     return selected, clusters, free_ranked
 
 
+def _prepare_models(
+    models: list[NormalizedModel], c: SelectionCriteria, *, active_only: bool = False
+) -> list[NormalizedModel]:
+    """Apply price basis and selection filters, optionally restricting to active models."""
+    filtered = _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
+    return [m for m in filtered if m.status == "active"] if active_only else filtered
+
+
 def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSelection:
     """Pick one model per tier plus up to ``c.top_n`` ordered candidates, evaluating once."""
-    filtered = _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
+    filtered = _prepare_models(models, c)
     if c.mode == "pareto":
         pool = _evaluate(filtered, c)
         selected, clusters, free_ranked = _allocate_pareto(filtered, c, pool)
@@ -340,11 +351,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
 
 def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
     """Produce a full ranked catalog of active models as copies carrying rank, tier and metrics."""
-    active_models = [
-        m
-        for m in _apply_filters(apply_price_basis(models, c.price_basis, c.at), c)
-        if m.status == "active"
-    ]
+    active_models = _prepare_models(models, c, active_only=True)
 
     if c.mode == "pareto":
         evaluated = _evaluate(active_models, c)
