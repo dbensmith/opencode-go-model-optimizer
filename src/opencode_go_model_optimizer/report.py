@@ -30,9 +30,9 @@ from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
     is_incomplete_free_model,
-    serialize_inf_float,
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
+from opencode_go_model_optimizer.numbers import json_allowance, json_multiplier
 from opencode_go_model_optimizer.report_markdown import (
     _bucket_exclusion_reason,
     _fmt_cost,
@@ -76,15 +76,6 @@ HOW_DECIDED = [
     f"Fallbacks: the next {TOP_N - 1} candidates per tier, drawn from the same cluster and "
     "then from the general paid ranking.",
 ]
-
-
-def _num(value: float | None) -> float | int | str | None:
-    if value is None:
-        return None
-    val = serialize_inf_float(value)
-    if isinstance(val, str):
-        return val
-    return int(val) if float(val).is_integer() else round(val, 6)
 
 
 def _strip_aa(value: Any) -> Any:
@@ -149,9 +140,9 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
 def _candidate_row(m: NormalizedModel) -> dict[str, Any]:
     return {
         "model_id": m.full_id,
-        "monthly_allowance": _num(m.monthly_allowance),
+        "monthly_allowance": json_allowance(m.monthly_allowance, compact=True),
         "output_cost_per_1m": round(m.cost.output, 6),
-        "price_multiplier": round(m.price_multiplier, 4) if m.price_multiplier is not None else 1,
+        "price_multiplier": json_multiplier(m.price_multiplier, default=1),
         "release_date": m.release_date or None,
         "context": m.limit.context,
     }
@@ -296,7 +287,6 @@ __all__ = [
     "_fmt_cost",
     "_format_allowance",
     "_format_cluster_range",
-    "_num",
     "_round_chart_num",
     "_strip_aa",
     "assert_no_aa",

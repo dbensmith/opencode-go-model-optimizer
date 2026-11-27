@@ -112,19 +112,20 @@ def _site_page(site_url: str, page: str) -> str:
     return f"{site_url}#/{page.lstrip('/')}"
 
 
-def _model_id(m: dict[str, Any], default: str = "unknown") -> str:
-    """Return the preferred model identifier string from a serialized model entry."""
-    return str(m.get("full_id") or m.get("id") or m.get("model_id") or default)
-
-
 def _model_burn_pct(m: dict[str, Any]) -> float | None:
-    """Extract composite or quota burn percentage from a serialized model entry."""
+    """Extract composite burn percentage from a serialized rank row."""
     burn = m.get("composite_burn_pct")
-    if burn is None:
-        burn = m.get("quota_burn_pct")
-    if is_number(burn):
-        return float(burn)
-    return None
+    return float(burn) if is_number(burn) else None
+
+
+def _short_id(m: dict[str, Any]) -> str:
+    """Return a rank row's model id without the provider prefix."""
+    return str(m["full_id"]).removeprefix("opencode-go/")
+
+
+def _tier_pick_id(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]) -> str:
+    """Return a tier's explanation id, selected id, or the empty-tier marker."""
+    return str(explanations.get(tier, {}).get("model_id") or tiers.get(tier) or "None")
 
 
 def _model_quality(m: dict[str, Any]) -> float:
@@ -193,7 +194,7 @@ def _render_report_header(
 
 def _ranked_catalog_cells(m: dict[str, Any]) -> list[str]:
     """Extract cell values for one full-catalog markdown table row."""
-    model_id = _model_id(m)
+    model_id = m["full_id"]
     tier = m.get("tier", "-")
     bpe_s = _fmt_float(m.get("bpe"), 3)
     iq_s = _fmt_float(m.get("aa_iq"), 1)

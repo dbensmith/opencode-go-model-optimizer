@@ -327,10 +327,9 @@ def test_stale_cache_loader_accepts_any_age(snapshot, tmp_path):
     assert load_cached_snapshot("go", ttl_seconds=math.inf) is not None
 
 
-def test_num_none():
-    from opencode_go_model_optimizer.report import _candidate_row, _num
+def test_candidate_row_none_allowance():
+    from opencode_go_model_optimizer.report import _candidate_row
 
-    assert _num(None) is None
     m = NormalizedModel(id="test", monthly_allowance=None)
     row = _candidate_row(m)
     assert row["monthly_allowance"] is None

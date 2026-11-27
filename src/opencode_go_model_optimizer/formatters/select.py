@@ -1,7 +1,6 @@
 """Formatters for tier selection outputs."""
 
 import json
-import math
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +14,6 @@ from opencode_go_model_optimizer.engine.pareto import (
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.table import (
     _burn_basis,
-    _count,
     _fmt_allowance,
     _fmt_context,
     _fmt_output_cost,
@@ -25,6 +23,7 @@ from opencode_go_model_optimizer.formatters.table import (
     render_table,
 )
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.numbers import json_allowance, json_count, json_multiplier
 
 
 def format_select_json(
@@ -110,11 +109,6 @@ def explain_tiers(
     for tier, full_id in tiers.items():
         m = model_map.get(full_id)
         if m:
-            allow_val: float | str | None = (
-                "unlimited"
-                if (m.monthly_allowance is not None and math.isinf(m.monthly_allowance))
-                else m.monthly_allowance
-            )
             quota_burn = (
                 m.composite_burn_pct
                 if m.composite_burn_pct is not None
@@ -123,7 +117,7 @@ def explain_tiers(
             explanations[tier] = {
                 "model_id": full_id,
                 "name": m.name,
-                "monthly_allowance": allow_val,
+                "monthly_allowance": json_allowance(m.monthly_allowance),
                 "output_cost_per_1m": m.cost.output,
                 "turn_cost_usd": round(
                     compute_turn_cost(m, profile=profile, token_mix=token_mix), 6
@@ -137,8 +131,8 @@ def explain_tiers(
                 "context": m.limit.context,
             }
             est = m.request_estimate
-            explanations[tier]["requests_per_5h"] = _count(est.per_5h) if est else None
-            explanations[tier]["requests_per_month"] = _count(est.per_month) if est else None
+            explanations[tier]["requests_per_5h"] = json_count(est.per_5h) if est else None
+            explanations[tier]["requests_per_month"] = json_count(est.per_month) if est else None
             used = resolve_burn_basis(basis, profile, token_mix)
             if used == "estimate" and (est is None or est.per_month <= 0):
                 used = "tokens"
@@ -146,7 +140,7 @@ def explain_tiers(
             if m.privacy is not None:
                 explanations[tier]["privacy"] = m.privacy.model_dump(mode="json")
             if m.price_multiplier is not None:
-                explanations[tier]["price_multiplier"] = round(m.price_multiplier, 4)
+                explanations[tier]["price_multiplier"] = json_multiplier(m.price_multiplier)
                 change = _next_change(m, criteria)
                 if change:
                     explanations[tier]["next_price_change"] = change

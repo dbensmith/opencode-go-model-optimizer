@@ -5,7 +5,6 @@ from collections.abc import Callable
 
 from opencode_go_model_optimizer.formatters.table import (
     _append_column,
-    _count,
     _fmt_allowance,
     _fmt_context,
     _fmt_output_cost,
@@ -15,6 +14,7 @@ from opencode_go_model_optimizer.formatters.table import (
     render_table,
 )
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
+from opencode_go_model_optimizer.numbers import json_count, json_multiplier
 
 
 def format_rank_table(
@@ -74,8 +74,8 @@ def format_rank_json(ranked_models: list[NormalizedModel]) -> str:
             if not item.get(empty_key):
                 item.pop(empty_key, None)
         if m.request_estimate is not None:
-            item["requests_per_month"] = _count(m.request_estimate.per_month)
+            item["requests_per_month"] = json_count(m.request_estimate.per_month)
         if m.price_multiplier is not None:
-            item["price_multiplier"] = round(m.price_multiplier, 4)
+            item["price_multiplier"] = json_multiplier(m.price_multiplier)
         data.append(item)
     return json.dumps(data, indent=2)

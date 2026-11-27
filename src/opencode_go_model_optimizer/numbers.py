@@ -56,3 +56,21 @@ def serialize_inf_float(value: float | None) -> float | str | None:
     if value is not None and isinstance(value, float) and math.isinf(value):
         return "unlimited"
     return value
+
+
+def json_allowance(value: float | None, *, compact: bool = False) -> float | int | str | None:
+    """Serialize an allowance, optionally normalizing finite report values."""
+    serialized = serialize_inf_float(value)
+    if compact and isinstance(serialized, float):
+        return int(serialized) if serialized.is_integer() else round(serialized, 6)
+    return serialized
+
+
+def json_multiplier(value: float | None, default: float | int | None = None) -> float | int | None:
+    """Round an effective price multiplier for JSON, with an optional default."""
+    return round(value, 4) if value is not None else default
+
+
+def json_count(value: float) -> float | int | str:
+    """Serialize a request estimate as a JSON number or 'unlimited'."""
+    return "unlimited" if math.isinf(value) else int(value) if value.is_integer() else value
