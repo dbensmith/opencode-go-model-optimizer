@@ -9,7 +9,9 @@ from typing import Any
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
     render_markdown_table,
+    render_mermaid_flowchart,
     render_mermaid_xychart,
+    sanitize_mermaid_id,
 )
 
 from .charts import generate_analysis_svgs
@@ -113,7 +115,15 @@ def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
         ]
         for row in free_matrix
     ]
-    lines = [
+    nodes: list[tuple[str, str]] = []
+    edges: list[tuple[str, str, str]] = []
+    for i, row in enumerate(free_matrix):
+        lbl = row.get("label") or f"Setting {i + 1}"
+        mid = (row.get("model_id") or "None").removeprefix("opencode-go/")
+        nodes.append((f"S{i}", lbl))
+        edges.append((f"S{i}", sanitize_mermaid_id(mid, prefix="M_"), mid))
+
+    return [
         "",
         "---",
         "",
@@ -121,16 +131,8 @@ def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
         "",
         *render_markdown_table(["Setting", "CLI Flags", "Selected Free Model"], table_rows),
         "",
-        "```mermaid",
-        "flowchart LR",
+        *render_mermaid_flowchart(nodes, edges),
     ]
-    for i, row in enumerate(free_matrix):
-        lbl = (row.get("label") or f"Setting {i + 1}").replace('"', "'")
-        mid = (row.get("model_id") or "None").removeprefix("opencode-go/").replace('"', "'")
-        m_node = f"M_{re.sub(r'[^a-zA-Z0-9_]', '_', mid)}"
-        lines.append(f'    S{i}["{lbl}"] --> {m_node}["{mid}"]')
-    lines.append("```")
-    return lines
 
 
 def _extract_fallback_ids(raw_fallbacks: list[Any]) -> list[str]:
@@ -143,20 +145,25 @@ def _extract_fallback_ids(raw_fallbacks: list[Any]) -> list[str]:
     return fallback_ids
 
 
-def _render_multi_plan_section(
+def _collect_multi_plan_data(
     plan_payloads: dict[str, dict[str, Any]],
-    generated_svgs: list[str],
-) -> list[str]:
+) -> tuple[
+    list[list[str]],
+    list[tuple[str, str]],
+    list[tuple[str, str, str]],
+    list[tuple[str, float]],
+]:
     table_rows: list[list[str]] = []
-    flowchart_lines = ["", "```mermaid", "flowchart LR"]
+    flow_nodes: list[tuple[str, str]] = []
+    flow_edges: list[tuple[str, str, str]] = []
     burn_items: list[tuple[str, float]] = []
 
     for p_name, p_data in plan_payloads.items():
         tiers_dict = p_data.get("tiers") or {}
         explanations = p_data.get("explanations") or {}
         fallbacks_map = p_data.get("fallbacks") or {}
-        p_node = f"Plan_{p_name.replace('-', '_')}"
-        flowchart_lines.append(f'    {p_node}["{p_name}"]')
+        p_node = sanitize_mermaid_id(p_name, prefix="Plan_")
+        flow_nodes.append((p_node, p_name))
 
         for tier in STANDARD_TIERS:
             if tier not in tiers_dict and tier not in explanations and tier not in fallbacks_map:
@@ -180,19 +187,26 @@ def _render_multi_plan_section(
                 ]
             )
 
-            short_pick = pick.removeprefix("opencode-go/").replace('"', "'")
+            short_pick = pick.removeprefix("opencode-go/")
             if fallback_ids:
-                fb_id = fallback_ids[0].removeprefix("opencode-go/").replace('"', "'")
+                fb_id = fallback_ids[0].removeprefix("opencode-go/")
                 tier_label = f"{tier}: {short_pick} (fb: {fb_id})"
             else:
                 tier_label = f"{tier}: {short_pick}"
-            t_node = f"T_{p_name.replace('-', '_')}_{tier}"
-            flowchart_lines.append(f'    {p_node} --> {t_node}["{tier_label}"]')
+            t_node = f"{sanitize_mermaid_id(p_name, prefix='T_')}_{tier}"
+            flow_edges.append((p_node, t_node, tier_label))
 
             if burn is not None:
                 burn_items.append((f"{p_name}:{tier}", round(burn, 1)))
 
-    flowchart_lines.append("```")
+    return table_rows, flow_nodes, flow_edges, burn_items
+
+
+def _render_multi_plan_section(
+    plan_payloads: dict[str, dict[str, Any]],
+    generated_svgs: list[str],
+) -> list[str]:
+    table_rows, flow_nodes, flow_edges, burn_items = _collect_multi_plan_data(plan_payloads)
 
     lines = [
         "",
@@ -204,7 +218,8 @@ def _render_multi_plan_section(
             ["Plan", "Tier", "Pick", "Fallbacks", "Allowance", "Output Cost", "Burn %"],
             table_rows,
         ),
-        *flowchart_lines,
+        "",
+        *render_mermaid_flowchart(flow_nodes, flow_edges),
     ]
 
     if len(burn_items) >= 2:
@@ -222,6 +237,104 @@ def _render_multi_plan_section(
 
     if "multi-plan-comparison.svg" in generated_svgs:
         lines.extend(["", "![Multi-Plan Comparison](charts/multi-plan-comparison.svg)"])
+    return lines
+
+
+def _collect_pareto_models(
+    rank_models: list[dict[str, Any]],
+    *,
+    profile: str,
+    weights: tuple[float, float] | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    pareto_models: list[dict[str, Any]] = []
+    has_aa = False
+    for m in rank_models:
+        if m.get("aa_iq") is not None or m.get("aa_coding") is not None:
+            has_aa = True
+        if m.get("is_pareto"):
+            quality, value = _model_quality_and_value(m, profile=profile, weights=weights)
+            pareto_entry = dict(m)
+            pareto_entry["_quality"] = quality
+            pareto_entry["_value"] = value
+            pareto_models.append(pareto_entry)
+    pareto_models.sort(key=lambda x: x["_quality"], reverse=True)
+    return pareto_models, has_aa
+
+
+def _render_pareto_frontier_section(
+    pareto_models: list[dict[str, Any]],
+    rank_models: list[dict[str, Any]],
+    generated_svgs: list[str],
+    *,
+    top_quality: float,
+    heavy_cutoff: float,
+    balanced_cutoff: float,
+    profile: str,
+    weights: tuple[float, float] | None,
+) -> list[str]:
+    pareto_rows: list[list[str]] = []
+    for m in pareto_models:
+        q = m["_quality"]
+        bands: list[str] = []
+        if q >= heavy_cutoff:
+            bands.append("heavy")
+        if q >= balanced_cutoff:
+            bands.append("balanced")
+        bands.append("light")
+        pareto_rows.append(
+            [
+                f"`{_model_id(m)}`",
+                _fmt_float(m.get("aa_iq"), 1),
+                _fmt_float(m.get("aa_coding"), 1),
+                f"`{q:.1f}`",
+                _fmt_burn(_model_burn_pct(m)),
+                _fmt_allowance(m.get("monthly_allowance")),
+                _fmt_float(m.get("_value"), 2),
+                ", ".join(bands),
+            ]
+        )
+
+    lines = [
+        f"- **Top Frontier Quality**: `{top_quality:.1f}`",
+        f"- **Heavy Band Cutoff (≥ 90%)**: `{heavy_cutoff:.1f}`",
+        f"- **Balanced Band Cutoff (≥ 60%)**: `{balanced_cutoff:.1f}`",
+        "",
+        *render_markdown_table(
+            [
+                "Model ID",
+                "AA IQ",
+                "Engineering",
+                "Quality",
+                "Burn %",
+                "Allowance",
+                "Value",
+                "Eligible Bands",
+            ],
+            pareto_rows,
+        ),
+    ]
+
+    if pareto_models:
+        slice_pareto = pareto_models[:12]
+        x_ids = [_model_id(m).removeprefix("opencode-go/").replace('"', "") for m in slice_pareto]
+        q_vals = [round(float(m["_quality"]), 1) for m in slice_pareto]
+        b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in slice_pareto]
+        lines.extend(
+            [
+                "",
+                *render_mermaid_xychart(
+                    "Pareto Frontier: Effective Quality vs Quota Burn %",
+                    x_ids,
+                    y_axis='"Quality / Burn %"',
+                    bars=[q_vals],
+                    lines_series=[b_vals],
+                ),
+            ]
+        )
+        lines.extend(_render_quadrant_chart(rank_models, profile=profile, weights=weights))
+
+    if "pareto-frontier.svg" in generated_svgs:
+        lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
     return lines
 
 
@@ -248,20 +361,7 @@ def render_analysis_markdown(
     )
     lines.extend(["", "---", "", "### 1. Live Pareto Frontier & Quality/Value Bands", ""])
 
-    pareto_models: list[dict[str, Any]] = []
-    has_aa = False
-    for m in rank_models:
-        if m.get("aa_iq") is not None or m.get("aa_coding") is not None:
-            has_aa = True
-        if m.get("is_pareto"):
-            quality, value = _model_quality_and_value(m, profile=profile, weights=weights)
-            pareto_entry = dict(m)
-            pareto_entry["_quality"] = quality
-            pareto_entry["_value"] = value
-            pareto_models.append(pareto_entry)
-
-    pareto_models.sort(key=lambda x: x["_quality"], reverse=True)
-
+    pareto_models, has_aa = _collect_pareto_models(rank_models, profile=profile, weights=weights)
     top_quality = pareto_models[0]["_quality"] if pareto_models else 0.0
     heavy_cutoff = 0.9 * top_quality
     balanced_cutoff = 0.6 * top_quality
@@ -280,71 +380,18 @@ def render_analysis_markdown(
             weights=weights,
         )
 
-    pareto_rows: list[list[str]] = []
-    for m in pareto_models:
-        q = m["_quality"]
-        bands: list[str] = []
-        if q >= heavy_cutoff:
-            bands.append("heavy")
-        if q >= balanced_cutoff:
-            bands.append("balanced")
-        bands.append("light")
-        pareto_rows.append(
-            [
-                f"`{_model_id(m)}`",
-                _fmt_float(m.get("aa_iq"), 1),
-                _fmt_float(m.get("aa_coding"), 1),
-                f"`{q:.1f}`",
-                _fmt_burn(_model_burn_pct(m)),
-                _fmt_allowance(m.get("monthly_allowance")),
-                _fmt_float(m.get("_value"), 2),
-                ", ".join(bands),
-            ]
-        )
-
     lines.extend(
-        [
-            f"- **Top Frontier Quality**: `{top_quality:.1f}`",
-            f"- **Heavy Band Cutoff (≥ 90%)**: `{heavy_cutoff:.1f}`",
-            f"- **Balanced Band Cutoff (≥ 60%)**: `{balanced_cutoff:.1f}`",
-            "",
-            *render_markdown_table(
-                [
-                    "Model ID",
-                    "AA IQ",
-                    "Engineering",
-                    "Quality",
-                    "Burn %",
-                    "Allowance",
-                    "Value",
-                    "Eligible Bands",
-                ],
-                pareto_rows,
-            ),
-        ]
-    )
-
-    if pareto_models:
-        slice_pareto = pareto_models[:12]
-        x_ids = [_model_id(m).removeprefix("opencode-go/").replace('"', "") for m in slice_pareto]
-        q_vals = [round(float(m["_quality"]), 1) for m in slice_pareto]
-        b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in slice_pareto]
-        lines.extend(
-            [
-                "",
-                *render_mermaid_xychart(
-                    "Pareto Frontier: Effective Quality vs Quota Burn %",
-                    x_ids,
-                    y_axis='"Quality / Burn %"',
-                    bars=[q_vals],
-                    lines_series=[b_vals],
-                ),
-            ]
+        _render_pareto_frontier_section(
+            pareto_models,
+            rank_models,
+            generated_svgs,
+            top_quality=top_quality,
+            heavy_cutoff=heavy_cutoff,
+            balanced_cutoff=balanced_cutoff,
+            profile=profile,
+            weights=weights,
         )
-        lines.extend(_render_quadrant_chart(rank_models, profile=profile, weights=weights))
-
-    if "pareto-frontier.svg" in generated_svgs:
-        lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
+    )
 
     if free_matrix:
         lines.extend(_render_free_matrix_section(free_matrix))

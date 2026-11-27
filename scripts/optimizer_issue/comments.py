@@ -6,9 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from opencode_go_model_optimizer.formatters.markdown import render_markdown_table
-
-from .common import _fence_for
+from opencode_go_model_optimizer.formatters.markdown import (
+    render_details_block,
+    render_markdown_table,
+)
 
 _STDERR_SEPARATOR = "--- stderr ---"
 _ASCII_TABLE_ROW_RE = re.compile(r"^\s*\|.+\|\s*$")
@@ -169,22 +170,13 @@ def render_ci_comment_markdown(
         log_file = ci_path / f"{key}.txt"
         if log_file.is_file():
             text = log_file.read_text(encoding="utf-8", errors="replace")
-            if text.strip():
-                fence = _fence_for(text)
-                details_tag = "<details open>" if outcome != "success" else "<details>"
-                lines.extend(
-                    [
-                        details_tag,
-                        f"<summary><code>{label}</code> output</summary>",
-                        "",
-                        f"{fence}text",
-                        text.strip(),
-                        fence,
-                        "",
-                        "</details>",
-                        "",
-                    ]
-                )
+            details = render_details_block(
+                f"<code>{label}</code> output",
+                text,
+                open_by_default=(outcome != "success"),
+            )
+            if details:
+                lines.extend([*details, ""])
 
     return "\n".join(lines).strip() + "\n"
 
@@ -247,41 +239,25 @@ def render_optimizer_output_comment(
         if tables:
             lines.append("")
         stray_text = "\n\n".join("\n".join(g["lines"]) for g in stray_groups)
-        fence = _fence_for(stray_text)
         lines.extend(
-            [
-                "<details>",
-                "<summary>Additional optimizer output</summary>",
-                "",
-                f"{fence}text",
+            render_details_block(
+                "Additional optimizer output",
                 stray_text,
-                fence,
-                "",
-                "</details>",
-            ]
+                open_by_default=False,
+            )
         )
 
     if not tables and not stray_groups:
         lines.append("The optimizer produced no output.")
 
-    stderr_cleaned = stderr_text.strip()
-    if stderr_cleaned:
-        failed = status is not None and str(status) != "0"
-        details_tag = "<details open>" if failed or not tables else "<details>"
-        fence = _fence_for(stderr_cleaned)
-        lines.extend(
-            [
-                "",
-                details_tag,
-                "<summary>stderr</summary>",
-                "",
-                f"{fence}text",
-                stderr_cleaned,
-                fence,
-                "",
-                "</details>",
-            ]
-        )
+    failed = status is not None and str(status) != "0"
+    stderr_details = render_details_block(
+        "stderr",
+        stderr_text,
+        open_by_default=(failed or not tables),
+    )
+    if stderr_details:
+        lines.extend(["", *stderr_details])
 
     if benchmarks == "live":
         lines.extend(["", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
