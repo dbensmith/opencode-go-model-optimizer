@@ -6,9 +6,8 @@ from typing import Any
 _INF_STRINGS = frozenset({"unlimited", "inf", "+inf", "infinity"})
 
 
-def to_float(value: Any) -> float:
-    """Convert to float, propagating conversion errors."""
-    return float(value)
+def _is_scalar(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float, str))
 
 
 def parse_float(value: Any, *, default: float | None = None) -> float | None:
@@ -16,7 +15,7 @@ def parse_float(value: Any, *, default: float | None = None) -> float | None:
     if value is None or isinstance(value, bool):
         return default
     try:
-        return to_float(value)
+        return float(value)
     except ValueError, TypeError:
         return default
 
@@ -39,23 +38,17 @@ def coerce_nested_float(value: Any) -> float:
     if value is None or isinstance(value, bool):
         return 0.0
     if isinstance(value, (int, float)):
-        return to_float(value)
+        return float(value)
     if isinstance(value, dict):
         for key in ("price", "default", "standard"):
-            if (
-                key in value
-                and not isinstance(value[key], bool)
-                and isinstance(value[key], (int, float, str))
-            ):
-                return coerce_nested_float(value[key])
-        for item in value.values():
-            if not isinstance(item, bool) and isinstance(item, (int, float, str)):
-                parsed = parse_float(item)
-                if parsed is not None:
-                    return parsed
+            candidate = value.get(key)
+            if _is_scalar(candidate):
+                return coerce_nested_float(candidate)
+        for candidate in value.values():
+            if _is_scalar(candidate) and (parsed := parse_float(candidate)) is not None:
+                return parsed
         return 0.0
-    parsed = parse_float(value, default=0.0)
-    return parsed if parsed is not None else 0.0
+    return parse_float(value, default=0.0)
 
 
 def serialize_inf_float(value: float | None) -> float | str | None:
@@ -63,13 +56,3 @@ def serialize_inf_float(value: float | None) -> float | str | None:
     if value is not None and isinstance(value, float) and math.isinf(value):
         return "unlimited"
     return value
-
-
-__all__ = [
-    "coerce_nested_float",
-    "finite_float",
-    "parse_float",
-    "parse_inf_float",
-    "serialize_inf_float",
-    "to_float",
-]

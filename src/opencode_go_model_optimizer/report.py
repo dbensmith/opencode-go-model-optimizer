@@ -30,9 +30,9 @@ from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
     is_incomplete_free_model,
+    serialize_inf_float,
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
-from opencode_go_model_optimizer.numbers import serialize_inf_float
 from opencode_go_model_optimizer.report_markdown import (
     _bucket_exclusion_reason,
     _fmt_cost,
