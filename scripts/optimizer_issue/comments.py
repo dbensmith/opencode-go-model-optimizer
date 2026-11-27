@@ -243,7 +243,6 @@ def render_optimizer_output_comment(
             render_details_block(
                 "Additional optimizer output",
                 stray_text,
-                open_by_default=False,
             )
         )
 

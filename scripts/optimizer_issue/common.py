@@ -9,7 +9,6 @@ from typing import Any
 from opencode_go_model_optimizer.engine.pareto import effective_quality
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
 from opencode_go_model_optimizer.formatters.markdown import (
-    fence_for,
     format_allowance_value,
     format_cost_value,
     is_number,
@@ -117,9 +116,6 @@ def _site_file(site_url: str, path: str) -> str:
 def _site_page(site_url: str, page: str) -> str:
     """Docsify hash route for a rendered Markdown page on GitHub Pages."""
     return f"{site_url}#/{page.lstrip('/')}"
-
-
-_fence_for = fence_for
 
 
 def _model_id(m: dict[str, Any], default: str = "unknown") -> str:

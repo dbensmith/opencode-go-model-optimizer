@@ -16,22 +16,12 @@ def is_number(val: Any) -> TypeGuard[int | float]:
 
 def fence_for(text: str) -> str:
     """Return a backtick fence longer than any backtick run in ``text``."""
-    longest = 0
-    current = 0
-    for ch in text:
-        if ch == "`":
-            current += 1
-            if current > longest:
-                longest = current
-        else:
-            current = 0
-    return "`" * max(3, longest + 1)
+    return "`" * max(3, max(map(len, re.findall(r"`+", text)), default=0) + 1)
 
 
 def sanitize_mermaid_id(raw: str, prefix: str = "") -> str:
-    """Return a Mermaid-safe node identifier from ``raw`` with an optional prefix."""
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", str(raw))
-    return f"{prefix}{cleaned}" if prefix else cleaned
+    """Return a Mermaid-safe node identifier (non-alphanumerics become ``_``)."""
+    return prefix + re.sub(r"[^a-zA-Z0-9_]", "_", str(raw))
 
 
 def format_allowance_value(
@@ -141,44 +131,24 @@ def render_mermaid_xychart(
 
 
 def render_mermaid_flowchart(
-    nodes: Iterable[tuple[str, str]] = (),
-    edges: Iterable[tuple[str, str] | tuple[str, str, str | None]] = (),
-    *,
-    direction: str = "LR",
-    extra_lines: Iterable[str] = (),
+    nodes: Iterable[tuple[str, str]],
+    edges: Iterable[tuple[str, str] | tuple[str, str, str]] = (),
 ) -> list[str]:
-    """Render a Mermaid ``flowchart`` block from ``(id, label)`` nodes and edges.
+    """Render a Mermaid ``flowchart LR`` from ``(id, label)`` nodes and edges.
 
-    Each edge may be ``(src_id, dst_id)`` or ``(src_id, dst_id, dst_label)``.
-    When ``dst_label`` is provided, the target node label is rendered inline on
-    the edge (``src --> dst["label"]``). Returns ``[]`` if there are no nodes,
-    edges, or extra lines.
+    An edge is ``(src, dst)`` or ``(src, dst, dst_label)``; a label declares the
+    target node inline (``src --> dst["label"]``). Returns ``[]`` when empty.
     """
-    node_list = list(nodes)
-    edge_list = list(edges)
-    extra_list = list(extra_lines)
-    if not node_list and not edge_list and not extra_list:
-        return []
 
-    lines = ["```mermaid", f"flowchart {direction}"]
-    for node_id, label in node_list:
-        safe_id = sanitize_mermaid_id(node_id)
-        safe_label = str(label).replace('"', "'")
-        lines.append(f'    {safe_id}["{safe_label}"]')
-    for edge in edge_list:
-        src_id, dst_id = edge[0], edge[1]
-        dst_label = edge[2] if len(edge) > 2 else None
-        safe_src = sanitize_mermaid_id(src_id)
-        safe_dst = sanitize_mermaid_id(dst_id)
-        if dst_label is not None:
-            safe_label = str(dst_label).replace('"', "'")
-            lines.append(f'    {safe_src} --> {safe_dst}["{safe_label}"]')
-        else:
-            lines.append(f"    {safe_src} --> {safe_dst}")
-    for line in extra_list:
-        lines.append(f"    {line}")
-    lines.append("```")
-    return lines
+    def label(text: str) -> str:
+        safe = str(text).replace('"', "'")
+        return f'["{safe}"]'
+
+    body = [f"    {sanitize_mermaid_id(i)}{label(t)}" for i, t in nodes]
+    for src, dst, *dst_label in edges:
+        target = sanitize_mermaid_id(dst) + (label(dst_label[0]) if dst_label else "")
+        body.append(f"    {sanitize_mermaid_id(src)} --> {target}")
+    return ["```mermaid", "flowchart LR", *body, "```"] if body else []
 
 
 def render_details_block(
@@ -186,23 +156,22 @@ def render_details_block(
     body: str,
     *,
     open_by_default: bool = False,
-    language: str = "text",
 ) -> list[str]:
-    """Render a collapsible ``<details>`` block wrapping a fenced code block.
+    """Render a collapsible ``<details>`` wrapping a fenced text block.
 
-    Returns ``[]`` if ``body`` is empty after stripping whitespace.
+    Returns ``[]`` if ``body`` is blank.
     """
-    cleaned = body.strip()
-    if not cleaned:
+    text = body.strip()
+    if not text:
         return []
-    fence = fence_for(cleaned)
+    fence = fence_for(text)
     tag = "<details open>" if open_by_default else "<details>"
     return [
         tag,
         f"<summary>{summary_html}</summary>",
         "",
-        f"{fence}{language}",
-        cleaned,
+        f"{fence}text",
+        text,
         fence,
         "",
         "</details>",

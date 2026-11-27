@@ -710,7 +710,7 @@ def test_markdown_shared_helpers():
 
     assert sanitize_mermaid_id("go-plus/model.v1", prefix="T_") == "T_go_plus_model_v1"
 
-    assert render_mermaid_flowchart() == []
+    assert render_mermaid_flowchart([]) == []
     flow = render_mermaid_flowchart(
         [("Root", 'Plan "go"')],
         [("Root", "T_heavy", 'heavy: "m1"'), ("T_heavy", "T_fb")],

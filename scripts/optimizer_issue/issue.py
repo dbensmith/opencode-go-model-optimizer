@@ -35,15 +35,19 @@ def _is_active_tier(tier: str, explanations: dict[str, Any], tiers: dict[str, An
     return (explanations.get(tier, {}).get("model_id") or tiers.get(tier) or "None") != "None"
 
 
-def _tier_flowchart_node_label(tier: str, ex: dict[str, Any], tiers: dict[str, Any]) -> str:
-    m_id = ex.get("model_id") or tiers.get(tier) or "None"
-    clean_id = m_id.removeprefix("opencode-go/") if m_id != "None" else "None"
-    if clean_id == "None":
+def _tier_flowchart_label(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]) -> str:
+    if not _is_active_tier(tier, explanations, tiers):
         return f"{tier}: None"
+    ex = explanations.get(tier) or {}
+    clean_id = (ex.get("model_id") or tiers[tier]).removeprefix("opencode-go/")
     allow_str = _fmt_allowance(ex.get("monthly_allowance"))
     burn_val = ex.get("quota_burn_pct")
     burn_part = f"{burn_val:.1f}% burn" if is_number(burn_val) else "- burn"
     return f"{tier}: {clean_id} ({allow_str}, {burn_part})"
+
+
+def _series(explanations: dict[str, Any], tiers: list[str], key: str) -> list[float]:
+    return [round(float(explanations.get(t, {}).get(key) or 0.0), 1) for t in tiers]
 
 
 def _render_benchmark_xychart(
@@ -51,35 +55,24 @@ def _render_benchmark_xychart(
     explanations: dict[str, Any],
     tiers: dict[str, Any],
 ) -> list[str]:
+    active = [t for t in ordered_tiers if _is_active_tier(t, explanations, tiers)]
     chart_tiers = [
         t
-        for t in ordered_tiers
-        if _is_active_tier(t, explanations, tiers)
-        and (
-            explanations.get(t, {}).get("aa_iq") is not None
-            or explanations.get(t, {}).get("aa_coding") is not None
-            or (is_number(explanations.get(t, {}).get("quota_burn_pct")) and t != "free")
-        )
+        for t in active
+        if any(explanations.get(t, {}).get(k) is not None for k in ("aa_iq", "aa_coding"))
+        or (is_number(explanations.get(t, {}).get("quota_burn_pct")) and t != "free")
     ]
-    if not chart_tiers:
-        chart_tiers = [t for t in ordered_tiers if _is_active_tier(t, explanations, tiers)]
+    chart_tiers = chart_tiers or active
     if not chart_tiers:
         return []
-    iq_vals = [round(float(explanations.get(t, {}).get("aa_iq") or 0.0), 1) for t in chart_tiers]
-    coding_vals = [
-        round(float(explanations.get(t, {}).get("aa_coding") or 0.0), 1) for t in chart_tiers
-    ]
-    burn_vals = [
-        round(float(explanations.get(t, {}).get("quota_burn_pct") or 0.0), 1) for t in chart_tiers
-    ]
     return [
         "",
         *render_mermaid_xychart(
             "Tier Comparison: Benchmark Scores vs Quota Burn %",
             chart_tiers,
             y_axis='"Score / Burn %" 0 --> 100',
-            bars=[iq_vals, coding_vals],
-            lines_series=[burn_vals],
+            bars=[_series(explanations, chart_tiers, k) for k in ("aa_iq", "aa_coding")],
+            lines_series=[_series(explanations, chart_tiers, "quota_burn_pct")],
         ),
     ]
 
@@ -89,26 +82,17 @@ def _render_allowance_xychart(
     explanations: dict[str, Any],
     tiers: dict[str, Any],
 ) -> list[str]:
-    paid_tiers = [
-        t for t in ordered_tiers if t != "free" and _is_active_tier(t, explanations, tiers)
-    ]
-    if not paid_tiers:
+    paid = [t for t in ordered_tiers if t != "free" and _is_active_tier(t, explanations, tiers)]
+    if not paid:
         return []
-    allow_vals = [
-        round(float(explanations.get(t, {}).get("monthly_allowance") or 0.0), 1) for t in paid_tiers
-    ]
-    cost_vals = [
-        round(float(explanations.get(t, {}).get("output_cost_per_1m") or 0.0), 1)
-        for t in paid_tiers
-    ]
     return [
         "",
         *render_mermaid_xychart(
             "Paid Tier Allowance vs Output Cost",
-            paid_tiers,
+            paid,
             y_axis='"Allowance ($) / Cost ($/1M)"',
-            bars=[allow_vals],
-            lines_series=[cost_vals],
+            bars=[_series(explanations, paid, "monthly_allowance")],
+            lines_series=[_series(explanations, paid, "output_cost_per_1m")],
         ),
     ]
 
@@ -124,11 +108,7 @@ def _render_visual_tier_summary(
         return []
 
     edges = [
-        (
-            "Root",
-            sanitize_mermaid_id(t, prefix="T_"),
-            _tier_flowchart_node_label(t, explanations.get(t) or {}, tiers),
-        )
+        ("Root", sanitize_mermaid_id(t, "T_"), _tier_flowchart_label(t, explanations, tiers))
         for t in ordered_tiers
     ]
     lines = [
@@ -139,14 +119,14 @@ def _render_visual_tier_summary(
     ]
 
     has_benchmarks = any(
-        explanations.get(t, {}).get("aa_iq") is not None
-        or explanations.get(t, {}).get("aa_coding") is not None
+        explanations.get(t, {}).get(k) is not None
         for t in ordered_tiers
+        for k in ("aa_iq", "aa_coding")
     )
     has_burn_or_allow = any(
-        is_number(explanations.get(t, {}).get("quota_burn_pct"))
-        or is_number(explanations.get(t, {}).get("monthly_allowance"))
+        is_number(explanations.get(t, {}).get(k))
         for t in ordered_tiers
+        for k in ("quota_burn_pct", "monthly_allowance")
     )
 
     if has_benchmarks:
