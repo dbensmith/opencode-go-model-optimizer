@@ -7,7 +7,7 @@ from datetime import UTC, datetime, time, timedelta
 from math import gcd
 from typing import Any
 
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, PriceMultiplier
+from opencode_go_model_optimizer.ingest.models import NormalizedModel, PriceMultiplier, ensure_utc
 
 PRICE_BASES = ("now", "blended", "worst", "list")
 _DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -21,10 +21,6 @@ _OPS: dict[str, Callable[[Any, Any], bool]] = {
 
 class UnsupportedConditionError(ValueError):
     """Raised for a multiplier condition this version cannot interpret."""
-
-
-def _utc(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
 @functools.lru_cache(maxsize=256)
@@ -122,7 +118,7 @@ def _eval_multipliers(valid_mults: list[PriceMultiplier], dt: datetime) -> float
 
 def multiplier_at(m: NormalizedModel, dt: datetime) -> float:
     """Product of the factors of all (valid) multipliers matching at UTC datetime ``dt``."""
-    return _eval_multipliers(_valid_multipliers(m), _utc(dt))
+    return _eval_multipliers(_valid_multipliers(m), ensure_utc(dt))
 
 
 def _minutes(cond: Any, out: set[int]) -> None:
@@ -173,7 +169,7 @@ def _segments(
 
 def blended_multiplier(m: NormalizedModel, start: datetime, days: int = 7) -> float:
     """Time-weighted average multiplier over ``days`` days from ``start``."""
-    start = _utc(start)
+    start = ensure_utc(start)
     end = start + timedelta(days=days)
     total = sum((e - s).total_seconds() * v for s, e, v in _segments(m, start, end))
     return total / (end - start).total_seconds()
@@ -181,7 +177,7 @@ def blended_multiplier(m: NormalizedModel, start: datetime, days: int = 7) -> fl
 
 def worst_multiplier(m: NormalizedModel, start: datetime, days: int = 7) -> float:
     """Highest multiplier in effect at any point within the next ``days`` days."""
-    start = _utc(start)
+    start = ensure_utc(start)
     return max(v for _, _, v in _segments(m, start, start + timedelta(days=days)))
 
 
@@ -189,7 +185,7 @@ def next_price_change(
     m: NormalizedModel, dt: datetime, horizon_days: int = 60
 ) -> tuple[datetime, float] | None:
     """First future instant where the multiplier changes, with the new multiplier."""
-    dt = _utc(dt)
+    dt = ensure_utc(dt)
     current: float | None = None
     for seg_start, _, value in _segments(m, dt, dt + timedelta(days=horizon_days)):
         if current is None:
@@ -222,7 +218,7 @@ def apply_price_basis(
     """
     if basis not in PRICE_BASES:
         raise ValueError(f"unknown price basis {basis!r}; choose from {', '.join(PRICE_BASES)}")
-    when = _utc(at) if at is not None else datetime.now(UTC)
+    when = ensure_utc(at) if at is not None else datetime.now(UTC)
     out: list[NormalizedModel] = []
     for m in models:
         if basis == "list" or not m.multipliers:

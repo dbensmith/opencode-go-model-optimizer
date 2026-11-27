@@ -24,7 +24,6 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     DEFAULT_MODELS_HTTP_URL,
     apply_request_estimates,
     fetch_catalogue,
-    publishes_monthly_allowance,
 )
 from opencode_go_model_optimizer.ingest.console import CONSOLE_PAGE_URL, fetch_console_profiles
 from opencode_go_model_optimizer.ingest.docs import (
@@ -40,7 +39,9 @@ from opencode_go_model_optimizer.ingest.models import (
     Privacy,
     Snapshot,
     SnapshotMetadata,
+    is_incomplete_free_model,
     normalize_plan,
+    plan_allowance_for,
 )
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_models_dev
 
@@ -68,10 +69,9 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
     """Apply plan-specific monthly allowances and request estimates to models."""
     norm_plan = normalize_plan(plan)
     for m in models:
-        if norm_plan in m.plan_allowances:
-            m.monthly_allowance = m.plan_allowances[norm_plan]
-        elif plan in m.plan_allowances:
-            m.monthly_allowance = m.plan_allowances[plan]
+        allowance = plan_allowance_for(m, plan)
+        if allowance is not None:
+            m.monthly_allowance = allowance
         elif m.plan_allowances:
             m.monthly_allowance = None
         m.request_estimate = m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
@@ -202,8 +202,7 @@ def _collect_model_warnings(models: list[NormalizedModel], plan: str) -> list[st
             if m.status == "active"
             and m.model_type == "chat"
             and not m.is_zero_cost
-            and norm_plan not in m.plan_allowances
-            and plan not in m.plan_allowances
+            and plan_allowance_for(m, plan) is None
         )
         if no_usage:
             warnings.append(
@@ -213,10 +212,7 @@ def _collect_model_warnings(models: list[NormalizedModel], plan: str) -> list[st
         anomalies = sorted(
             m.id
             for m in models
-            if m.status == "active"
-            and m.model_type == "chat"
-            and m.is_zero_cost
-            and publishes_monthly_allowance(m.plan_allowances)
+            if m.status == "active" and m.model_type == "chat" and is_incomplete_free_model(m)
         )
         if anomalies:
             warnings.append(
@@ -330,7 +326,7 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
         if candidate == plan:
             apply_plan(snap.models, plan)
             return snap
-        if any(norm_plan in m.plan_allowances or plan in m.plan_allowances for m in snap.models):
+        if any(plan_allowance_for(m, plan) is not None for m in snap.models):
             apply_plan(snap.models, norm_plan)
             snap.plan = norm_plan
             return snap

@@ -20,6 +20,7 @@ from opencode_go_model_optimizer.ingest.models import (
     RequestEstimate,
     TokenCost,
     parse_inf_float,
+    publishes_monthly_allowance,
 )
 
 DEFAULT_MODELS_HTTP_URL = "https://opencode.ai/inference/go/v1/models"
@@ -124,11 +125,6 @@ def _extract_plan_allowances(go_raw: Any) -> dict[str, float]:
         if allowance is not None:
             allowances[str(plan)] = allowance
     return allowances
-
-
-def publishes_monthly_allowance(allowances: dict[str, float]) -> bool:
-    """Return whether any plan publishes a finite, positive monthly allowance."""
-    return any(math.isfinite(value) and value > 0 for value in allowances.values())
 
 
 def _extract_go_privacy(go_raw: Any) -> Privacy | None:
