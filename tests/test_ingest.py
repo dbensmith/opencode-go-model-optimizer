@@ -656,27 +656,18 @@ def test_plan_allowances_and_apply_plan():
     assert legacy.monthly_allowance == 12.0
 
 
-def test_apply_plan_aliases_and_normalization():
+def test_apply_plan_matches_plan_names_exactly():
     m = NormalizedModel(
         id="mod-plan",
-        plan_allowances={
-            "go": 15.0,
-            "go-plus": 60.0,
-            "go-teams": float("inf"),
-            "custom-tier": 120.0,
-        },
+        plan_allowances={"go": 15.0, "go-plus": 60.0, "custom-tier": 120.0},
     )
 
-    # Aliases without 'go-' prefix
-    apply_plan([m], "plus")
-    assert m.monthly_allowance == 60.0
-
-    apply_plan([m], "teams")
-    assert m.monthly_allowance == float("inf")
-
-    # Custom plan without 'go-' prefix matching directly
     apply_plan([m], "custom-tier")
     assert m.monthly_allowance == 120.0
+
+    # Short aliases are not expanded: 'plus' is just an unknown plan.
+    apply_plan([m], "plus")
+    assert m.monthly_allowance is None
 
 
 def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
@@ -749,8 +740,7 @@ def test_cross_plan_cache_sharing(tmp_path):
         assert shared_plus.plan == "go-plus"
         assert shared_plus.models[0].monthly_allowance == 60.0
 
-        # Loading "teams" (alias) hits the shared cache and normalizes to "go-teams"
-        shared_teams = load_cached_snapshot("teams", ttl_seconds=3600)
+        shared_teams = load_cached_snapshot("go-teams", ttl_seconds=3600)
         assert shared_teams is not None
         assert shared_teams.plan == "go-teams"
         assert shared_teams.models[0].monthly_allowance == float("inf")
