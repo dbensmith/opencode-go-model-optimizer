@@ -36,7 +36,6 @@ from opencode_go_model_optimizer.ingest.models import (
     Snapshot,
     SnapshotMetadata,
     is_incomplete_free_model,
-    normalize_plan,
     plan_allowance_for,
 )
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, fetch_models_dev
@@ -57,14 +56,13 @@ __all__ = [
 
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
     """Apply plan-specific monthly allowances and request estimates to models."""
-    norm_plan = normalize_plan(plan)
     for m in models:
         allowance = plan_allowance_for(m, plan)
         if allowance is not None:
             m.monthly_allowance = allowance
         elif m.plan_allowances:
             m.monthly_allowance = None
-        m.request_estimate = m.request_estimates.get(norm_plan) or m.request_estimates.get(plan)
+        m.request_estimate = m.request_estimates.get(plan)
     return models
 
 
@@ -185,7 +183,6 @@ def _collect_model_warnings(models: list[NormalizedModel], plan: str) -> list[st
     if not any(m.plan_allowances for m in models):
         warnings.append("no per-plan usage from the Go models API; no allowance was applied")
     else:
-        norm_plan = normalize_plan(plan)
         no_usage = sorted(
             m.id
             for m in models
@@ -197,7 +194,7 @@ def _collect_model_warnings(models: list[NormalizedModel], plan: str) -> list[st
         if no_usage:
             warnings.append(
                 f"{len(no_usage)} active paid model(s) have no go.monthly_usage for plan "
-                f"{norm_plan}: " + ", ".join(no_usage)
+                f"{plan}: " + ", ".join(no_usage)
             )
         anomalies = sorted(
             m.id
@@ -306,9 +303,8 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     if ttl_seconds <= 0:
         return None
 
-    norm_plan = normalize_plan(plan)
     now = time.time()
-    candidates = [plan, *(p for p in PLANS if p != plan and p != norm_plan)]
+    candidates = [plan, *(p for p in PLANS if p != plan)]
     for candidate in candidates:
         snap = _try_load_fresh_snapshot(get_cache_snapshot_path(plan=candidate), ttl_seconds, now)
         if snap is None:
@@ -317,8 +313,8 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
             apply_plan(snap.models, plan)
             return snap
         if any(plan_allowance_for(m, plan) is not None for m in snap.models):
-            apply_plan(snap.models, norm_plan)
-            snap.plan = norm_plan
+            apply_plan(snap.models, plan)
+            snap.plan = plan
             return snap
 
     return None

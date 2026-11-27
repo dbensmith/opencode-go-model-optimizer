@@ -16,11 +16,6 @@ def ensure_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 
 
-def normalize_plan(plan: str) -> str:
-    """Normalize plan aliases (e.g. 'plus' -> 'go-plus', 'teams' -> 'go-teams')."""
-    return plan if plan.startswith("go") else f"go-{plan}"
-
-
 def publishes_monthly_allowance(allowances: dict[str, float]) -> bool:
     """Return whether any plan publishes a finite, positive monthly allowance."""
     return any(math.isfinite(value) and value > 0 for value in allowances.values())
@@ -231,17 +226,14 @@ def is_incomplete_free_model(m: NormalizedModel) -> bool:
 
 
 def plan_allowance_for(m: NormalizedModel, plan: str) -> float | None:
-    """Return the monthly allowance for ``plan`` (normalized alias first), or None."""
-    norm_plan = normalize_plan(plan)
-    if norm_plan in m.plan_allowances:
-        return m.plan_allowances[norm_plan]
+    """Return the monthly allowance for ``plan``, or None."""
     return m.plan_allowances.get(plan)
 
 
 def effective_plan(snap_plan: str, requested_plan: str, models: Sequence[NormalizedModel]) -> str:
-    """Return normalized requested plan if any model has an allowance for it, else ``snap_plan``."""
+    """Return the requested plan if any model has an allowance for it, else ``snap_plan``."""
     if any(plan_allowance_for(m, requested_plan) is not None for m in models):
-        return normalize_plan(requested_plan)
+        return requested_plan
     return snap_plan
 
 

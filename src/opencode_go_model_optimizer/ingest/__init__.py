@@ -32,7 +32,6 @@ from opencode_go_model_optimizer.ingest.models import (
     Snapshot,
     SnapshotMetadata,
     TokenCost,
-    normalize_plan,
 )
 from opencode_go_model_optimizer.ingest.models_dev import (
     fetch_models_dev,
@@ -77,7 +76,6 @@ __all__ = [
     "merge_catalogue_metadata",
     "model_from_dict",
     "norm_name",
-    "normalize_plan",
     "parse_catalogue_cli",
     "parse_catalogue_http",
     "parse_console_profiles",

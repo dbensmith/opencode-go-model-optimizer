@@ -39,30 +39,13 @@ def _to_float(value: Any) -> float | None:
 
 
 def _aa_speed_tps(item: dict[str, Any]) -> float | None:
-    """Output tokens/sec from performance_v3, then the deprecated performance block."""
-    perf_v3 = item.get("performance_v3")
-    if isinstance(perf_v3, dict):
-        value = _to_float(perf_v3.get("mean_output_tokens_per_second"))
-        if value is not None:
-            return value
-    perf = item.get("performance")
-    if isinstance(perf, dict):
-        value = _to_float(perf.get("median_output_tokens_per_second"))
-        if value is not None:
-            return value
-    return _to_float(item.get("median_output_tokens_per_second"))
+    """Mean output tokens/sec from the ``performance_v3`` block."""
+    perf = item.get("performance_v3")
+    return _to_float(perf.get("mean_output_tokens_per_second")) if isinstance(perf, dict) else None
 
 
 def _aa_coding_score(evals: dict[str, Any]) -> float | None:
-    """Coding/engineering benchmark score from AA evaluations.
-
-    Artificial Analysis retired ``artificial_analysis_coding_index`` (always null in v2) and
-    replaced it with the six Capability Indexes, where software engineering / coding is
-    ``artificial_analysis_engineering_index``.
-    """
-    coding = _to_float(evals.get("artificial_analysis_coding_index"))
-    if coding is not None:
-        return coding
+    """Coding/engineering score: the ``artificial_analysis_engineering_index`` Capability Index."""
     return _to_float(evals.get("artificial_analysis_engineering_index"))
 
 
@@ -186,8 +169,7 @@ def fetch_aa_benchmarks(
 ) -> dict[str, dict[str, Any]]:
     """Fetch live benchmark metrics from the Artificial Analysis Data API.
 
-    Uses the Free-tier language model list, which accepts every key tier. The legacy
-    ``/api/v2/data/*`` endpoints were retired (HTTP 410) in November 2026. When multiple
+    Uses the Free-tier language model list, which accepts every key tier. When multiple
     reasoning-effort variants share a normalized model name (e.g. ``Max``, ``High``,
     ``Low``, ``Non-reasoning``), the canonical/flagship entry is retained rather than
     letting lower-effort variants overwrite it.
@@ -204,17 +186,13 @@ def fetch_aa_benchmarks(
                 )
                 r.raise_for_status()
                 payload = r.json()
-                if isinstance(payload, list):
-                    models = payload
-                    has_more = False
-                elif isinstance(payload, dict):
-                    models = payload.get("data", [])
-                    pagination = payload.get("pagination")
-                    has_more = (
-                        bool(pagination.get("has_more")) if isinstance(pagination, dict) else False
-                    )
-                else:
+                if not isinstance(payload, dict):
                     raise ValueError("unexpected Artificial Analysis response")
+                models = payload.get("data", [])
+                pagination = payload.get("pagination")
+                has_more = (
+                    bool(pagination.get("has_more")) if isinstance(pagination, dict) else False
+                )
 
                 if not isinstance(models, list):
                     raise ValueError("unexpected Artificial Analysis model list")
