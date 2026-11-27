@@ -15,6 +15,7 @@ from opencode_go_model_optimizer.formatters.diff import (
 )
 from opencode_go_model_optimizer.formatters.markdown import (
     fence_for,
+    format_multiplier,
     is_number,
     render_details_block,
     render_mermaid_flowchart,
@@ -31,11 +32,7 @@ from opencode_go_model_optimizer.formatters.select import (
     settings_payload,
     tier_display_names,
 )
-from opencode_go_model_optimizer.formatters.table import (
-    _append_column,
-    format_multiplier,
-    render_table,
-)
+from opencode_go_model_optimizer.formatters.table import _append_column, render_table
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
     NormalizedModel,

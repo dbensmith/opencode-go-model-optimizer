@@ -7,7 +7,22 @@ from typing import Any
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.pricing import next_price_change
+from opencode_go_model_optimizer.formatters.markdown import (
+    format_allowance_value,
+    format_cost_value,
+    format_int,
+)
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
+
+
+def _model_value_cells(m: NormalizedModel) -> list[str]:
+    """Format the shared allowance, output-cost, and context table cells."""
+    cost = 0.0 if m.is_zero_cost else m.cost.output
+    return [
+        format_allowance_value(m.monthly_allowance),
+        format_cost_value(cost, zero_is_free=m.is_zero_cost),
+        format_int(m.limit.context) if m.limit.context else "-",
+    ]
 
 
 def _burn_basis(
@@ -40,34 +55,6 @@ def _model_map(models: list[NormalizedModel]) -> dict[str, NormalizedModel]:
     mapping = {m.full_id: m for m in models}
     mapping.update({m.id: m for m in models})
     return mapping
-
-
-def _fmt_allowance(m: NormalizedModel) -> str:
-    if m.monthly_allowance is None:
-        return "-"
-    return "Unlimited" if math.isinf(m.monthly_allowance) else f"${m.monthly_allowance:.2f}"
-
-
-def _fmt_output_cost(m: NormalizedModel) -> str:
-    return "Free" if m.is_zero_cost else f"${m.cost.output:.2f}/1M"
-
-
-def _fmt_context(m: NormalizedModel) -> str:
-    return f"{m.limit.context:,}" if m.limit.context else "-"
-
-
-def format_multiplier(multiplier: float | None, next_change: dict[str, Any] | None = None) -> str:
-    """Format a price multiplier and optional upcoming ``{multiplier, at}`` change."""
-    if multiplier is None:
-        return "-"
-    cell = f"x{multiplier:.3g}"
-    if next_change and next_change.get("at") and next_change.get("multiplier") is not None:
-        cell += f" (-> x{next_change['multiplier']:.3g} @ {next_change['at']})"
-    return cell
-
-
-def _multiplier_cell(m: NormalizedModel, change: dict[str, Any] | None = None) -> str:
-    return format_multiplier(m.price_multiplier, change)
 
 
 def _privacy_cell(m: NormalizedModel) -> str:

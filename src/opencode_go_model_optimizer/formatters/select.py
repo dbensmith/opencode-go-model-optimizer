@@ -12,13 +12,11 @@ from opencode_go_model_optimizer.engine.pareto import (
     resolve_burn_basis,
 )
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
+from opencode_go_model_optimizer.formatters.markdown import format_multiplier
 from opencode_go_model_optimizer.formatters.table import (
     _burn_basis,
-    _fmt_allowance,
-    _fmt_context,
-    _fmt_output_cost,
     _model_map,
-    _multiplier_cell,
+    _model_value_cells,
     _next_change,
     render_table,
 )
@@ -251,9 +249,7 @@ def format_select_table(
             tier,
             full_id,
             m.name or "-",
-            _fmt_allowance(m),
-            _fmt_output_cost(m),
-            _fmt_context(m),
+            *_model_value_cells(m),
         ]
         if explain:
             burn_val = (
@@ -271,7 +267,7 @@ def format_select_table(
                 ]
             )
             if show_mult:
-                row.append(_multiplier_cell(m, _next_change(m, criteria)))
+                row.append(format_multiplier(m.price_multiplier, _next_change(m, criteria)))
         rows.append(row)
 
     return render_table(headers, rows)

@@ -3,12 +3,10 @@
 import json
 from collections.abc import Callable
 
+from opencode_go_model_optimizer.formatters.markdown import format_multiplier
 from opencode_go_model_optimizer.formatters.table import (
     _append_column,
-    _fmt_allowance,
-    _fmt_context,
-    _fmt_output_cost,
-    _multiplier_cell,
+    _model_value_cells,
     _privacy_cell,
     _requests_cell,
     render_table,
@@ -32,8 +30,7 @@ def format_rank_table(
     rows: list[list[str]] = []
     for m in ranked_models:
         row = [str(m.rank or "-"), m.id, m.tier or "-"]
-        allow_str = _fmt_allowance(m)
-        cost_str = _fmt_output_cost(m)
+        allow_str, cost_str, context_str = _model_value_cells(m)
         release_str = m.release_date or "-"
         if is_pareto:
             row.extend(
@@ -47,7 +44,7 @@ def format_rank_table(
                 ]
             )
         else:
-            row.extend([allow_str, cost_str, release_str, _fmt_context(m), m.status])
+            row.extend([allow_str, cost_str, release_str, context_str, m.status])
         rows.append(row)
 
     optional_columns: tuple[
@@ -56,7 +53,11 @@ def format_rank_table(
     ] = (
         ("Req/month", lambda m: m.request_estimate is not None, _requests_cell),
         ("Privacy", lambda m: m.privacy is not None, _privacy_cell),
-        ("Price x", lambda m: m.price_multiplier is not None, _multiplier_cell),
+        (
+            "Price x",
+            lambda m: m.price_multiplier is not None,
+            lambda m: format_multiplier(m.price_multiplier),
+        ),
     )
     for header, has_value, format_cell in optional_columns:
         if any(has_value(m) for m in ranked_models):

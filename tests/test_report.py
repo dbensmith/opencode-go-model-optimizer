@@ -9,15 +9,12 @@ import pytest
 
 from opencode_go_model_optimizer.cli import main
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
+from opencode_go_model_optimizer.formatters.markdown import format_allowance_value
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.docs import parse_privacy
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Privacy, TokenCost
 from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, load_cached_snapshot
 from opencode_go_model_optimizer.report import (
-    _bucket_exclusion_reason,
-    _format_allowance,
-    _format_cluster_range,
-    _round_chart_num,
     _strip_aa,
     assert_no_aa,
     build_report,
@@ -25,6 +22,11 @@ from opencode_go_model_optimizer.report import (
     render_markdown,
     summarize_junit,
     write_report,
+)
+from opencode_go_model_optimizer.report_markdown import (
+    _bucket_exclusion_reason,
+    _format_cluster_range,
+    round_chart_num,
 )
 from tests.conftest import CATALOGUE_HTTP_DATA as OC
 from tests.conftest import MDX_TEXT as MDX
@@ -411,10 +413,10 @@ def test_render_markdown_mermaid_diagrams_and_charts(snapshot, tmp_path):
 
 def test_render_markdown_mermaid_edge_cases():
     # Unit tests for helpers
-    assert _format_allowance(None) == "-"
-    assert _format_allowance("unlimited") == "unlimited"
-    assert _format_allowance(12.0) == "$12"
-    assert _format_allowance(12.5) == "$12.5"
+    assert format_allowance_value(None) == "-"
+    assert format_allowance_value("unlimited", unlimited_label="unlimited") == "unlimited"
+    assert format_allowance_value(12.0, compact=True) == "$12"
+    assert format_allowance_value(12.5, compact=True) == "$12.5"
 
     assert _format_cluster_range(None) == "N/A"
     assert _format_cluster_range({}) == "N/A"
@@ -427,12 +429,12 @@ def test_render_markdown_mermaid_edge_cases():
     assert _bucket_exclusion_reason("unpriced: allowance is zero") == "Unpriced / Other"
     assert _bucket_exclusion_reason("any generic reason") == "Unpriced / Other"
 
-    assert _round_chart_num(None) == 0
-    assert _round_chart_num("invalid") == 0
-    assert _round_chart_num(float("inf")) == 0
-    assert _round_chart_num(float("nan")) == 0
-    assert _round_chart_num(10.0) == 10
-    assert _round_chart_num(2.55555) == 2.5556
+    assert round_chart_num(None) == 0
+    assert round_chart_num("invalid") == 0
+    assert round_chart_num(float("inf")) == 0
+    assert round_chart_num(float("nan")) == 0
+    assert round_chart_num(10.0) == 10
+    assert round_chart_num(2.55555) == 2.5556
 
     # Empty plans dict -> no flowchart
     minimal_report = {

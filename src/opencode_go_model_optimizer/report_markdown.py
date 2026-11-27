@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from opencode_go_model_optimizer.engine.tiers import PAID_TIERS, STANDARD_TIERS
@@ -15,6 +14,7 @@ from opencode_go_model_optimizer.formatters.markdown import (
     render_mermaid_pie,
     render_mermaid_xychart,
     render_run_settings_lines,
+    round_chart_num,
     sanitize_mermaid_id,
 )
 
@@ -27,14 +27,6 @@ _EXCLUSION_BUCKETS = (
     "Not Active",
     "Unpriced / Other",
 )
-
-
-def _fmt_cost(value: Any) -> str:
-    return format_cost_value(value, compact=True)
-
-
-def _format_allowance(val: Any) -> str:
-    return format_allowance_value(val, compact=True, unlimited_label="unlimited")
 
 
 def _format_cluster_range(cluster: dict[str, Any] | None) -> str:
@@ -61,12 +53,6 @@ def _bucket_exclusion_reason(reason: str) -> str:
     return "Unpriced / Other"
 
 
-def _round_chart_num(val: Any) -> float | int:
-    if is_number(val) and not math.isinf(val) and not math.isnan(val):
-        return int(val) if float(val).is_integer() else round(float(val), 4)
-    return 0
-
-
 def _render_cross_plan_flowchart(plans: dict[str, Any]) -> list[str]:
     nodes: list[tuple[str, str]] = []
     edges: list[tuple[str, str, str]] = []
@@ -80,7 +66,9 @@ def _render_cross_plan_flowchart(plans: dict[str, Any]) -> list[str]:
             t_id = f"{p_id}_{tier}"
             pick = entry.get("model_id") or "None"
             ex = entry.get("explanation", {})
-            allowance_str = _format_allowance(ex.get("monthly_allowance"))
+            allowance_str = format_allowance_value(
+                ex.get("monthly_allowance"), compact=True, unlimited_label="unlimited"
+            )
             cluster_str = _format_cluster_range(entry.get("cluster"))
             label = f"{tier}: {pick} (Allowance: {allowance_str}, Cluster: {cluster_str})"
             edges.append((p_id, t_id, label))
@@ -95,7 +83,7 @@ def _render_plan_markdown(plan: str, section: dict[str, Any]) -> list[str]:
             tier,
             f"`{entry['model_id'] or '-'}`",
             entry["explanation"].get("monthly_allowance", "-"),
-            _fmt_cost(entry["explanation"].get("output_cost_per_1m")),
+            format_cost_value(entry["explanation"].get("output_cost_per_1m"), compact=True),
             entry["explanation"].get("price_multiplier", 1),
             entry["explanation"].get("quota_burn_pct", "-"),
             entry["explanation"].get("burn_basis_used", "-"),
@@ -128,9 +116,9 @@ def _render_plan_markdown(plan: str, section: dict[str, Any]) -> list[str]:
         lines.append(f"- **{tier}**: {entry['why']}")
         cluster = entry.get("cluster")
         if cluster and cluster["output_cost_per_1m_range"]:
-            lo, hi = cluster["output_cost_per_1m_range"]
             lines.append(
-                f"  - cluster of {cluster['size']} model(s), effective output ${lo:g}-${hi:g}/1M"
+                f"  - cluster of {cluster['size']} model(s), effective output "
+                f"{_format_cluster_range(cluster)}"
             )
         ex = entry["explanation"]
         if ex.get("privacy"):
@@ -148,13 +136,11 @@ def _render_plan_markdown(plan: str, section: dict[str, Any]) -> list[str]:
     )
     if has_numeric:
         allowances = [
-            _round_chart_num(
-                explanations.get(t, {}).get("explanation", {}).get("monthly_allowance")
-            )
+            round_chart_num(explanations.get(t, {}).get("explanation", {}).get("monthly_allowance"))
             for t in PAID_TIERS
         ]
         output_costs = [
-            _round_chart_num(
+            round_chart_num(
                 explanations.get(t, {}).get("explanation", {}).get("output_cost_per_1m")
             )
             for t in PAID_TIERS
