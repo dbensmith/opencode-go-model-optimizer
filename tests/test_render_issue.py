@@ -943,3 +943,35 @@ def test_main_loads_select_and_rank_json_once(
     assert rc == 0
     assert load_json_calls == 1
     assert rank_calls == 1
+
+
+def test_generate_analysis_svgs_without_plans_and_boolean_allowance(tmp_path: Path) -> None:
+    """generate_analysis_svgs handles empty frontier/plans and ignores bool allowances."""
+    charts_dir = tmp_path / "charts"
+    generated = _MOD.generate_analysis_svgs(
+        charts_dir=charts_dir,
+        pareto_models=[],
+        rank_models=[{"full_id": "opencode-go/m1", "aa_iq": 80.0, "aa_coding": 85.0, "rank": 1}],
+        plan_payloads=None,
+        top_quality=85.0,
+        heavy_cutoff=76.5,
+        balanced_cutoff=51.0,
+    )
+    assert generated == ["pareto-frontier.svg", "catalog-ranking.svg"]
+    for name in generated:
+        root = ET.fromstring((charts_dir / name).read_text(encoding="utf-8"))
+        assert root.tag.endswith("svg")
+
+    multi_svg = importlib.import_module("optimizer_issue.charts")._render_multi_plan_comparison_svg(
+        {"go": {"explanations": {"heavy": {"monthly_allowance": True, "quota_burn_pct": 25.0}}}}
+    )
+    assert ET.fromstring(multi_svg).tag.endswith("svg")
+
+
+def test_main_requires_primary_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    """main() returns 1 and writes to stderr when no primary input flag is provided."""
+    args = _MOD.parse_args([])
+    assert args.format_outcome == "unknown"
+    assert args.plan_json == []
+    assert _MOD.main([]) == 1
+    assert "must be specified" in capsys.readouterr().err
