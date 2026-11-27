@@ -407,14 +407,14 @@ def test_fetch_aa_benchmarks():
                 "name": "Model Slug 1 Name",
                 "evaluations": {
                     "artificial_analysis_intelligence_index": 85.5,
-                    "artificial_analysis_coding_index": 78.0,
+                    "artificial_analysis_engineering_index": 78.0,
                 },
-                "median_output_tokens_per_second": 45.2,
+                "performance_v3": {"mean_output_tokens_per_second": 45.2},
             },
             {
                 "id": "model-id-2",
                 "evaluations": {},
-                "median_output_tokens_per_second": None,
+                "performance_v3": {"mean_output_tokens_per_second": None},
             },
         ]
     }
@@ -860,15 +860,19 @@ def test_merge_catalogue_metadata_models_dev_backfill():
 def test_fetch_aa_benchmarks_robust_parsing():
     api_response = {
         "data": [
-            {"slug": "null-evals", "evaluations": None, "median_output_tokens_per_second": 10},
+            {
+                "slug": "null-evals",
+                "evaluations": None,
+                "performance_v3": {"mean_output_tokens_per_second": 10},
+            },
             {"slug": "list-evals", "evaluations": ["x"]},
             {
                 "slug": "bad-number",
                 "evaluations": {
                     "artificial_analysis_intelligence_index": "n/a",
-                    "artificial_analysis_coding_index": "42.5",
+                    "artificial_analysis_engineering_index": "42.5",
                 },
-                "median_output_tokens_per_second": True,
+                "performance_v3": {"mean_output_tokens_per_second": True},
             },
         ]
     }
@@ -895,7 +899,6 @@ def test_fetch_aa_benchmarks_v2_paginates_and_reads_performance_v3():
                     "name": "Model One",
                     "evaluations": {
                         "artificial_analysis_intelligence_index": 50.5,
-                        "artificial_analysis_coding_index": None,
                     },
                     "performance_v3": {"mean_output_tokens_per_second": 123.4},
                 }
@@ -910,7 +913,7 @@ def test_fetch_aa_benchmarks_v2_paginates_and_reads_performance_v3():
                     "slug": "model-two",
                     "name": "Model Two",
                     "evaluations": {"artificial_analysis_intelligence_index": 60.0},
-                    "performance": {"median_output_tokens_per_second": 55.5},
+                    "performance_v3": {"mean_output_tokens_per_second": 55.5},
                 }
             ],
         },
@@ -930,6 +933,14 @@ def test_fetch_aa_benchmarks_v2_paginates_and_reads_performance_v3():
     assert bench["model-two"] == {"iq": 60.0, "coding": None, "tps": 55.5}
 
 
+def test_fetch_aa_benchmarks_rejects_non_object_payload():
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[])))
+    errors: list[str] = []
+
+    assert fetch_aa_benchmarks("k", client=client, errors=errors) == {}
+    assert errors == ["Artificial Analysis fetch failed (ValueError)"]
+
+
 def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "API key is required"})
@@ -947,7 +958,7 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
     # AA returns multiple effort rows per model family; canonical/flagship (Max) must not be
     # overwritten by later Low/High/Non-reasoning variants that normalize to the same name.
     # Also covers creator-prefixed slugs (vendor-model-e -> model-e), edition suffixes
-    # (-next -> base), engineering_index fallback for coding, and canonical_id lookup.
+    # (-next -> base), engineering_index for coding, and canonical_id lookup.
     items = [
         {
             "slug": "acme-model-a-1017",
@@ -955,7 +966,6 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
             "model_creator": {"name": "Acme"},
             "evaluations": {
                 "artificial_analysis_intelligence_index": 32.6,
-                "artificial_analysis_coding_index": None,
                 "artificial_analysis_engineering_index": 37.6,
             },
             "performance_v3": {"mean_output_tokens_per_second": 174.35},
@@ -1040,8 +1050,9 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
             "evaluations": {"artificial_analysis_intelligence_index": 40.0},
         },
     ]
-    # Pass a top-level list to exercise the list-response branch as well.
-    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=items)))
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": items}))
+    )
     bench = fetch_aa_benchmarks("k", client=client)
 
     models = [
