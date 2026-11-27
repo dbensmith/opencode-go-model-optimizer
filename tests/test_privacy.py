@@ -151,6 +151,14 @@ def test_passes_privacy_training_controls():
     assert passes_privacy(free_train, SelectionCriteria(allow_free_training=True))
 
 
+def test_privacy_reason_reports_non_training_failure():
+    from opencode_go_model_optimizer.engine.criteria import privacy_reason
+
+    m = _m("free", Privacy(trains_on_data=True, zdr=False))
+    c = SelectionCriteria(allow_free_training=True, require_zdr=True)
+    assert privacy_reason(m, c) == "excluded by privacy criteria"
+
+
 def test_free_tier_privacy_defaults():
     glob = _m("glob", Privacy(requires_global_region=True))
     local = _m("local", Privacy())
