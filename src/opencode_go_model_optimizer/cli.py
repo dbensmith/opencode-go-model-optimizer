@@ -4,6 +4,7 @@ import argparse
 import math
 import os
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -14,6 +15,7 @@ from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passe
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.engine.tiers import (
     STANDARD_TIERS,
+    TierSelection,
     rank_catalog,
     resolve_mode,
     select_tiers,
@@ -62,32 +64,50 @@ exit codes:
 """
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Normalize a naive or timezone-aware datetime to UTC."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def _parse_csv_numbers(
+    value: str,
+    count: int,
+    converter: Callable[[str], Any],
+    error_msg: str,
+    *,
+    non_negative: bool = False,
+) -> tuple[Any, ...]:
+    """Parse a fixed-length comma-separated numeric argument."""
+    try:
+        parts = tuple(converter(part) for part in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(error_msg) from exc
+    if len(parts) != count or (non_negative and any(part < 0 for part in parts)):
+        raise argparse.ArgumentTypeError(error_msg)
+    return parts
+
+
 def _parse_token_mix(value: str) -> tuple[int, int, int]:
     """Parse an IN,CACHE,OUT token mix argument."""
-    try:
-        parts = [int(part) for part in value.split(",")]
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "--tokens must be three comma-separated integers: IN,CACHE,OUT"
-        ) from exc
-    if len(parts) != 3 or any(part < 0 for part in parts):
-        raise argparse.ArgumentTypeError(
-            "--tokens must be three non-negative comma-separated integers: IN,CACHE,OUT"
-        )
-    return (parts[0], parts[1], parts[2])
+    a, b, c = _parse_csv_numbers(
+        value,
+        3,
+        int,
+        "--tokens must be three non-negative comma-separated integers: IN,CACHE,OUT",
+        non_negative=True,
+    )
+    return (a, b, c)
 
 
 def _parse_weights(value: str) -> tuple[float, float]:
     """Parse an IQ,CODING benchmark weight argument."""
-    try:
-        parts = [float(part) for part in value.split(",")]
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "--weights must be two comma-separated numbers: IQ,CODING"
-        ) from exc
-    if len(parts) != 2:
-        raise argparse.ArgumentTypeError("--weights must be two comma-separated numbers: IQ,CODING")
-    return (parts[0], parts[1])
+    a, b = _parse_csv_numbers(
+        value,
+        2,
+        float,
+        "--weights must be two comma-separated numbers: IQ,CODING",
+    )
+    return (a, b)
 
 
 def _env_cache_ttl() -> int:
@@ -111,18 +131,24 @@ def _cache_ttl(args: argparse.Namespace) -> int:
     return _env_cache_ttl() if args.cache_ttl is None else args.cache_ttl
 
 
+def _split_prefer_item(value: str) -> tuple[str, str, bool]:
+    """Split a TIER=MODEL_ID string into (tier, model_id, has_separator)."""
+    tier, sep, model_id = value.partition("=")
+    return tier.strip(), model_id.strip(), bool(sep)
+
+
 def _prefer_arg(value: str) -> str:
     """Validate a TIER=MODEL_ID --prefer argument."""
-    tier, sep, model_id = value.partition("=")
-    if not sep:
+    tier, model_id, has_sep = _split_prefer_item(value)
+    if not has_sep:
         raise argparse.ArgumentTypeError(
             f"--prefer must be TIER=MODEL_ID (e.g. heavy=zeta-pro), got {value!r}"
         )
-    if tier.strip() not in _TIERS:
+    if tier not in _TIERS:
         raise argparse.ArgumentTypeError(
-            f"--prefer unknown tier {tier.strip()!r}; choose from {', '.join(_TIERS)}"
+            f"--prefer unknown tier {tier!r}; choose from {', '.join(_TIERS)}"
         )
-    if not model_id.strip():
+    if not model_id:
         raise argparse.ArgumentTypeError(f"--prefer is missing a model id in {value!r}")
     return value
 
@@ -133,189 +159,156 @@ def _parse_at(value: str) -> datetime:
         dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"--at must be an ISO 8601 time, got {value!r}") from exc
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+    return _ensure_utc(dt)
 
 
-def _parent(*specs: tuple[tuple[str, ...], dict[str, Any]]) -> argparse.ArgumentParser:
-    """Build a help-less parent parser from (flags, kwargs) argument specs."""
-    parent = argparse.ArgumentParser(add_help=False)
-    for flags, kwargs in specs:
-        parent.add_argument(*flags, **kwargs)
-    return parent
+def _build_parent_parsers() -> tuple[
+    argparse.ArgumentParser,
+    argparse.ArgumentParser,
+    argparse.ArgumentParser,
+    argparse.ArgumentParser,
+]:
+    """Build shared help-less parent parsers for CLI subcommands."""
+    plan = argparse.ArgumentParser(add_help=False)
+    plan.add_argument(
+        "--plan",
+        choices=list(PLANS),
+        default="go",
+        help="OpenCode plan tier (default: go)",
+    )
 
+    # Shared by select, rank, and diff.
+    ranking = argparse.ArgumentParser(add_help=False)
+    ranking.add_argument(
+        "--mode",
+        choices=["auto", "pareto", "allowance"],
+        default="auto",
+        help="Ranking mode (default: auto)",
+    )
+    ranking.add_argument(
+        "--profile",
+        choices=["general", "coding", "reasoning", "fast"],
+        default="general",
+        help="Workload profile for token mix and benchmark weighting (default: general)",
+    )
+    ranking.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=None,
+        help="Cache TTL in seconds for live snapshot fetches (default: 0)",
+    )
+    ranking.add_argument("-o", "--output", help="Output file path (default: stdout)")
 
-_PLAN_PARENT = _parent(
-    (
-        ("--plan",),
-        {
-            "choices": list(PLANS),
-            "default": "go",
-            "help": "OpenCode plan tier (default: go)",
-        },
-    ),
-)
+    # Shared by select and rank.
+    price = argparse.ArgumentParser(add_help=False)
+    price.add_argument(
+        "--price-basis",
+        choices=["now", "blended", "worst", "list"],
+        default="blended",
+        help=(
+            "Price multiplier basis: now (at --at), blended (7-day time-weighted average), "
+            "worst (7-day maximum), list (ignore multipliers) (default: blended)"
+        ),
+    )
+    price.add_argument(
+        "--at",
+        type=_parse_at,
+        default=None,
+        help="Reference ISO 8601 time for multipliers (UTC if no timezone; default: now)",
+    )
 
-# Shared by select, rank, and diff.
-_RANKING_PARENT = _parent(
-    (
-        ("--mode",),
-        {
-            "choices": ["auto", "pareto", "allowance"],
-            "default": "auto",
-            "help": "Ranking mode (default: auto)",
-        },
-    ),
-    (
-        ("--profile",),
-        {
-            "choices": ["general", "coding", "reasoning", "fast"],
-            "default": "general",
-            "help": "Workload profile for token mix and benchmark weighting (default: general)",
-        },
-    ),
-    (
-        ("--cache-ttl",),
-        {
-            "type": int,
-            "default": None,
-            "help": "Cache TTL in seconds for live snapshot fetches (default: 0)",
-        },
-    ),
-    (("-o", "--output"), {"help": "Output file path (default: stdout)"}),
-)
+    # Shared by select and rank.
+    filt = argparse.ArgumentParser(add_help=False)
+    filt.add_argument("--snapshot", help="Path to offline snapshot JSON file")
+    filt.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="Model ID to exclude (can be specified multiple times)",
+    )
+    filt.add_argument(
+        "--min-context",
+        type=int,
+        default=0,
+        help="Minimum context window in tokens (default: 0)",
+    )
+    filt.add_argument(
+        "--min-output",
+        type=int,
+        default=0,
+        help="Minimum output token limit (default: 0)",
+    )
+    filt.add_argument(
+        "--max-output-cost",
+        type=float,
+        default=None,
+        help="Maximum output token cost in USD per 1M tokens",
+    )
+    filt.add_argument(
+        "--max-burn",
+        type=float,
+        default=None,
+        help="Maximum monthly quota burn percentage per 1,000 turns",
+    )
+    filt.add_argument(
+        "--tokens",
+        type=_parse_token_mix,
+        default=None,
+        help="Custom turn token mix as IN,CACHE,OUT (e.g. --tokens 2000,120000,1000)",
+    )
+    filt.add_argument(
+        "--burn-basis",
+        choices=["auto", "tokens", "estimate"],
+        default="auto",
+        help=(
+            "Quota burn basis: tokens (synthetic token mix x price), estimate (computed "
+            "requests per plan, scaled by price multipliers), auto (estimate unless "
+            "--tokens or a non-general --profile is given) (default: auto)"
+        ),
+    )
+    filt.add_argument(
+        "--weights",
+        type=_parse_weights,
+        default=None,
+        help="Custom benchmark weights as IQ,CODING (e.g. --weights 0.5,0.5)",
+    )
+    filt.add_argument(
+        "--allow-global-region",
+        action="store_true",
+        help="Allow models that require Global regions in workspace privacy settings "
+        "(blocked by default)",
+    )
+    filt.add_argument(
+        "--allow-paid-training",
+        action="store_true",
+        help="Allow paid endpoints that train on request data (blocked by default)",
+    )
+    filt.add_argument(
+        "--allow-free-training",
+        action="store_true",
+        help="Allow free endpoints that train on request data (blocked by default; "
+        "turning this off disables those free models)",
+    )
+    filt.add_argument(
+        "--max-retention-days",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Exclude models retaining data longer than N days (unknown retention fails)",
+    )
+    filt.add_argument(
+        "--require-zdr",
+        action="store_true",
+        help="Only allow zero-data-retention models (unknown fails)",
+    )
 
-# Shared by select and rank.
-_PRICE_PARENT = _parent(
-    (
-        ("--price-basis",),
-        {
-            "choices": ["now", "blended", "worst", "list"],
-            "default": "blended",
-            "help": (
-                "Price multiplier basis: now (at --at), blended (7-day time-weighted average), "
-                "worst (7-day maximum), list (ignore multipliers) (default: blended)"
-            ),
-        },
-    ),
-    (
-        ("--at",),
-        {
-            "type": _parse_at,
-            "default": None,
-            "help": "Reference ISO 8601 time for multipliers (UTC if no timezone; default: now)",
-        },
-    ),
-)
-
-# Shared by select and rank.
-_FILTER_PARENT = _parent(
-    (("--snapshot",), {"help": "Path to offline snapshot JSON file"}),
-    (
-        ("--skip",),
-        {
-            "action": "append",
-            "default": [],
-            "help": "Model ID to exclude (can be specified multiple times)",
-        },
-    ),
-    (
-        ("--min-context",),
-        {"type": int, "default": 0, "help": "Minimum context window in tokens (default: 0)"},
-    ),
-    (
-        ("--min-output",),
-        {"type": int, "default": 0, "help": "Minimum output token limit (default: 0)"},
-    ),
-    (
-        ("--max-output-cost",),
-        {
-            "type": float,
-            "default": None,
-            "help": "Maximum output token cost in USD per 1M tokens",
-        },
-    ),
-    (
-        ("--max-burn",),
-        {
-            "type": float,
-            "default": None,
-            "help": "Maximum monthly quota burn percentage per 1,000 turns",
-        },
-    ),
-    (
-        ("--tokens",),
-        {
-            "type": _parse_token_mix,
-            "default": None,
-            "help": "Custom turn token mix as IN,CACHE,OUT (e.g. --tokens 2000,120000,1000)",
-        },
-    ),
-    (
-        ("--burn-basis",),
-        {
-            "choices": ["auto", "tokens", "estimate"],
-            "default": "auto",
-            "help": (
-                "Quota burn basis: tokens (synthetic token mix x price), estimate (computed "
-                "requests per plan, scaled by price multipliers), auto (estimate unless "
-                "--tokens or a non-general --profile is given) (default: auto)"
-            ),
-        },
-    ),
-    (
-        ("--weights",),
-        {
-            "type": _parse_weights,
-            "default": None,
-            "help": "Custom benchmark weights as IQ,CODING (e.g. --weights 0.5,0.5)",
-        },
-    ),
-    (
-        ("--allow-global-region",),
-        {
-            "action": "store_true",
-            "help": "Allow models that require Global regions in workspace privacy settings "
-            "(blocked by default)",
-        },
-    ),
-    (
-        ("--allow-paid-training",),
-        {
-            "action": "store_true",
-            "help": "Allow paid endpoints that train on request data (blocked by default)",
-        },
-    ),
-    (
-        ("--allow-free-training",),
-        {
-            "action": "store_true",
-            "help": "Allow free endpoints that train on request data (blocked by default; "
-            "turning this off disables those free models)",
-        },
-    ),
-    (
-        ("--max-retention-days",),
-        {
-            "type": int,
-            "metavar": "N",
-            "default": None,
-            "help": "Exclude models retaining data longer than N days (unknown retention fails)",
-        },
-    ),
-    (
-        ("--require-zdr",),
-        {
-            "action": "store_true",
-            "help": "Only allow zero-data-retention models (unknown fails)",
-        },
-    ),
-)
+    return plan, ranking, price, filt
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        prog="opencode-go-model-optimizer",
+        prog=_PROG,
         description="Dynamic model tiering and Pareto efficiency optimizer for OpenCode Go",
         epilog=_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -323,10 +316,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--version", action="version", version=f"{_PROG} {package_version()}")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    plan_parent, ranking_parent, price_parent, filter_parent = _build_parent_parsers()
+
     select_parser = subparsers.add_parser(
         "select",
         help="Select optimal models across capability tiers",
-        parents=[_PLAN_PARENT, _RANKING_PARENT, _PRICE_PARENT, _FILTER_PARENT],
+        parents=[plan_parent, ranking_parent, price_parent, filter_parent],
     )
     select_parser.add_argument(
         "--format",
@@ -361,7 +356,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rank_parser = subparsers.add_parser(
         "rank",
         help="Rank all active models in the catalog",
-        parents=[_PLAN_PARENT, _RANKING_PARENT, _PRICE_PARENT, _FILTER_PARENT],
+        parents=[plan_parent, ranking_parent, price_parent, filter_parent],
     )
     rank_parser.add_argument(
         "--format",
@@ -373,7 +368,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     diff_parser = subparsers.add_parser(
         "diff",
         help="Diff catalog, pricing, and tier assignments between snapshots",
-        parents=[_PLAN_PARENT, _RANKING_PARENT],
+        parents=[plan_parent, ranking_parent],
     )
     diff_parser.add_argument(
         "--old",
@@ -399,7 +394,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     fetch_parser = subparsers.add_parser(
-        "fetch", help="Fetch and save snapshot data", parents=[_PLAN_PARENT]
+        "fetch", help="Fetch and save snapshot data", parents=[plan_parent]
     )
     fetch_parser.add_argument(
         "--out",
@@ -456,14 +451,12 @@ class SnapshotUnavailableError(ValueError):
 
 
 def _age(fetched_at: str) -> str:
-    """Human-readable age of an ISO timestamp (e.g. '3d 4h'), or 'unknown age'."""
+    """Human-readable age of an ISO timestamp (e.g. '3d 4h'), or 'unknown'."""
     try:
-        then = datetime.fromisoformat(fetched_at)
+        then = _ensure_utc(datetime.fromisoformat(fetched_at))
     except ValueError:
         return "unknown"
-    seconds = int(
-        (datetime.now(UTC) - (then if then.tzinfo else then.replace(tzinfo=UTC))).total_seconds()
-    )
+    seconds = int((datetime.now(UTC) - then).total_seconds())
     days, rest = divmod(max(seconds, 0), 86400)
     hours, rest = divmod(rest, 3600)
     return f"{days}d {hours}h" if days else f"{hours}h {rest // 60}m"
@@ -478,10 +471,8 @@ def _load_or_fetch_snapshot(
     if snapshot_path:
         return LoadedSnapshot(load_snapshot(snapshot_path), "file")
 
-    if cache_ttl > 0:
-        cached = load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)
-        if cached:
-            return LoadedSnapshot(cached, "cache")
+    if cache_ttl > 0 and (cached := load_cached_snapshot(plan=plan, ttl_seconds=cache_ttl)):
+        return LoadedSnapshot(cached, "cache")
 
     try:
         snap = fetch_and_build_snapshot(plan=plan)
@@ -527,15 +518,10 @@ def _write_output(content: str, out_path: str | None = None) -> None:
 def _parse_preferred_tiers(prefer_list: list[str] | None) -> dict[str, str]:
     """Parse --prefer key=value arguments into a dictionary."""
     preferred: dict[str, str] = {}
-    if not prefer_list:
-        return preferred
-    for item in prefer_list:
-        if "=" in item:
-            tier, model_id = item.split("=", 1)
-            tier = tier.strip()
-            model_id = model_id.strip()
-            if tier and model_id:
-                preferred[tier] = model_id
+    for item in prefer_list or ():
+        tier, model_id, has_sep = _split_prefer_item(item)
+        if has_sep and tier and model_id:
+            preferred[tier] = model_id
     return preferred
 
 
@@ -564,16 +550,14 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
     )
 
 
-def handle_select(args: argparse.Namespace) -> int:
-    """Handle the 'select' command."""
-    loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
-    snap = loaded.snapshot
-    plan = _effective_plan(snap.plan, args.plan, snap.models)
-    models = apply_plan(snap.models, plan)
-    mode = resolve_mode(args.mode, models)
-
-    criteria = _criteria_from_args(args, mode)
-    selection = select_tiers(models, criteria)
+def _warn_unmatched_preferred(
+    models: list[NormalizedModel],
+    selection: TierSelection,
+    criteria: SelectionCriteria,
+) -> None:
+    """Emit stderr warnings for --prefer overrides that did not match an eligible model."""
+    if not criteria.preferred_tiers:
+        return
     candidate_ids = {
         ref for m in selection.models if m.status == "active" for ref in (m.id, m.full_id)
     }
@@ -588,21 +572,30 @@ def handle_select(args: argparse.Namespace) -> int:
                 f"{reason}; ignoring",
                 file=sys.stderr,
             )
-    profile = criteria.profile
-    explain = args.explain
 
+
+def _format_select_output(
+    fmt: str,
+    loaded: LoadedSnapshot,
+    selection: TierSelection,
+    criteria: SelectionCriteria,
+    plan: str,
+    mode: str,
+    explain: bool,
+) -> str:
+    """Format tier selection results according to --format."""
     tiers = selection.primary
     fallbacks = selection.candidates if criteria.top_n > 1 else None
     names = tier_display_names(tiers, selection.models)
+    snap = loaded.snapshot
 
-    if args.format == "json":
-        explanations = explain_tiers(tiers, selection.models, criteria) if explain else None
-        out = format_select_json(
+    formatters: dict[str, Callable[[], str]] = {
+        "json": lambda: format_select_json(
             tiers,
             mode=mode,
             plan=plan,
-            explanations=explanations,
-            profile=profile,
+            explanations=explain_tiers(tiers, selection.models, criteria) if explain else None,
+            profile=criteria.profile,
             fallbacks=fallbacks,
             names=names,
             snapshot_info={
@@ -611,20 +604,43 @@ def handle_select(args: argparse.Namespace) -> int:
                 "benchmark_source": snap.metadata.benchmark_source,
             },
             settings=settings_payload(criteria),
-        )
-    elif args.format == "table":
-        out = format_select_table(
+        ),
+        "table": lambda: format_select_table(
             tiers, selection.models, plan=plan, explain=explain, criteria=criteria
-        )
-    elif args.format == "env":
-        out = format_select_env(tiers, fallbacks=fallbacks, names=names)
-    elif args.format == "github-output":
-        out = format_select_github_output(tiers, fallbacks=fallbacks, names=names)
-    else:
-        out = format_select_compact(tiers, names=names)
+        ),
+        "env": lambda: format_select_env(tiers, fallbacks=fallbacks, names=names),
+        "github-output": lambda: format_select_github_output(
+            tiers, fallbacks=fallbacks, names=names
+        ),
+        "compact": lambda: format_select_compact(tiers, names=names),
+    }
+    return formatters[fmt]()
 
+
+def handle_select(args: argparse.Namespace) -> int:
+    """Handle the 'select' command."""
+    loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    snap = loaded.snapshot
+    plan = _effective_plan(snap.plan, args.plan, snap.models)
+    models = apply_plan(snap.models, plan)
+    mode = resolve_mode(args.mode, models)
+
+    criteria = _criteria_from_args(args, mode)
+    selection = select_tiers(models, criteria)
+    _warn_unmatched_preferred(models, selection, criteria)
+
+    out = _format_select_output(
+        args.format,
+        loaded=loaded,
+        selection=selection,
+        criteria=criteria,
+        plan=plan,
+        mode=mode,
+        explain=args.explain,
+    )
     _write_output(out, args.output)
-    empty = [t for t in _TIERS if not tiers.get(t)]
+
+    empty = [t for t in _TIERS if not selection.primary.get(t)]
     if args.strict and empty:
         print(
             f"{_PROG}: error: no model available for tier(s): {', '.join(empty)}",
@@ -638,14 +654,10 @@ def handle_rank(args: argparse.Namespace) -> int:
     """Handle the 'rank' command."""
     models, _ = _load_or_fetch_models(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
     mode = resolve_mode(args.mode, models)
-
     ranked = rank_catalog(models, _criteria_from_args(args, mode))
-
-    if args.format == "json":
-        out = format_rank_json(ranked)
-    else:
-        out = format_rank_table(ranked, mode=mode)
-
+    out = (
+        format_rank_json(ranked) if args.format == "json" else format_rank_table(ranked, mode=mode)
+    )
     _write_output(out, args.output)
     return 0
 
@@ -653,9 +665,7 @@ def handle_rank(args: argparse.Namespace) -> int:
 def handle_diff(args: argparse.Namespace) -> int:
     """Handle the 'diff' command."""
     target_plan = args.plan
-
     old_snap = load_snapshot(args.old)
-
     new_snap = _load_or_fetch_snapshot(
         args.new, plan=target_plan, cache_ttl=_cache_ttl(args)
     ).snapshot
@@ -666,12 +676,9 @@ def handle_diff(args: argparse.Namespace) -> int:
         plan=target_plan,
         profile=args.profile,
     )
-
     out = format_diff_json(diff) if args.format == "json" else format_diff_table(diff)
     _write_output(out, args.output)
-    if args.fail_on_change and diff.has_changes():
-        return 2
-    return 0
+    return 2 if args.fail_on_change and diff.has_changes() else 0
 
 
 def handle_fetch(args: argparse.Namespace) -> int:
@@ -681,7 +688,7 @@ def handle_fetch(args: argparse.Namespace) -> int:
     _print_snapshot_warnings(snap)
     save_snapshot(snap, args.out)
     print(
-        f"opencode-go-model-optimizer: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",
+        f"{_PROG}: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",
         file=sys.stderr,
     )
     return 0
@@ -702,20 +709,22 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     args = parse_args(argv)
     if not args.command:
-        print("opencode-go-model-optimizer: use --help for usage information", file=sys.stderr)
+        print(f"{_PROG}: use --help for usage information", file=sys.stderr)
+        return 0
+
+    handlers: dict[str, Callable[[argparse.Namespace], int]] = {
+        "select": handle_select,
+        "rank": handle_rank,
+        "diff": handle_diff,
+        "fetch": handle_fetch,
+        "report": handle_report,
+    }
+    handler = handlers.get(args.command)
+    if handler is None:
         return 0
 
     try:
-        if args.command == "select":
-            return handle_select(args)
-        if args.command == "rank":
-            return handle_rank(args)
-        if args.command == "diff":
-            return handle_diff(args)
-        if args.command == "fetch":
-            return handle_fetch(args)
-        if args.command == "report":
-            return handle_report(args)
+        return handler(args)
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, httpx.HTTPError) as exc:
@@ -723,8 +732,6 @@ def main(argv: list[str] | None = None) -> int:
         message = " ".join(f"{type(exc).__name__}: {exc}".split())
         print(f"{_PROG}: error: {message}", file=sys.stderr)
         return 1
-
-    return 0
 
 
 if __name__ == "__main__":
