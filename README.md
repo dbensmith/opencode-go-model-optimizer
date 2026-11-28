@@ -503,6 +503,8 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 
 ## Development
 
+Project goals, requirements, and constraints are tracked in [`.planning/PROJECT.md`](.planning/PROJECT.md) as the living source of truth.
+
 Requires Python 3.15+ (see `.python-version`; `uv` will fetch it automatically).
 
 ```bash
