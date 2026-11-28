@@ -147,12 +147,6 @@ def _model_aa_lookup_keys(m: NormalizedModel) -> list[str]:
         if nk and nk not in seen:
             seen.add(nk)
             keys.append(nk)
-    # Raw IDs are a last-resort exact match for synthetic fixtures and older snapshots;
-    # they never shadow the release-specific normalized keys above.
-    for raw in (m.id, m.name):
-        if raw and raw not in seen:
-            seen.add(raw)
-            keys.append(raw)
     return keys
 
 

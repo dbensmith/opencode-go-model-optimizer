@@ -104,7 +104,7 @@ def _build(env, aa_return, models=None):
 
 
 def test_benchmark_source_live_and_none():
-    aa = {"beta-flash": {"iq": 60.0, "coding": 55.0, "tps": 100.0}}
+    aa = {"betaflash": {"iq": 60.0, "coding": 55.0, "tps": 100.0}}
     snap = _build({"AA_API_KEY": "k"}, aa)
     assert snap.metadata.benchmark_source == "aa_live"
     assert snap.warnings == []
