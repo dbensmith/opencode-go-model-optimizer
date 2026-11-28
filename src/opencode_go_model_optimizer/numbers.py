@@ -58,17 +58,14 @@ def serialize_inf_float(value: float | None) -> float | str | None:
     return value
 
 
-def json_allowance(value: float | None, *, compact: bool = False) -> float | int | str | None:
-    """Serialize an allowance, optionally normalizing finite report values."""
-    serialized = serialize_inf_float(value)
-    if compact and isinstance(serialized, float):
-        return int(serialized) if serialized.is_integer() else round(serialized, 6)
-    return serialized
+def json_allowance(value: float | None) -> float | int | str | None:
+    """Serialize an allowance, normalizing infinity for JSON compliance."""
+    return serialize_inf_float(value)
 
 
-def json_multiplier(value: float | None, default: float | int | None = None) -> float | int | None:
-    """Round an effective price multiplier for JSON, with an optional default."""
-    return round(value, 4) if value is not None else default
+def json_multiplier(value: float | None) -> float | int | None:
+    """Round an effective price multiplier for JSON."""
+    return round(value, 4) if value is not None else None
 
 
 def json_count(value: float) -> float | int | str:

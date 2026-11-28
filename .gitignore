@@ -22,7 +22,5 @@ build/
 !.env.example
 snapshot.json
 
-# Report and test outputs
+# Generated outputs
 out/
-offline.xml
-live.xml

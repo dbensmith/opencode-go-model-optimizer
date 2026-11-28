@@ -82,6 +82,26 @@ def test_format_select_json():
     assert data3["explanations"] == expl
 
 
+def test_format_select_json_excluded_is_additive():
+    tiers = {"heavy": "opencode-go/alpha"}
+    excluded = [
+        {
+            "model_id": "opencode-go/global",
+            "reasons": ["requires Global workspace region (enable --allow-global-region)"],
+        }
+    ]
+    data = json.loads(
+        format_select_json(
+            tiers,
+            mode="allowance",
+            explanations={"heavy": {"model_id": tiers["heavy"]}},
+            excluded=excluded,
+        )
+    )
+    assert data["excluded"] == excluded
+    assert "excluded" not in json.loads(format_select_json(tiers, mode="allowance"))
+
+
 def test_tier_display_names():
     named = make_model("alpha", name="Alpha Max")
     unnamed = make_model("beta")

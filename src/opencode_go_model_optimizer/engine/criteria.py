@@ -53,6 +53,11 @@ def _is_free_candidate(m: NormalizedModel) -> bool:
     )
 
 
+def has_benchmark_data(m: NormalizedModel) -> bool:
+    """Return whether a model has Artificial Analysis benchmark data."""
+    return m.aa_iq is not None or m.aa_coding is not None
+
+
 def catalogue_eligibility_reason(m: NormalizedModel, *, require_chat: bool) -> str | None:
     """Return the first status, model-type, or incomplete-catalogue exclusion reason."""
     if m.status != "active":
@@ -118,8 +123,10 @@ def is_eligible_paid(m: NormalizedModel) -> bool:
     return _paid_eligibility_reason(m) is None
 
 
-def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
-    """Why a model cannot take a paid or free tier slot (empty when it is eligible)."""
+def exclusion_reasons(
+    m: NormalizedModel, c: SelectionCriteria, *, method: str = "allowance"
+) -> list[str]:
+    """Why a model cannot take a paid or free tier slot under the actual method."""
     reason = catalogue_eligibility_reason(m, require_chat=True)
     if reason is not None:
         return [reason]
@@ -128,5 +135,11 @@ def exclusion_reasons(m: NormalizedModel, c: SelectionCriteria) -> list[str]:
         return [reason]
     if is_eligible_free(m):
         return []
+    if method == "pareto":
+        return (
+            []
+            if has_benchmark_data(m)
+            else ["no Artificial Analysis benchmark for Pareto paid tiers"]
+        )
     reason = _paid_eligibility_reason(m)
     return [reason] if reason is not None else []

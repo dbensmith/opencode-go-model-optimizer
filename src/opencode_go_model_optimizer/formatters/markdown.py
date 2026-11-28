@@ -24,40 +24,27 @@ def sanitize_mermaid_id(raw: str, prefix: str = "") -> str:
     return prefix + re.sub(r"[^a-zA-Z0-9_]", "_", str(raw))
 
 
-def format_allowance_value(
-    val: Any,
-    *,
-    compact: bool = False,
-    unlimited_label: str = "Unlimited",
-) -> str:
+def format_allowance_value(val: Any) -> str:
     """Format a monthly allowance value for Markdown tables and diagrams."""
     if val is None:
         return "-"
     if val == "unlimited":
-        return unlimited_label
+        return "Unlimited"
     if is_number(val):
         if math.isinf(val):
-            return unlimited_label
+            return "Unlimited"
         if math.isnan(val):
             return str(val)
-        return f"${val:g}" if compact else f"${val:.2f}"
+        return f"${val:.2f}"
     return str(val)
 
 
-def format_cost_value(
-    val: Any,
-    *,
-    compact: bool = False,
-    suffix: str = "/1M",
-    zero_is_free: bool = True,
-) -> str:
+def format_cost_value(val: Any, *, zero_is_free: bool = True) -> str:
     """Format an output token cost value for Markdown tables."""
     if val is None:
         return "-"
     if is_number(val):
-        if compact:
-            return f"${val:g}"
-        return "Free" if zero_is_free and val == 0 else f"${val:.2f}{suffix}"
+        return "Free" if zero_is_free and val == 0 else f"${val:.2f}/1M"
     return str(val)
 
 
@@ -124,13 +111,6 @@ def format_privacy(privacy: dict[str, Any] | None) -> str:
     if privacy.get("note"):
         parts.append(str(privacy["note"]))
     return "; ".join(parts)
-
-
-def round_chart_num(val: Any) -> float | int:
-    """Return a finite chart number rounded to four decimal places, or zero."""
-    if is_number(val) and not math.isinf(val) and not math.isnan(val):
-        return int(val) if float(val).is_integer() else round(float(val), 4)
-    return 0
 
 
 def render_markdown_table(

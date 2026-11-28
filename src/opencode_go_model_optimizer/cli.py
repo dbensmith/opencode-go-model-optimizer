@@ -63,7 +63,6 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_cached_snapshot,
     save_snapshot,
 )
-from opencode_go_model_optimizer.report import build_report, write_report
 
 
 def _env_non_negative_int(env_var: str, default: int = 0) -> int:
@@ -369,6 +368,7 @@ def _format_select_output(
             mode=mode,
             plan=plan,
             explanations=explain_tiers(tiers, selection.models, criteria) if explain else None,
+            excluded=selection.excluded if explain else None,
             profile=criteria.profile,
             fallbacks=fallbacks,
             names=names,
@@ -538,17 +538,6 @@ def handle_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def handle_report(args: argparse.Namespace) -> int:
-    """Handle the 'report' command: fetch live (no cache) and publish results."""
-    report = build_report(junit_paths=args.tests_junit)
-    write_report(report, args.out_dir)
-    print(f"{_PROG}: wrote results.json and README.md to {args.out_dir}", file=sys.stderr)
-    if args.fail_on_warnings and report["warnings"]:
-        print(f"{_PROG}: error: report contains warnings", file=sys.stderr)
-        return 2
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     args = parse_args(argv)
@@ -561,7 +550,6 @@ def main(argv: list[str] | None = None) -> int:
         "rank": handle_rank,
         "diff": handle_diff,
         "fetch": handle_fetch,
-        "report": handle_report,
     }
     handler = handlers.get(args.command)
     if handler is None:

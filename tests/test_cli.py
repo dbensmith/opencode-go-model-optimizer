@@ -160,6 +160,7 @@ def test_cli_select_json(tmp_path, capsys):
     assert data["names"]["light"] == "Beta Flash 1101"
     assert data["names"]["free"] == "Epsilon Free"
     assert data["mode"] == "allowance"
+    assert "excluded" not in data
 
 
 def test_cli_select_table(tmp_path, capsys):
@@ -342,6 +343,24 @@ def test_cli_select_profile_and_explain(tmp_path, capsys):
     assert data["explanations"]["heavy"]["model_id"] == "opencode-go/alpha-max"
     assert data["explanations"]["heavy"]["name"] == "Alpha Max"
     assert "turn_cost_usd" in data["explanations"]["heavy"]
+    assert data["excluded"] == [
+        {
+            "model_id": "opencode-go/delta-contributor",
+            "reasons": ["free model trains on request data (enable --allow-free-training)"],
+        },
+        {
+            "model_id": "opencode-go/deprecated-old-model",
+            "reasons": ["status is 'deprecated' (not active)"],
+        },
+        {
+            "model_id": "opencode-go/kappa-free",
+            "reasons": ["requires Global workspace region (enable --allow-global-region)"],
+        },
+        {
+            "model_id": "opencode-go/lambda-contributor",
+            "reasons": ["paid model trains on request data (enable --allow-paid-training)"],
+        },
+    ]
 
     # --explain with table format
     rc = main(
@@ -1229,6 +1248,14 @@ def test_help_epilog_lists_exit_codes(capsys):
     out = capsys.readouterr().out
     assert "exit codes:" in out
     assert "130  interrupted" in out
+    assert "report" not in out
+
+
+def test_report_command_removed(capsys):
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["report"])
+    assert exc.value.code == 2
+    assert "invalid choice: 'report'" in capsys.readouterr().err
 
 
 def test_snapshot_source_tracking(tmp_path):

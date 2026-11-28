@@ -294,6 +294,18 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
                 "mode": "allowance",
                 "evaluated_at": "2026-11-15T16:00:00+00:00",
                 "tiers": {},
+                "excluded": [
+                    {
+                        "model_id": "opencode-go/global",
+                        "reasons": [
+                            "requires Global workspace region (enable --allow-global-region)"
+                        ],
+                    },
+                    {
+                        "model_id": "opencode-go/old",
+                        "reasons": ["status is 'deprecated' (not active)"],
+                    },
+                ],
             }
         ),
         encoding="utf-8",
@@ -318,6 +330,8 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
     md = out_path.read_text(encoding="utf-8")
     assert "All Data & Other Choices" in md
     assert "https://example.github.io/repo/" in md
+    assert "{{ISSUES_URL}}" not in md
+    assert "**Issue**" not in md
     assert "pareto/error.txt" in md
     assert "allowance/plans/go.json" in md
     assert "allowance/plans/go-plus.json" in md
@@ -326,6 +340,64 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
     assert "snapshot.json" in md
     assert "full-output.txt" in md
     assert "charts/pareto-frontier.svg" in md
+    assert "## Excluded models" in md
+    assert "Allowance selection for plan `go`." in md
+    assert (
+        "| `opencode-go/global` | requires Global workspace region "
+        "(enable --allow-global-region) |" in md
+    )
+    assert "| `opencode-go/old` | status is 'deprecated' (not active) |" in md
+
+
+def test_render_data_index_empty_exclusions():
+    md = _MOD.render_data_markdown(allowance_select_payload={"plan": "go", "excluded": []})
+    assert "## Excluded models" in md
+    assert "| None | All models are eligible |" in md
+
+
+def test_render_data_index_uses_allowance_exclusions(tmp_path: Path):
+    pareto_path = tmp_path / "pareto.json"
+    pareto_path.write_text(
+        json.dumps(
+            {
+                "plan": "go",
+                "mode": "pareto",
+                "tiers": {},
+                "excluded": [{"model_id": "pareto-only", "reasons": ["pareto reason"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    allowance_path = tmp_path / "allowance.json"
+    allowance_path.write_text(
+        json.dumps(
+            {
+                "plan": "go",
+                "mode": "allowance",
+                "tiers": {},
+                "excluded": [{"model_id": "allowance-only", "reasons": ["allowance reason"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_path = tmp_path / "data.md"
+
+    assert (
+        _MOD.main(
+            [
+                "--pareto-json",
+                str(pareto_path),
+                "--allowance-json",
+                str(allowance_path),
+                "--data-output",
+                str(data_path),
+            ]
+        )
+        == 0
+    )
+    md = data_path.read_text(encoding="utf-8")
+    assert "| `allowance-only` | allowance reason |" in md
+    assert "pareto-only" not in md
 
 
 def test_render_dual_allowance_issue_markdown_visuals() -> None:
@@ -761,7 +833,9 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
     assert res.returncode == 0
     assert "Latest Tier Selections" in issue_out.read_text(encoding="utf-8")
     assert "- **Top Frontier Quality**: `89.0`" in analysis_out.read_text(encoding="utf-8")
-    assert "All Data & Other Choices" in data_out.read_text(encoding="utf-8")
+    data_md = data_out.read_text(encoding="utf-8")
+    assert "All Data & Other Choices" in data_md
+    assert "## Excluded models" not in data_md
     assert (charts_dir / "pareto-frontier.svg").is_file()
 
 

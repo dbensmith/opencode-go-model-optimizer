@@ -326,10 +326,10 @@ def test_composite_action_and_hardening() -> None:
 
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
-    publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
     pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
 
-    for path in (ci_path, optimizer_path, publish_path, pr_ci_path):
+    assert not (_ROOT / ".github" / "workflows" / "publish-results.yml").exists()
+    for path in (ci_path, optimizer_path, pr_ci_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
         assert "./.github/actions/setup-env" in text
@@ -393,12 +393,11 @@ def test_no_hardcoded_personal_or_repo_identifiers() -> None:
 def test_no_interpolation_in_run_blocks_and_valid_multiline_indent() -> None:
     ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
     optimizer_path = _ROOT / ".github" / "workflows" / "run-optimizer.yml"
-    publish_path = _ROOT / ".github" / "workflows" / "publish-results.yml"
     pages_path = _ROOT / ".github" / "workflows" / "publish-pages.yml"
     action_path = _ROOT / ".github" / "actions" / "setup-env" / "action.yml"
     pr_ci_path = _ROOT / ".github" / "workflows" / "pr-ci.yml"
 
-    for path in (ci_path, optimizer_path, publish_path, pages_path, action_path, pr_ci_path):
+    for path in (ci_path, optimizer_path, pages_path, action_path, pr_ci_path):
         assert path.is_file()
         text = path.read_text(encoding="utf-8")
         run_indent: int | None = None
