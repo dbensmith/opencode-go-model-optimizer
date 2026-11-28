@@ -13,6 +13,8 @@ from opencode_go_model_optimizer.formatters.markdown import (
     format_cost_value,
     format_float,
     format_int,
+    format_multiplier,
+    format_pareto,
     format_privacy,
     is_number,
     render_markdown_table,
@@ -81,6 +83,53 @@ def _ordered_tiers(explanations: dict[str, Any], tiers: dict[str, Any]) -> list[
         if tier not in ordered:
             ordered.append(tier)
     return ordered
+
+
+def _render_select_json_table(
+    payload: dict[str, Any], *, include_aa: bool
+) -> tuple[list[str], bool]:
+    """Render a select JSON payload's tier choices, returning lines and AA metric presence."""
+    explanations = payload.get("explanations") or {}
+    tiers = payload.get("tiers") or {}
+    headers = ["Tier", "Model ID", "Allowance", "Output Cost", "Context"]
+    if include_aa:
+        headers.extend(["AA IQ", "AA Coding", "Speed (tok/s)", "BPE", "Pareto"])
+    headers.extend(["Burn %", "Turn Cost", "Price x"])
+
+    saw_aa = False
+    rows: list[list[str]] = []
+    for tier in _ordered_tiers(explanations, tiers):
+        ex = explanations.get(tier) or {}
+        model_id = _tier_pick_id(tier, explanations, tiers)
+        if any(ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps")):
+            saw_aa = True
+        turn_cost = ex.get("turn_cost_usd")
+        row = [
+            f"**{tier}**",
+            f"`{model_id}`",
+            format_allowance_value(ex.get("monthly_allowance")),
+            format_cost_value(ex.get("output_cost_per_1m")),
+            format_int(ex.get("context")),
+        ]
+        if include_aa:
+            row.extend(
+                [
+                    format_float(ex.get("aa_iq"), 1),
+                    format_float(ex.get("aa_coding"), 1),
+                    format_float(ex.get("speed_tps"), 1),
+                    format_float(ex.get("bpe"), 3),
+                    format_pareto(ex.get("is_pareto")),
+                ]
+            )
+        row.extend(
+            [
+                format_burn(ex.get("quota_burn_pct")),
+                f"${turn_cost:.4f}" if is_number(turn_cost) else "-",
+                format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change")),
+            ]
+        )
+        rows.append(row)
+    return render_markdown_table(headers, rows), saw_aa
 
 
 def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[str]:

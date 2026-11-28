@@ -22,7 +22,6 @@ from optimizer_issue import (  # noqa: E402
     render_dual_issue_markdown,
     render_dual_optimizer_output_comment,
     render_issue_markdown,
-    render_optimizer_output_comment,
 )
 from optimizer_issue.common import _load_rank_models  # noqa: E402
 
@@ -36,7 +35,6 @@ __all__ = [
     "render_dual_issue_markdown",
     "render_dual_optimizer_output_comment",
     "render_issue_markdown",
-    "render_optimizer_output_comment",
 ]
 
 _OPTIONAL_FLAGS: tuple[tuple[str, str], ...] = (
@@ -50,17 +48,11 @@ _OPTIONAL_FLAGS: tuple[tuple[str, str], ...] = (
     ("--script-output", "Optional path to full script output (stdout/stderr)"),
     ("--run-url", "Optional GitHub Actions run URL"),
     ("--ci-dir", "Optional path to CI logs directory (out/ci)"),
-    (
-        "--optimizer-output",
-        "Path to the actual optimizer output (stdout plus stderr) to post as a PR comment",
-    ),
-    ("--pareto-output", "Path to Pareto table output (stdout plus stderr) for PR comment"),
-    ("--allowance-output", "Path to Allowance table output (stdout plus stderr) for PR comment"),
+    ("--pareto-stderr", "Path to Pareto stderr for the dual PR comment"),
+    ("--allowance-stderr", "Path to Allowance stderr for the dual PR comment"),
     ("--pareto-status", "Pareto exit status for dual PR comment"),
     ("--allowance-status", "Allowance exit status for dual PR comment"),
     ("--fetch-log", "Optional path to fetch.log for dual PR comment"),
-    ("--command", "Command line shown in the optimizer output comment header"),
-    ("--status", "Optimizer exit status shown in the optimizer output comment header"),
     ("--sha", "Optional commit SHA for CI report"),
     ("--rank-json", "Optional path to rank --format json file"),
     ("--free-matrix-json", "Optional path to free matrix JSON list file"),
@@ -84,7 +76,7 @@ def _write_text(path: str | Path, content: str) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render GitHub-pretty markdown from optimizer JSON and script output, "
-        "CI results, or the raw optimizer output."
+        "CI results, or the dual optimizer PR comment."
     )
     for flag, help_text in _OPTIONAL_FLAGS:
         parser.add_argument(flag, default=None, help=help_text)
@@ -133,7 +125,7 @@ def _load_plan_payloads(items: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def _load_optional_json(path: str | None) -> Any:
-    if path and Path(path).is_file():
+    if path and (json_path := Path(path)).is_file() and json_path.stat().st_size:
         return _load_json(path)
     return None
 
@@ -151,27 +143,23 @@ def _render_primary_markdown(
             None,
         )
 
-    if args.pareto_output or args.allowance_output:
+    if (
+        args.pareto_status is not None
+        or args.allowance_status is not None
+        or args.pareto_stderr
+        or args.allowance_stderr
+    ):
         md = render_dual_optimizer_output_comment(
-            pareto_output=args.pareto_output or None,
-            allowance_output=args.allowance_output or None,
+            pareto_payload=_load_optional_json(args.pareto_json),
+            allowance_payload=_load_optional_json(args.allowance_json),
+            pareto_stderr=args.pareto_stderr,
+            allowance_stderr=args.allowance_stderr,
             pareto_status=args.pareto_status,
             allowance_status=args.allowance_status,
             run_url=args.run_url or None,
             sha=args.sha or None,
             benchmarks=args.benchmarks or None,
             fetch_log=args.fetch_log or None,
-        )
-        return md, None, None
-
-    if args.optimizer_output:
-        md = render_optimizer_output_comment(
-            output=args.optimizer_output,
-            run_url=args.run_url or None,
-            sha=args.sha or None,
-            command=args.command or None,
-            benchmarks=args.benchmarks or None,
-            status=args.status,
         )
         return md, None, None
 
@@ -278,8 +266,8 @@ def main(argv: list[str] | None = None) -> int:
     markdown, select_payload, rank_models = _render_primary_markdown(args)
     if markdown is None:
         sys.stderr.write(
-            "Error: one of --json, --allowance-json, --ci-dir, --optimizer-output, "
-            "or --pareto-output/--allowance-output must be specified.\n"
+            "Error: one of --json, --allowance-json, --ci-dir, or dual PR comment "
+            "status/stderr flags with JSON inputs must be specified.\n"
         )
         return 1
 
