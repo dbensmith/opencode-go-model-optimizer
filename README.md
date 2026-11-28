@@ -4,6 +4,21 @@ Dynamic model tiering and Pareto efficiency optimizer for OpenCode Go ($10/mo su
 
 Evaluates the active OpenCode Go model catalog and computes optimal model assignments across industry-standard capability tiers based on live pricing regimes, monthly allowances, and benchmark intelligence metrics.
 
+## Consuming the results (no install needed)
+
+Consumers such as OpenCode or Paseo profile tooling can read the CLI's JSON from GitHub Pages without installing or running it. Run Optimizer refreshes one public URL:
+
+- **Site:** <https://dbensmith.github.io/opencode-go-model-optimizer/>
+- **Endpoint:** <https://dbensmith.github.io/opencode-go-model-optimizer/select.json>
+
+`select.json` contains the exact output of `select --mode auto --allow-fallback --format json --explain --top-n 3` for the `go` plan. Picks are AA-derived (Pareto) only when `"method": "pareto"`; anything else is allowance, and `"fallback": true` additionally means AA was requested and failed.
+
+```bash
+curl -s https://dbensmith.github.io/opencode-go-model-optimizer/select.json | jq '{method, fallback, tiers}'
+```
+
+The same site also publishes available per-method and per-plan JSON (`pareto/`, `allowance/`), `snapshot.json`, and the human-readable analysis and data pages.
+
 ---
 
 ## Overview & Architecture
@@ -391,7 +406,7 @@ flowchart LR
 - **No source data is stored in this repository.** The repo ships no model catalogue, docs, pricing or benchmark snapshots, and the tests use synthetic fixtures with fictional models.
 - **Caches are consumer-maintained.** The tool writes a snapshot cache under `$XDG_CACHE_HOME/opencode-go-model-optimizer` (default `~/.cache/opencode-go-model-optimizer`) after each successful live fetch. Nothing is bundled or pre-populated; if you never fetch, there is no cache.
 - **Do it yourself.** Everything is fetched live from the public OpenCode catalogue, the OpenCode docs and models.dev on your machine. Use `fetch --out snapshot.json` to keep your own snapshot.
-- **Artificial Analysis** terms forbid republishing their raw data, so none is committed or published by CI. Benchmarks are used only when you supply your own key.
+- **Artificial Analysis** benchmarks are never committed to the repository. Run Optimizer publishes the CLI's JSON output, including AA-derived selections and metrics when available, to GitHub Pages (see [Consuming the results](#consuming-the-results-no-install-needed)); local Pareto runs require your own key.
 
 ### API keys
 
