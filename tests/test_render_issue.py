@@ -37,6 +37,7 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     payload = {
         "plan": "go",
         "mode": "pareto",
+        "method": "pareto",
         "evaluated_at": "2026-11-15T16:00:00+00:00",
         "snapshot": {
             "source": "live",
@@ -153,6 +154,7 @@ def test_render_dual_issue_markdown_full_comparison_catalog() -> None:
     payload = {
         "plan": "go",
         "mode": "pareto",
+        "method": "pareto",
         "evaluated_at": "2026-11-16T00:00:00+00:00",
         "snapshot": {
             "source": "live",
@@ -464,6 +466,7 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     select_data = {
         "plan": "go",
         "mode": "pareto",
+        "method": "pareto",
         "evaluated_at": "2026-11-16T00:00:00+00:00",
         "snapshot": {
             "source": "live",
@@ -684,6 +687,7 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
             {
                 "plan": "go",
                 "mode": "pareto",
+                "method": "pareto",
                 "evaluated_at": "2026-11-16T00:00:00+00:00",
                 "snapshot": {
                     "source": "live",
@@ -806,7 +810,11 @@ def test_main_requires_primary_mode(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_render_dual_optimizer_output_comment_success_and_aa_failure(tmp_path: Path) -> None:
     pareto_payload = {"method": "pareto", "tiers": {"heavy": "opencode-go/model-a"}}
-    allowance_payload = {"mode": "allowance", "tiers": {"heavy": "opencode-go/model-b"}}
+    allowance_payload = {
+        "mode": "allowance",
+        "method": "allowance",
+        "tiers": {"heavy": "opencode-go/model-b"},
+    }
     pareto_json = tmp_path / "pareto.json"
     allowance_json = tmp_path / "allowance.json"
     for path, payload in ((pareto_json, pareto_payload), (allowance_json, allowance_payload)):
