@@ -123,7 +123,7 @@ def test_aa_key_set_but_fetch_empty_warns_and_records_error():
 
 
 def test_aa_fetch_error_detail_is_included_in_warning():
-    def fake_fetch(api_key, client=None, errors=None):
+    def fake_fetch(api_key, client=None, errors=None, stats=None):
         if errors is not None:
             errors.append("Artificial Analysis returned HTTP 401")
         return {}

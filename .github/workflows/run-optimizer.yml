@@ -5,11 +5,14 @@ name: Run Optimizer
 # UTC-5) and on demand, retrieves AA_API_KEY from 1Password via a service
 # account token, publishes the output of both methods to the tracking GitHub
 # issue labeled `optimizer-results` and uploads the rendered Docsify site as a
-# `docs-site` artifact. Scheduled and manual runs fetch live Artificial Analysis
-# benchmarks and refresh the 8-hour AA cache; push-to-main runs reuse that
-# cache to avoid exhausting AA's 100 req/day free quota. Publishing the artifact
-# to GitHub Pages is handled by `publish-pages.yml`. Also runs tests on pushes
-# to main. Pull request checks live in pr-ci.yml; this workflow never runs on a PR.
+# `docs-site` artifact. To protect Artificial Analysis's 100 req/day free tier,
+# live AA fetches are cached daily (22h TTL on cron so 07:00 UTC refreshes AA
+# once per day while 15:00/23:00 UTC reuse that day's AA cache for 4 req/day
+# total; 24h TTL on push/default manual runs; pass `refresh_aa=true` to force a
+# live AA refresh), and 429 cooldown state is persisted across runs. Publishing the
+# artifact to GitHub Pages is handled by `publish-pages.yml`. Also runs tests on
+# pushes to main. Pull request checks live in pr-ci.yml; this workflow never runs
+# on a PR.
 #
 # CI privacy policy: pass --allow-global-region and --allow-free-training so Global-region
 # models and free models that train are eligible. Paid and consent-required training remain
@@ -35,6 +38,11 @@ on:
           - go
           - go-plus
           - go-teams
+      refresh_aa:
+        description: "Force a live Artificial Analysis fetch (bypassing the daily cache)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -73,11 +81,9 @@ jobs:
         with:
           sync-args: "--no-dev"
 
-      - name: Compute 8-hour AA cache slot
-        id: aa_slot
-        run: |
-          slot="$(date -u +%Y-%m-%d)-s$(($(date -u +%-H) / 8))"
-          echo "slot=$slot" >> "$GITHUB_OUTPUT"
+      - name: Compute UTC day for AA cache
+        id: aa_day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Validate 1Password configuration
         env:
@@ -103,17 +109,29 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
 
-      # Push runs reuse the current 8-hour AA benchmark cache to protect the
-      # 100 req/day free tier; scheduled and manual runs always fetch live AA.
+      # Reuse the daily AA benchmark cache across pushes, default manual runs, and
+      # secondary daily cron runs (07:00 UTC refreshes AA via the 22h cron TTL;
+      # 15:00/23:00 UTC reuse it for 4 req/day steady state).
       - name: Restore Artificial Analysis cache
         id: aa_cache
-        if: github.event_name == 'push'
+        if: github.event_name != 'workflow_dispatch' || !inputs.refresh_aa
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
-          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+          key: aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-
+            aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-
+            aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-
+
+      - name: Restore Artificial Analysis cooldown state
+        id: aa_cooldown
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-ratelimit.json
+          key: aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-
+            aa-ratelimit-v1-
 
       # Resolves the Pages site URL up front so the issue can link the published
       # dataset in the same run that renders it.
@@ -122,40 +140,74 @@ jobs:
         uses: actions/configure-pages@v6
 
       - name: Fetch snapshot for this run
+        id: fetch
         env:
           OPTIMIZER_PLAN: ${{ inputs.plan || 'go' }}
           EVENT_NAME: ${{ github.event_name }}
+          REFRESH_AA: ${{ inputs.refresh_aa || false }}
           UV_NO_SYNC: "1"
         run: |
           mkdir -p out
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            export OPENCODE_GO_AA_CACHE_TTL="28800"
-          else
-            export OPENCODE_GO_AA_CACHE_TTL="0"
+          cache_dir="$HOME/.cache/opencode-go-model-optimizer"
+          rl_file="${cache_dir}/aa-ratelimit.json"
+          aa_file="${cache_dir}/aa-benchmarks.json"
+          rl_before=""
+          if [[ -s "$rl_file" ]]; then
+            rl_before="$(sha256sum "$rl_file" | awk '{print $1}')"
           fi
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$REFRESH_AA" == "true" ]]; then
+            export OPENCODE_GO_AA_CACHE_TTL="0"
+          elif [[ "$EVENT_NAME" == "schedule" ]]; then
+            export OPENCODE_GO_AA_CACHE_TTL="79200"
+          else
+            export OPENCODE_GO_AA_CACHE_TTL="86400"
+          fi
+
           if ! uv run opencode-go-model-optimizer fetch --plan "$OPTIMIZER_PLAN" \
             --out out/snapshot.json 2> out/fetch.log; then
             cat out/fetch.log >&2
             exit 1
           fi
+          cat out/fetch.log >&2 || true
 
-      - name: Check AA cache file
-        id: aa_file
-        if: github.event_name != 'push' || steps.aa_cache.outputs.cache-matched-key == ''
-        run: |
-          if [[ -s ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json ]]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          bench_src="none"
+          if [[ -s out/snapshot.json ]]; then
+            bench_src="$(uv run python -c "import json; d = json.load(open('out/snapshot.json')); print(d.get('metadata', {}).get('benchmark_source', 'none'))" 2>/dev/null || echo none)"
           fi
+          aa_cache_exists="false"
+          if [[ -s "$aa_file" ]]; then
+            aa_cache_exists="true"
+          fi
+          rl_after=""
+          if [[ -s "$rl_file" ]]; then
+            rl_after="$(sha256sum "$rl_file" | awk '{print $1}')"
+          fi
+          ratelimit_updated="false"
+          if [[ -n "$rl_after" && "$rl_after" != "$rl_before" ]]; then
+            ratelimit_updated="true"
+          fi
+          {
+            echo "benchmark_source=$bench_src"
+            echo "aa_cache_exists=$aa_cache_exists"
+            echo "ratelimit_updated=$ratelimit_updated"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Save Artificial Analysis cache
-        if: (github.event_name != 'push' || steps.aa_cache.outputs.cache-matched-key == '') && steps.aa_file.outputs.exists == 'true'
+        if: steps.fetch.outputs.benchmark_source == 'aa_live' && steps.fetch.outputs.aa_cache_exists == 'true'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
-          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+          key: aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Artificial Analysis cooldown state
+        if: always() && steps.fetch.outputs.ratelimit_updated == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-ratelimit.json
+          key: aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Run optimizer (Pareto & Allowance, no fallback)
         id: optimizer

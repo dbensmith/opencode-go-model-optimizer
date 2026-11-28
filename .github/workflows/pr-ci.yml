@@ -5,11 +5,12 @@ name: PR CI
 # calculation methods (Pareto and Allowance, without fallback) on the PR code
 # and posts both outputs as a second PR comment so a reviewer sees both methods
 # and sees immediately when Artificial Analysis fails. Repository secrets are
-# available to same-repo PRs, so the AA key is loaded from 1Password and cached
-# across 8-hour UTC slots to stay well within AA's 100 req/day free limit; fork
-# PRs receive no secrets, skip 1Password, and mark Pareto unavailable without
-# falling back. Only the issue upsert and the Pages deploy never run on a PR;
-# they live in run-optimizer.yml, which triggers on push/schedule/dispatch.
+# available to same-repo PRs, so the AA key is loaded from 1Password and reuses
+# the 24-hour AA benchmark cache (plus persisted 429 cooldown state) so PRs not
+# changing artificial_analysis.py spend 0 AA requests; fork PRs receive no
+# secrets, skip 1Password, and mark Pareto unavailable without falling back. Only
+# the issue upsert and the Pages deploy never run on a PR; they live in
+# run-optimizer.yml, which triggers on push/schedule/dispatch.
 
 on:
   pull_request:
@@ -30,6 +31,7 @@ jobs:
       pull-requests: write
 
   optimizer-output:
+    needs: test
     name: Run Optimizer & Post Output Comment
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -45,11 +47,9 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-env
 
-      - name: Compute 8-hour AA cache slot
-        id: aa_slot
-        run: |
-          slot="$(date -u +%Y-%m-%d)-s$(($(date -u +%-H) / 8))"
-          echo "slot=$slot" >> "$GITHUB_OUTPUT"
+      - name: Compute UTC day for AA cache
+        id: aa_day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Detect 1Password configuration
         id: opgate
@@ -82,17 +82,37 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
-          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+          key: aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-
+            aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-
+            aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-
+
+      - name: Restore Artificial Analysis cooldown state
+        id: aa_cooldown
+        if: steps.opgate.outputs.available == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-ratelimit.json
+          key: aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-
+            aa-ratelimit-v1-
 
       - name: Fetch snapshot
         id: fetch
         continue-on-error: true
         env:
-          OPENCODE_GO_AA_CACHE_TTL: "28800"
+          OPENCODE_GO_AA_CACHE_TTL: "86400"
         run: |
           mkdir -p out
+          cache_dir="$HOME/.cache/opencode-go-model-optimizer"
+          rl_file="${cache_dir}/aa-ratelimit.json"
+          aa_file="${cache_dir}/aa-benchmarks.json"
+          rl_before=""
+          if [[ -s "$rl_file" ]]; then
+            rl_before="$(sha256sum "$rl_file" | awk '{print $1}')"
+          fi
+
           status=0
           uv run opencode-go-model-optimizer fetch --plan go --out out/snapshot.json 2> out/fetch.log || status=$?
           cat out/fetch.log >&2 || true
@@ -100,27 +120,41 @@ jobs:
           if [[ -s out/snapshot.json ]]; then
             bench_src="$(uv run python -c "import json; d = json.load(open('out/snapshot.json')); print(d.get('metadata', {}).get('benchmark_source', 'none'))" 2>/dev/null || echo none)"
           fi
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          echo "benchmark_source=$bench_src" >> "$GITHUB_OUTPUT"
+          aa_cache_exists="false"
+          if [[ -s "$aa_file" ]]; then
+            aa_cache_exists="true"
+          fi
+          rl_after=""
+          if [[ -s "$rl_file" ]]; then
+            rl_after="$(sha256sum "$rl_file" | awk '{print $1}')"
+          fi
+          ratelimit_updated="false"
+          if [[ -n "$rl_after" && "$rl_after" != "$rl_before" ]]; then
+            ratelimit_updated="true"
+          fi
+          {
+            echo "status=$status"
+            echo "benchmark_source=$bench_src"
+            echo "aa_cache_exists=$aa_cache_exists"
+            echo "ratelimit_updated=$ratelimit_updated"
+          } >> "$GITHUB_OUTPUT"
           exit "$status"
 
-      - name: Check AA cache file
-        id: aa_file
-        if: steps.opgate.outputs.available == 'true' && steps.aa_cache.outputs.cache-matched-key == ''
-        run: |
-          if [[ -s ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json ]]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Save Artificial Analysis cache
-        if: steps.opgate.outputs.available == 'true' && steps.aa_cache.outputs.cache-matched-key == '' && steps.aa_file.outputs.exists == 'true'
+        if: steps.opgate.outputs.available == 'true' && steps.fetch.outputs.benchmark_source == 'aa_live' && steps.fetch.outputs.aa_cache_exists == 'true'
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
-          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+          key: aa-benchmarks-v2-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save Artificial Analysis cooldown state
+        if: always() && steps.opgate.outputs.available == 'true' && steps.fetch.outputs.ratelimit_updated == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-ratelimit.json
+          key: aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Run BOTH calculation methods against the same snapshot without fallback
       # so any Artificial Analysis failure is immediately obvious.

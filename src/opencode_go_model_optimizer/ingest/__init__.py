@@ -1,10 +1,15 @@
 """Ingestion modules for OpenCode Go Model Optimizer."""
 
 from opencode_go_model_optimizer.ingest.artificial_analysis import (
+    DEFAULT_AA_CACHE_TTL,
+    clear_aa_rate_limit,
     fetch_aa_benchmarks,
     get_aa_cache_path,
+    get_aa_ratelimit_path,
+    load_aa_rate_limit,
     load_cached_aa_benchmarks,
     lookup_aa_benchmark,
+    save_aa_rate_limit,
     save_cached_aa_benchmarks,
 )
 from opencode_go_model_optimizer.ingest.catalogue import (
@@ -53,6 +58,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 )
 
 __all__ = [
+    "DEFAULT_AA_CACHE_TTL",
     "PLANS",
     "ModelLimit",
     "NormalizedModel",
@@ -64,6 +70,7 @@ __all__ = [
     "TokenCost",
     "apply_plan",
     "apply_request_estimates",
+    "clear_aa_rate_limit",
     "create_snapshot",
     "estimate_requests",
     "fetch_aa_benchmarks",
@@ -73,7 +80,9 @@ __all__ = [
     "fetch_docs_mdx",
     "fetch_models_dev",
     "get_aa_cache_path",
+    "get_aa_ratelimit_path",
     "get_cache_snapshot_path",
+    "load_aa_rate_limit",
     "load_cached_aa_benchmarks",
     "load_cached_snapshot",
     "load_snapshot",
@@ -87,6 +96,7 @@ __all__ = [
     "parse_models_dev",
     "parse_privacy",
     "parse_table_rows",
+    "save_aa_rate_limit",
     "save_cached_aa_benchmarks",
     "save_cached_snapshot",
     "save_snapshot",

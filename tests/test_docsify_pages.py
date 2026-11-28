@@ -158,11 +158,17 @@ def test_workflow_has_pages_and_pr_comment() -> None:
 
     # The optimizer runs BOTH methods without fallback on PRs and posts both outputs.
     assert "optimizer-output:" in pr_ci_text
+    assert "needs: test" in pr_ci_text
     assert "Detect 1Password configuration" in pr_ci_text
     assert "Load AA API key from 1Password" in pr_ci_text
     assert "1password/load-secrets-action@v5" in pr_ci_text
     assert "Restore Artificial Analysis cache" in pr_ci_text
     assert "Save Artificial Analysis cache" in pr_ci_text
+    assert "Restore Artificial Analysis cooldown state" in pr_ci_text
+    assert "Save Artificial Analysis cooldown state" in pr_ci_text
+    assert "aa-benchmarks-v2-" in pr_ci_text
+    assert "aa-ratelimit-v1-" in pr_ci_text
+    assert 'OPENCODE_GO_AA_CACHE_TTL: "86400"' in pr_ci_text
     assert "--mode pareto" in pr_ci_text
     assert "--mode allowance" in pr_ci_text
     assert "--allow-fallback" not in pr_ci_text
@@ -206,6 +212,13 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "uv run opencode-go-model-optimizer fetch" in workflow_text
     assert "Restore Artificial Analysis cache" in workflow_text
     assert "Save Artificial Analysis cache" in workflow_text
+    assert "Restore Artificial Analysis cooldown state" in workflow_text
+    assert "Save Artificial Analysis cooldown state" in workflow_text
+    assert "aa-benchmarks-v2-" in workflow_text
+    assert "aa-ratelimit-v1-" in workflow_text
+    assert "refresh_aa:" in workflow_text
+    assert '"79200"' in workflow_text
+    assert '"86400"' in workflow_text
     assert "--allow-fallback" not in workflow_text
     assert "out/snapshot.json" in workflow_text
     assert "out/site/snapshot.json" in workflow_text

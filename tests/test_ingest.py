@@ -926,6 +926,8 @@ def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
 
 
 def test_fetch_aa_benchmarks_429_reports_reset_and_retry_without_leaking_key():
+    from opencode_go_model_optimizer.ingest.artificial_analysis import clear_aa_rate_limit
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             429,
@@ -938,6 +940,8 @@ def test_fetch_aa_benchmarks_429_reports_reset_and_retry_without_leaking_key():
     assert fetch_aa_benchmarks("super-secret-key", client=client, errors=errors) == {}
     assert errors == ["Artificial Analysis returned HTTP 429 (resets at 2026-11-28T19:49:29+00:00)"]
     assert "super-secret-key" not in errors[0]
+
+    clear_aa_rate_limit()
 
     def handler_retry_only(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -1667,9 +1671,12 @@ def test_artificial_analysis_module_exports_and_lookup():
 
 
 def test_aa_benchmark_cache_lifecycle(tmp_path):
+    from datetime import UTC, datetime
+
     from opencode_go_model_optimizer.ingest.artificial_analysis import (
         get_aa_cache_path,
         load_cached_aa_benchmarks,
+        load_cached_aa_benchmarks_with_age,
         save_cached_aa_benchmarks,
     )
 
@@ -1685,6 +1692,24 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
         assert load_cached_aa_benchmarks(ttl_seconds=0) is None
         assert load_cached_aa_benchmarks(ttl_seconds=3600) == data
 
+        # Age is computed from payload fetched_at even when mtime is brand new (CI restore).
+        old_ts = datetime.fromtimestamp(time.time() - 7200, tz=UTC).isoformat(timespec="seconds")
+        saved.write_text(
+            json.dumps({"schema_version": 1, "fetched_at": old_ts, "benchmarks": data}),
+            encoding="utf-8",
+        )
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+        loaded_age = load_cached_aa_benchmarks_with_age(ttl_seconds=86400)
+        assert loaded_age is not None
+        assert loaded_age[0] == data
+        assert loaded_age[1] >= 7199
+
+        # Falls back to mtime when fetched_at is absent or unparseable.
+        saved.write_text(
+            json.dumps({"schema_version": 1, "fetched_at": "bad-ts", "benchmarks": data}),
+            encoding="utf-8",
+        )
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) == data
         with patch("time.time", return_value=time.time() + 4000):
             assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
 
@@ -1701,11 +1726,179 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
             assert save_cached_aa_benchmarks(data) is None
 
 
+def test_aa_rate_limit_cooldown_lifecycle_and_zero_request_short_circuit(tmp_path):
+    from opencode_go_model_optimizer.ingest.artificial_analysis import (
+        clear_aa_rate_limit,
+        get_aa_ratelimit_path,
+        load_aa_rate_limit,
+        save_aa_rate_limit,
+    )
+
+    secret_key = "aa_super_secret_token"
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        assert load_aa_rate_limit() is None
+        assert save_aa_rate_limit(int(time.time()) - 10) is None
+        assert save_aa_rate_limit(True) is None
+        assert save_aa_rate_limit(0) is None
+        assert save_aa_rate_limit(10**20) is None
+
+        future_reset = int(time.time()) + 3600
+        calls = 0
+
+        def handler_429(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                429,
+                headers={
+                    "x-ratelimit-limit": "100",
+                    "x-ratelimit-remaining": "not-an-int",
+                    "x-ratelimit-reset": str(future_reset),
+                },
+                json={"error": f"Rate limit exceeded {secret_key}"},
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler_429))
+        errors1: list[str] = []
+        stats1: dict[str, object] = {}
+        assert fetch_aa_benchmarks(secret_key, client=client, errors=errors1, stats=stats1) == {}
+        assert calls == 1
+        assert stats1["requests"] == 1
+        assert stats1["ratelimit_limit"] == 100
+        assert "ratelimit_remaining" not in stats1
+        assert get_aa_ratelimit_path().exists()
+        assert secret_key not in get_aa_ratelimit_path().read_text(encoding="utf-8")
+
+        # Second call during cooldown makes ZERO HTTP requests.
+        errors2: list[str] = []
+        stats2: dict[str, object] = {}
+        assert fetch_aa_benchmarks(secret_key, client=client, errors=errors2, stats=stats2) == {}
+        assert calls == 1
+        assert stats2["requests"] == 0
+        assert stats2["cooldown_active"] is True
+        assert "skipped live request during local cooldown" in errors2[0]
+
+        # Retry-After fallback when x-ratelimit-reset is absent.
+        clear_aa_rate_limit()
+        assert load_aa_rate_limit() is None
+
+        def handler_retry_after(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"retry-after": "120"}, json={"error": "slow down"})
+
+        retry_client = httpx.Client(transport=httpx.MockTransport(handler_retry_after))
+        assert fetch_aa_benchmarks("k", client=retry_client, errors=[]) == {}
+        loaded_rl = load_aa_rate_limit()
+        assert loaded_rl is not None
+        assert loaded_rl["reset_at"] > time.time()
+
+        # Successful live fetch clears any leftover expired/stale cooldown file.
+        clear_aa_rate_limit()
+        ok_client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"x-ratelimit-limit": "100", "x-ratelimit-remaining": "99"},
+                    json={"data": [{"slug": "m1", "name": "M1", "evaluations": {}}]},
+                )
+            )
+        )
+        ok_stats: dict[str, object] = {}
+        res = fetch_aa_benchmarks("k", client=ok_client, stats=ok_stats)
+        assert "m1" in res
+        assert ok_stats["requests"] == 1
+        assert ok_stats["pages_fetched"] == 1
+        assert ok_stats["ratelimit_remaining"] == 99
+        assert not get_aa_ratelimit_path().exists()
+
+        # Corrupt / expired / invalid reset / invalid save paths handled cleanly.
+        rl_path = save_aa_rate_limit(int(time.time()) + 60)
+        assert rl_path is not None
+        rl_path.write_text(
+            json.dumps({"schema_version": 1, "reset_at": int(time.time()) - 5}),
+            encoding="utf-8",
+        )
+        assert load_aa_rate_limit() is None
+        rl_path.write_text("{bad", encoding="utf-8")
+        assert load_aa_rate_limit() is None
+        rl_path.write_text('{"schema_version": 2}', encoding="utf-8")
+        assert load_aa_rate_limit() is None
+        with patch(
+            "opencode_go_model_optimizer.ingest.artificial_analysis.atomic_write_text",
+            side_effect=OSError("full"),
+        ):
+            assert save_aa_rate_limit(int(time.time()) + 60) is None
+
+
+def test_aa_preflight_quota_guard_aborts_incomplete_pagination(tmp_path):
+    from opencode_go_model_optimizer.ingest.artificial_analysis import load_aa_rate_limit
+
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        # remaining=1 but total_pages=4 -> needs 3 more pages -> aborts after page 1.
+        pages_hit = 0
+
+        def handler_low_quota(request: httpx.Request) -> httpx.Response:
+            nonlocal pages_hit
+            pages_hit += 1
+            return httpx.Response(
+                200,
+                headers={
+                    "x-ratelimit-limit": "100",
+                    "x-ratelimit-remaining": "1",
+                    "x-ratelimit-reset": str(int(time.time()) + 1800),
+                },
+                json={
+                    "data": [{"slug": "m1", "name": "M1", "evaluations": {}}],
+                    "pagination": {"current_page": 1, "total_pages": 4, "has_more": True},
+                },
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(handler_low_quota))
+        errors: list[str] = []
+        assert fetch_aa_benchmarks("k", client=client, errors=errors) == {}
+        assert pages_hit == 1
+        assert (
+            "quota too low to finish pagination (1 request(s) remaining, 3 more page(s) needed"
+            in errors[0]
+        )
+
+        # remaining=0 mid-pagination -> saves cooldown file as well.
+        zero_pages = 0
+
+        def handler_zero_mid(request: httpx.Request) -> httpx.Response:
+            nonlocal zero_pages
+            zero_pages += 1
+            return httpx.Response(
+                200,
+                headers={
+                    "x-ratelimit-limit": "100",
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(int(time.time()) + 1800),
+                },
+                json={
+                    "data": [{"slug": "m1", "name": "M1", "evaluations": {}}],
+                    "pagination": {"has_more": True},
+                },
+            )
+
+        zero_client = httpx.Client(transport=httpx.MockTransport(handler_zero_mid))
+        assert fetch_aa_benchmarks("k", client=zero_client, errors=[]) == {}
+        assert zero_pages == 1
+        assert load_aa_rate_limit() is not None
+
+
 def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
-    from opencode_go_model_optimizer.ingest.artificial_analysis import get_aa_cache_path
+    from opencode_go_model_optimizer.ingest.artificial_analysis import (
+        get_aa_cache_path,
+        save_aa_rate_limit,
+    )
 
     model = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
     aa_data = {"snap-m": {"iq": 70.0, "coding": 65.0, "tps": 80.0}}
+
+    def fake_live(api_key, client=None, errors=None, stats=None):
+        if stats is not None:
+            stats.update({"requests": 4, "pages_fetched": 4, "ratelimit_remaining": 96})
+        return aa_data
 
     with (
         patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path), "AA_API_KEY": "k"}, clear=True),
@@ -1714,13 +1907,18 @@ def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
         patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
-            return_value=aa_data,
+            side_effect=fake_live,
         ) as mock_aa,
     ):
-        snap_live = fetch_and_build_snapshot(plan="go", aa_cache_ttl=28800)
+        snap_live = fetch_and_build_snapshot(plan="go", aa_cache_ttl=86400)
         assert mock_aa.call_count == 1
         assert snap_live.metadata.benchmark_source == "aa_live"
         assert snap_live.metadata.benchmark_error is None
+        assert snap_live.metadata.benchmark_stats == {
+            "requests": 4,
+            "pages_fetched": 4,
+            "ratelimit_remaining": 96,
+        }
         assert get_aa_cache_path().exists()
 
         # Second call with fresh cache reuses aa-benchmarks.json without hitting AA API.
@@ -1728,9 +1926,12 @@ def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
         with patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=[model2]
         ):
-            snap_cached = fetch_and_build_snapshot(plan="go", aa_cache_ttl=28800)
+            snap_cached = fetch_and_build_snapshot(plan="go", aa_cache_ttl=86400)
         assert mock_aa.call_count == 1
         assert snap_cached.metadata.benchmark_source == "aa_cache"
+        assert snap_cached.metadata.benchmark_stats is not None
+        assert snap_cached.metadata.benchmark_stats["cache_hit"] is True
+        assert snap_cached.metadata.benchmark_stats["requests"] == 0
         assert snap_cached.models[0].aa_iq == 70.0
 
         # use_aa=False ignores both live fetch and cached AA benchmarks.
@@ -1738,6 +1939,27 @@ def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
         with patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=[model3]
         ):
-            snap_no_aa = fetch_and_build_snapshot(plan="go", use_aa=False, aa_cache_ttl=28800)
+            snap_no_aa = fetch_and_build_snapshot(plan="go", use_aa=False, aa_cache_ttl=86400)
         assert snap_no_aa.metadata.benchmark_source == "none"
+        assert snap_no_aa.metadata.benchmark_stats is None
         assert snap_no_aa.models[0].aa_iq is None
+
+        # Cooldown active when cache is bypassed records cooldown telemetry without HTTP calls.
+        save_aa_rate_limit(int(time.time()) + 3600, limit=100, remaining=0)
+        get_aa_cache_path().unlink()
+        model4 = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
+        with (
+            patch(
+                "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
+                return_value=[model4],
+            ),
+            patch(
+                "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
+                side_effect=fetch_aa_benchmarks,
+            ),
+        ):
+            snap_cool = fetch_and_build_snapshot(plan="go", aa_cache_ttl=86400)
+        assert snap_cool.metadata.benchmark_source == "none"
+        assert snap_cool.metadata.benchmark_stats is not None
+        assert snap_cool.metadata.benchmark_stats["cooldown_active"] is True
+        assert snap_cool.metadata.benchmark_stats["requests"] == 0

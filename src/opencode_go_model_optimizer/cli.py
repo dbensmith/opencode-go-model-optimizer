@@ -47,6 +47,7 @@ from opencode_go_model_optimizer.formatters import (
     settings_payload,
     tier_display_names,
 )
+from opencode_go_model_optimizer.ingest.artificial_analysis import DEFAULT_AA_CACHE_TTL
 from opencode_go_model_optimizer.ingest.http import atomic_write_text
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
@@ -65,19 +66,21 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 from opencode_go_model_optimizer.report import build_report, write_report
 
 
-def _env_non_negative_int(env_var: str) -> int:
-    """Read a non-negative integer env var, returning 0 (with a warning) on invalid values."""
-    raw = os.environ.get(env_var, "0")
+def _env_non_negative_int(env_var: str, default: int = 0) -> int:
+    """Read a non-negative integer env var, returning ``default`` (with a warning) on invalid values."""
+    raw = os.environ.get(env_var)
+    if raw is None or raw == "":
+        return default
     try:
         value = int(raw)
     except ValueError:
         value = -1
     if value < 0:
         print(
-            f"{_PROG}: warning: invalid {env_var}={raw!r}; using 0",
+            f"{_PROG}: warning: invalid {env_var}={raw!r}; using {default}",
             file=sys.stderr,
         )
-        return 0
+        return default
     return value
 
 
@@ -92,9 +95,17 @@ def _cache_ttl(args: argparse.Namespace) -> int:
 
 
 def _aa_cache_ttl(args: argparse.Namespace) -> int:
-    """Return --aa-cache-ttl, falling back to OPENCODE_GO_AA_CACHE_TTL when omitted."""
+    """Return --aa-cache-ttl, falling back to OPENCODE_GO_AA_CACHE_TTL or 24h default."""
     val = getattr(args, "aa_cache_ttl", None)
-    return _env_non_negative_int("OPENCODE_GO_AA_CACHE_TTL") if val is None else val
+    if val is None:
+        return _env_non_negative_int("OPENCODE_GO_AA_CACHE_TTL", default=DEFAULT_AA_CACHE_TTL)
+    if val < 0:
+        print(
+            f"{_PROG}: warning: invalid --aa-cache-ttl={val!r}; using {DEFAULT_AA_CACHE_TTL}",
+            file=sys.stderr,
+        )
+        return DEFAULT_AA_CACHE_TTL
+    return val
 
 
 class LoadedSnapshot(NamedTuple):
@@ -108,6 +119,52 @@ def _print_snapshot_warnings(snap: Snapshot) -> None:
     """Print each ingest warning to stderr without failing the command."""
     for warning in snap.warnings:
         print(f"{_PROG}: warning: {warning}", file=sys.stderr)
+
+
+def _format_duration_short(seconds: int) -> str:
+    """Format an elapsed duration in seconds cleanly (e.g. '2h 15m' or '<1m')."""
+    seconds = max(0, seconds)
+    if seconds < 60:
+        return "<1m"
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def _print_aa_telemetry(snap: Snapshot) -> None:
+    """Print Artificial Analysis request/cache/cooldown telemetry to stderr."""
+    stats = snap.metadata.benchmark_stats
+    if not stats:
+        return
+    if stats.get("cache_hit"):
+        age_str = _format_duration_short(int(stats.get("cache_age_seconds") or 0))
+        print(
+            f"{_PROG}: Artificial Analysis: cache hit (0 requests; age {age_str})",
+            file=sys.stderr,
+        )
+        return
+    if stats.get("cooldown_active"):
+        reset_iso = stats.get("ratelimit_reset") or "unknown"
+        print(
+            f"{_PROG}: Artificial Analysis: 0 requests (cooldown active until {reset_iso})",
+            file=sys.stderr,
+        )
+        return
+    parts = [f"{int(stats.get('requests') or 0)} request(s) used"]
+    remaining = stats.get("ratelimit_remaining")
+    limit = stats.get("ratelimit_limit")
+    if remaining is not None and limit is not None:
+        parts.append(f"{remaining}/{limit} remaining")
+    elif remaining is not None:
+        parts.append(f"{remaining} remaining")
+    if stats.get("ratelimit_reset"):
+        parts.append(f"resets at {stats['ratelimit_reset']}")
+    print(f"{_PROG}: Artificial Analysis: {', '.join(parts)}", file=sys.stderr)
 
 
 class SnapshotUnavailableError(ValueError):
@@ -161,6 +218,7 @@ def _load_or_fetch_snapshot(
         )
         return LoadedSnapshot(stale, "stale-cache")
     _print_snapshot_warnings(snap)
+    _print_aa_telemetry(snap)
     save_cached_snapshot(snap)
     return LoadedSnapshot(snap, "live")
 
@@ -313,6 +371,8 @@ def _format_select_output(
     }
     if snap.metadata.benchmark_error:
         snapshot_info["benchmark_error"] = snap.metadata.benchmark_error
+    if snap.metadata.benchmark_stats:
+        snapshot_info["benchmark_stats"] = snap.metadata.benchmark_stats
 
     formatters: dict[str, Callable[[], str]] = {
         "json": lambda: format_select_json(
@@ -480,6 +540,7 @@ def handle_fetch(args: argparse.Namespace) -> int:
         **({"aa_cache_ttl": aa_ttl} if aa_ttl > 0 else {}),  # type: ignore[arg-type]
     )
     _print_snapshot_warnings(snap)
+    _print_aa_telemetry(snap)
     save_snapshot(snap, args.out)
     print(
         f"{_PROG}: saved snapshot with {len(snap.models)} models for plan '{target_plan}' to {args.out}",

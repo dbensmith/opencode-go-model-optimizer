@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS
+from opencode_go_model_optimizer.ingest.artificial_analysis import DEFAULT_AA_CACHE_TTL
 from opencode_go_model_optimizer.ingest.http import package_version
 from opencode_go_model_optimizer.ingest.models import PLANS, ensure_utc
 
@@ -114,7 +115,8 @@ def _build_parent_parsers() -> tuple[
         default=None,
         help=(
             "Cache TTL in seconds for Artificial Analysis benchmarks "
-            "(default: 0, or OPENCODE_GO_AA_CACHE_TTL)"
+            f"(default: {DEFAULT_AA_CACHE_TTL} [24h], or OPENCODE_GO_AA_CACHE_TTL; "
+            "pass 0 to force a live fetch)"
         ),
     )
 
