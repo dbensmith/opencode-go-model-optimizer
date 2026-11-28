@@ -389,144 +389,6 @@ def test_render_ci_comment_markdown(tmp_path: Path) -> None:
     assert "FAILED tests/test_foo.py - assert 1 == 2 ``` backticks inside" in comment
 
 
-def test_render_optimizer_output_comment(tmp_path: Path) -> None:
-    out_file = tmp_path / "optimizer.txt"
-    out_file.write_text(
-        "OpenCode Go Model Optimizer --plan go --mode pareto\n"
-        "+-------+----------------------+\n"
-        "| Tier  | Model ID             |\n"
-        "| heavy | opencode-go/model-a  |\n"
-        "+-------+----------------------+\n"
-        "\n"
-        "--- stderr ---\n"
-        "opencode-go-model-optimizer: warning: catalogue hiccup\n",
-        encoding="utf-8",
-    )
-    comment = _MOD.render_optimizer_output_comment(
-        out_file,
-        run_url="https://github.com/example/repo/actions/runs/77",
-        sha="deadbeef",
-        command="uv run opencode-go-model-optimizer select --format table --explain",
-        benchmarks="live",
-    )
-    assert comment.startswith("<!-- optimizer-output-comment:commit=deadbeef -->\n")
-    assert "## Optimizer Tier Selections" in comment
-    assert "## Optimizer Output" not in comment
-    assert "https://github.com/example/repo/actions/runs/77" in comment
-    assert "`deadbeef`" in comment
-    assert (
-        "- **Command**: `uv run opencode-go-model-optimizer select --format table --explain`"
-        in comment
-    )
-    assert "- **Benchmarks**: Artificial Analysis live fetch" in comment
-    assert "- **Exit status**" not in comment
-    # the ASCII tier table is re-rendered as a native markdown table
-    assert "| Tier | Model ID |" in comment
-    assert "| --- | --- |" in comment
-    assert "| **heavy** | `opencode-go/model-a` |" in comment
-    # the table leads the comment, ahead of any collapsible section
-    assert comment.index("| Tier | Model ID |") < comment.index("<details")
-    # non-table stdout lines survive in a fenced section
-    assert "<summary>Additional optimizer output</summary>" in comment
-    assert "OpenCode Go Model Optimizer --plan go --mode pareto" in comment
-    # stderr lands in its own collapsed section instead of a raw separator line
-    assert "<summary>stderr</summary>" in comment
-    assert "opencode-go-model-optimizer: warning: catalogue hiccup" in comment
-    assert "--- stderr ---" not in comment
-    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in comment
-
-
-def test_render_optimizer_output_comment_explain_table(tmp_path: Path) -> None:
-    """The real `select --format table --explain` output renders as markdown."""
-    from opencode_go_model_optimizer.formatters import format_select_table
-
-    models = [
-        make_model(
-            "model-a",
-            name="Model A",
-            monthly_allowance=30.0,
-            cost={"output": 10.0},
-            limit={"context": 1048576},
-            aa_iq=88.5,
-            bpe=1.425,
-            composite_burn_pct=47.17,
-            price_multiplier=1.0,
-        ),
-        make_model(
-            "model-free",
-            name="Model Free",
-            limit={"context": 262144},
-        ),
-    ]
-    tiers = {"heavy": "opencode-go/model-a", "free": "opencode-go/model-free"}
-    ascii_table = format_select_table(tiers, models, plan="go", explain=True)
-
-    out_file = tmp_path / "optimizer.txt"
-    out_file.write_text(ascii_table, encoding="utf-8")
-    comment = _MOD.render_optimizer_output_comment(out_file, benchmarks="live")
-    assert "## Optimizer Tier Selections" in comment
-    # every explain column survives the trip through the parser
-    assert (
-        "| Tier | Model ID | Model Name | Allowance (go) | Output Cost | Context "
-        "| IQ | BPE | Burn % | Turn Cost |"
-    ) in comment
-    assert "| **heavy** | `opencode-go/model-a` | Model A |" in comment
-    assert "| $30.00 | $10.00/1M | 1,048,576 | 88.5 | 1.425 | 47.2% |" in comment
-    assert "| **free** | `opencode-go/model-free` | Model Free | - | Free | 262,144 |" in comment
-    # a pure-table stdout renders no fenced text block at all
-    assert "```" not in comment
-    # no stderr was appended, so there is no stderr section
-    assert "stderr" not in comment
-
-
-def test_render_optimizer_output_comment_cli_backticks_and_unavailable(tmp_path: Path) -> None:
-    out_file = tmp_path / "optimizer.txt"
-    out_file.write_text(
-        "table with ``` fences inside\nopencode-go-model-optimizer: error: live fetch failed\n",
-        encoding="utf-8",
-    )
-    out_path = tmp_path / "comment.md"
-
-    res = subprocess.run(
-        [
-            sys.executable,
-            str(_SCRIPT_PATH),
-            "--optimizer-output",
-            str(out_file),
-            "--run-url",
-            "https://github.com/example/repo/actions/runs/78",
-            "--sha",
-            "1234567890ab",
-            "--status",
-            "1",
-            "--command",
-            "uv run opencode-go-model-optimizer select --format table",
-            "--benchmarks",
-            "unavailable",
-            "--output",
-            str(out_path),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert res.returncode == 0
-    content = out_path.read_text(encoding="utf-8")
-    assert "<!-- optimizer-output-comment:commit=1234567890ab -->" in content
-    assert "## Optimizer Tier Selections" in content
-    assert "## Optimizer Output" not in content
-    assert "- **Exit status**: `1` (see output below)" in content
-    assert "- **Benchmarks**: unavailable on this run" in content
-    assert "falls back to allowance ranking" in content
-    # no ASCII table was found, so the output stays a fenced text block
-    assert "<summary>Additional optimizer output</summary>" in content
-    # backticks inside the output force a longer code fence
-    assert "````text" in content
-    assert "table with ``` fences inside" in content
-    # no AA data was displayed, so no attribution footer
-    assert "Artificial Analysis (artificialanalysis.ai)" not in content
-
-
 def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     from opencode_go_model_optimizer.cli import format_rank_json
 
@@ -721,7 +583,6 @@ def test_optimizer_issue_submodule_structure() -> None:
         "render_ci_comment_markdown",
         "render_data_markdown",
         "render_issue_markdown",
-        "render_optimizer_output_comment",
     ):
         assert getattr(_MOD, public_fn) is getattr(pkg, public_fn)
 
@@ -956,33 +817,27 @@ def test_main_requires_primary_mode(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_render_dual_optimizer_output_comment_success_and_aa_failure(tmp_path: Path) -> None:
-    pareto_ok_file = tmp_path / "pareto_ok.txt"
-    pareto_ok_file.write_text(
-        "Calculation method: PARETO (Artificial Analysis benchmarks + quota burn)\n"
-        "+-------+---------------------+\n"
-        "| Tier  | Model ID            |\n"
-        "| heavy | opencode-go/model-a |\n"
-        "+-------+---------------------+\n"
-        "\n--- stderr ---\n"
-        "opencode-go-model-optimizer: calculated with METHOD=PARETO\n",
-        encoding="utf-8",
+    pareto_payload = {"method": "pareto", "tiers": {"heavy": "opencode-go/model-a"}}
+    allowance_payload = {"mode": "allowance", "tiers": {"heavy": "opencode-go/model-b"}}
+    pareto_json = tmp_path / "pareto.json"
+    allowance_json = tmp_path / "allowance.json"
+    for path, payload in ((pareto_json, pareto_payload), (allowance_json, allowance_payload)):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    pareto_stderr = tmp_path / "pareto.err"
+    pareto_stderr.write_text(
+        "opencode-go-model-optimizer: calculated with METHOD=PARETO\n", encoding="utf-8"
     )
-    allowance_ok_file = tmp_path / "allowance_ok.txt"
-    allowance_ok_file.write_text(
-        "Calculation method: ALLOWANCE (plan allowance & pricing heuristic; no benchmarks)\n"
-        "+-------+---------------------+\n"
-        "| Tier  | Model ID            |\n"
-        "| heavy | opencode-go/model-b |\n"
-        "+-------+---------------------+\n",
-        encoding="utf-8",
-    )
+    allowance_stderr = tmp_path / "allowance.err"
+    allowance_stderr.write_text("", encoding="utf-8")
     fetch_log = tmp_path / "fetch.log"
     fetch_log.write_text("saved snapshot\n", encoding="utf-8")
 
     # 1. Both methods pass with live AA benchmarks
     comment_ok = _MOD.render_dual_optimizer_output_comment(
-        pareto_output=pareto_ok_file,
-        allowance_output=allowance_ok_file,
+        pareto_payload=pareto_payload,
+        allowance_payload=allowance_payload,
+        pareto_stderr=pareto_stderr,
+        allowance_stderr=allowance_stderr,
         pareto_status=0,
         allowance_status=0,
         run_url="https://github.com/example/repo/actions/runs/100",
@@ -992,62 +847,59 @@ def test_render_dual_optimizer_output_comment_success_and_aa_failure(tmp_path: P
     )
     assert "### Pareto Method (`--mode pareto`, no fallback)" in comment_ok
     assert "### Allowance Method (`--mode allowance`)" in comment_ok
-    assert (
-        "- **Calculation method**: `PARETO (Artificial Analysis benchmarks + quota burn)`"
-        in comment_ok
-    )
-    assert (
-        "- **Calculation method**: `ALLOWANCE (plan allowance & pricing heuristic; no benchmarks)`"
-        in comment_ok
-    )
-    assert "Additional Pareto output" not in comment_ok
+    assert "- **Calculation method**: `pareto`" in comment_ok
+    assert "- **Calculation method**: `allowance`" in comment_ok
+    assert "| Tier | Model ID | Allowance | Output Cost | Context | AA IQ |" in comment_ok
+    assert "| **heavy** | `opencode-go/model-a` |" in comment_ok
+    assert "| **heavy** | `opencode-go/model-b` |" in comment_ok
+    assert comment_ok.count("AA IQ") == 1
     assert "> [!CAUTION]" not in comment_ok
     assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in comment_ok
 
     # 2. Pareto fails (e.g. HTTP 429) on same-repo PR while Allowance passes -> loud caution & no AA attribution
-    pareto_fail_file = tmp_path / "pareto_fail.txt"
-    pareto_fail_file.write_text(
-        "\n--- stderr ---\nopencode-go-model-optimizer: error: BenchmarksUnavailableError: HTTP 429\n",
+    pareto_fail_json = tmp_path / "pareto_fail.json"
+    pareto_fail_json.write_text("", encoding="utf-8")
+    pareto_fail_stderr = tmp_path / "pareto_fail.err"
+    pareto_fail_stderr.write_text(
+        "opencode-go-model-optimizer: error: BenchmarksUnavailableError: HTTP 429\n",
         encoding="utf-8",
     )
     out_md = tmp_path / "comment.md"
-    res = subprocess.run(
-        [
-            sys.executable,
-            str(_SCRIPT_PATH),
-            "--pareto-output",
-            str(pareto_fail_file),
-            "--pareto-status",
-            "1",
-            "--allowance-output",
-            str(allowance_ok_file),
-            "--allowance-status",
-            "0",
-            "--fetch-log",
-            str(fetch_log),
-            "--benchmarks",
-            "live",
-            "--sha",
-            "cafebabe",
-            "--output",
-            str(out_md),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+    assert (
+        _MOD.main(
+            [
+                "--pareto-json",
+                str(pareto_fail_json),
+                "--pareto-stderr",
+                str(pareto_fail_stderr),
+                "--pareto-status",
+                "1",
+                "--allowance-json",
+                str(allowance_json),
+                "--allowance-stderr",
+                str(allowance_stderr),
+                "--allowance-status",
+                "0",
+                "--output",
+                str(out_md),
+            ]
+        )
+        == 0
     )
-    assert res.returncode == 0
     comment_fail = out_md.read_text(encoding="utf-8")
     assert "> [!CAUTION]" in comment_fail
     assert "**FAILED** (exit `1` — no fallback used)" in comment_fail
+    assert "<details open>" in comment_fail
+    assert "<summary>Pareto stderr</summary>" in comment_fail
     assert "BenchmarksUnavailableError: HTTP 429" in comment_fail
     assert "| **heavy** | `opencode-go/model-b` |" in comment_fail
     assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in comment_fail
 
     # 3. Fork PR without secrets marks Pareto UNAVAILABLE without CAUTION
     comment_fork = _MOD.render_dual_optimizer_output_comment(
-        pareto_output=pareto_fail_file,
-        allowance_output=allowance_ok_file,
+        pareto_payload=None,
+        allowance_payload=allowance_payload,
+        pareto_stderr=pareto_fail_stderr,
         pareto_status=1,
         allowance_status=0,
         benchmarks="unavailable",
@@ -1055,6 +907,31 @@ def test_render_dual_optimizer_output_comment_success_and_aa_failure(tmp_path: P
     assert "UNAVAILABLE (1Password secrets absent on fork PR; no fallback used)" in comment_fork
     assert "> [!CAUTION]" not in comment_fork
     assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in comment_fork
+
+
+def test_dual_comment_stderr_flags_select_comment_mode(tmp_path: Path) -> None:
+    stderr_path = tmp_path / "optimizer.err"
+    stderr_path.touch()
+    out_path = tmp_path / "comment.md"
+
+    assert (
+        _MOD.main(
+            [
+                "--pareto-json",
+                str(tmp_path / "missing-pareto.json"),
+                "--pareto-stderr",
+                str(stderr_path),
+                "--allowance-json",
+                str(tmp_path / "missing-allowance.json"),
+                "--allowance-stderr",
+                str(stderr_path),
+                "--output",
+                str(out_path),
+            ]
+        )
+        == 0
+    )
+    assert "## Optimizer Tier Selections" in out_path.read_text(encoding="utf-8")
 
 
 def test_render_dual_issue_site_and_pareto_failure(tmp_path: Path) -> None:

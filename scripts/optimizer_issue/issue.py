@@ -26,6 +26,7 @@ from .common import (
     _ordered_tiers,
     _render_ranked_catalog_rows,
     _render_report_header,
+    _render_select_json_table,
     _site_file,
     _site_page,
     _tier_pick_id,
@@ -378,57 +379,6 @@ def render_issue_markdown(
     return "\n".join(lines) + "\n"
 
 
-def _render_method_choices_table(
-    ordered_tiers: list[str],
-    explanations: dict[str, Any],
-    tiers: dict[str, Any],
-    *,
-    include_aa: bool,
-) -> tuple[list[str], bool]:
-    """Render a method's choices table, returning ``(markdown_lines, saw_aa_metrics)``."""
-    saw_aa = False
-    headers = ["Tier", "Model ID", "Allowance", "Output Cost", "Context"]
-    if include_aa:
-        headers.extend(["AA IQ", "AA Coding", "Speed (tok/s)", "BPE", "Pareto"])
-    headers.extend(["Burn %", "Turn Cost", "Price x"])
-
-    rows: list[list[str]] = []
-    for tier in ordered_tiers:
-        ex = explanations.get(tier) or {}
-        model_id = _tier_pick_id(tier, explanations, tiers)
-        if any(ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps")):
-            saw_aa = True
-        burn_str = format_burn(ex.get("quota_burn_pct"))
-        turn_cost = ex.get("turn_cost_usd")
-        turn_str = f"${turn_cost:.4f}" if is_number(turn_cost) else "-"
-        row = [
-            f"**{tier}**",
-            f"`{model_id}`",
-            format_allowance_value(ex.get("monthly_allowance")),
-            format_cost_value(ex.get("output_cost_per_1m")),
-            format_int(ex.get("context")),
-        ]
-        if include_aa:
-            row.extend(
-                [
-                    format_float(ex.get("aa_iq"), 1),
-                    format_float(ex.get("aa_coding"), 1),
-                    format_float(ex.get("speed_tps"), 1),
-                    format_float(ex.get("bpe"), 3),
-                    format_pareto(ex.get("is_pareto")),
-                ]
-            )
-        row.extend(
-            [
-                burn_str,
-                turn_str,
-                format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change")),
-            ]
-        )
-        rows.append(row)
-    return render_markdown_table(headers, rows), saw_aa
-
-
 def _render_dual_published_artifacts_section(site_base: str, *, pareto_ok: bool) -> list[str]:
     pareto_select_entry = (
         [
@@ -628,7 +578,7 @@ def render_dual_issue_markdown(
     lines.extend(["", "### Pareto Method Selections (`--mode pareto`, no fallback)"])
     if pareto_ok and pareto_payload is not None:
         p_ordered = _ordered_tiers(p_ex, p_tiers)
-        p_table, saw_aa = _render_method_choices_table(p_ordered, p_ex, p_tiers, include_aa=True)
+        p_table, saw_aa = _render_select_json_table(pareto_payload, include_aa=True)
         has_aa_data = benchmark_source in ("aa_live", "aa_cache") or saw_aa
         lines.extend(["", *p_table])
         lines.extend(_render_visual_tier_summary(plan, "pareto", p_ordered, p_ex, p_tiers))
@@ -661,7 +611,7 @@ def render_dual_issue_markdown(
 
     lines.extend(["", "### Allowance Method Selections (`--mode allowance`, no fallback)"])
     a_ordered = _ordered_tiers(a_ex, a_tiers)
-    a_table, _ = _render_method_choices_table(a_ordered, a_ex, a_tiers, include_aa=False)
+    a_table, _ = _render_select_json_table(allowance_payload, include_aa=False)
     lines.extend(["", *a_table])
     lines.extend(_render_visual_tier_summary(plan, "allowance", a_ordered, a_ex, a_tiers))
     lines.extend(_render_tier_explanations("allowance", a_ordered, a_ex, a_tiers))

@@ -169,28 +169,16 @@ jobs:
           allowance_status=0
 
           uv run opencode-go-model-optimizer select --plan go --mode pareto --snapshot out/snapshot.json \
-            --format table --explain --allow-global-region --allow-free-training \
-            > out/pareto.txt 2> out/pareto.err || pareto_status=$?
+            --format json --explain --allow-global-region --allow-free-training \
+            > out/pareto.json 2> out/pareto.err || pareto_status=$?
 
           uv run opencode-go-model-optimizer select --plan go --mode allowance --snapshot out/snapshot.json \
-            --format table --explain --allow-global-region --allow-free-training \
-            > out/allowance.txt 2> out/allowance.err || allowance_status=$?
-
-          cp out/pareto.txt out/pareto_combined.txt
-          if [[ -s out/pareto.err ]]; then
-            printf '\n--- stderr ---\n' >> out/pareto_combined.txt
-            cat out/pareto.err >> out/pareto_combined.txt
-          fi
-
-          cp out/allowance.txt out/allowance_combined.txt
-          if [[ -s out/allowance.err ]]; then
-            printf '\n--- stderr ---\n' >> out/allowance_combined.txt
-            cat out/allowance.err >> out/allowance_combined.txt
-          fi
+            --format json --explain --allow-global-region --allow-free-training \
+            > out/allowance.json 2> out/allowance.err || allowance_status=$?
 
           echo "pareto_status=$pareto_status" >> "$GITHUB_OUTPUT"
           echo "allowance_status=$allowance_status" >> "$GITHUB_OUTPUT"
-          cat out/pareto.txt out/allowance.txt
+          cat out/pareto.json out/allowance.json
           cat out/pareto.err out/allowance.err >&2
 
           if [[ "$allowance_status" -ne 0 ]]; then
@@ -221,9 +209,11 @@ jobs:
             benchmarks=live
           fi
           uv run python scripts/render_optimizer_issue.py \
-            --pareto-output out/pareto_combined.txt \
+            --pareto-json out/pareto.json \
+            --pareto-stderr out/pareto.err \
             --pareto-status "$PARETO_STATUS" \
-            --allowance-output out/allowance_combined.txt \
+            --allowance-json out/allowance.json \
+            --allowance-stderr out/allowance.err \
             --allowance-status "$ALLOWANCE_STATUS" \
             --fetch-log out/fetch.log \
             --run-url "$run_url" \

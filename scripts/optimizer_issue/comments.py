@@ -1,8 +1,7 @@
-"""PR comment renderers for CI job results and optimizer ASCII table output."""
+"""PR comment renderers for CI job results and optimizer output."""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -11,86 +10,7 @@ from opencode_go_model_optimizer.formatters.markdown import (
     render_markdown_table,
 )
 
-_STDERR_SEPARATOR = "--- stderr ---"
-_ASCII_TABLE_ROW_RE = re.compile(r"^\s*\|.+\|\s*$")
-_ASCII_TABLE_BORDER_RE = re.compile(r"^\s*\+[-+]+\+\s*$")
-
-
-def _split_stderr_section(text: str) -> tuple[str, str]:
-    """Split combined optimizer output at the workflow's stderr separator line."""
-    lines = text.splitlines()
-    for idx, line in enumerate(lines):
-        if line.strip() == _STDERR_SEPARATOR:
-            return "\n".join(lines[:idx]), "\n".join(lines[idx + 1 :])
-    return text, ""
-
-
-def _split_ascii_table_row(line: str) -> list[str]:
-    """Split one ``| a | b |`` ASCII table row into stripped cells."""
-    inner = line.strip()[1:-1]
-    return [cell.strip() for cell in inner.split("|")]
-
-
-def _parse_ascii_output_blocks(text: str) -> list[dict[str, Any]]:
-    """Split optimizer stdout into ASCII-table and plain-line blocks, in order.
-
-    Border lines (``+---+``) are treated as table glue and never surface as
-    plain lines, so a bordered ASCII table always parses as a single block
-    whose first row is the header.
-    """
-    blocks: list[dict[str, Any]] = []
-    pending: list[str] = []
-    table_rows: list[list[str]] | None = None
-
-    def flush_pending() -> None:
-        nonlocal pending
-        if pending:
-            blocks.append({"kind": "lines", "lines": list(pending)})
-            pending.clear()
-
-    def flush_table() -> None:
-        nonlocal table_rows
-        if table_rows is not None:
-            blocks.append({"kind": "table", "headers": table_rows[0], "rows": table_rows[1:]})
-            table_rows = None
-
-    for raw in text.splitlines():
-        if _ASCII_TABLE_BORDER_RE.match(raw):
-            continue
-        if _ASCII_TABLE_ROW_RE.match(raw):
-            if table_rows is None:
-                flush_pending()
-                table_rows = []
-            table_rows.append(_split_ascii_table_row(raw))
-        else:
-            flush_table()
-            if raw.strip():
-                pending.append(raw.rstrip())
-    flush_table()
-    flush_pending()
-    return blocks
-
-
-def _format_table_cell(header: str, cell: str) -> str:
-    """Escape an ASCII table cell for GitHub markdown, styling known columns.
-
-    Model IDs get code spans and tier names get bold, matching the tables in
-    the issue comment.
-    """
-    escaped = cell.replace("|", "\\|")
-    if not escaped or escaped == "-":
-        return escaped
-    key = header.strip().lower()
-    if key == "model id":
-        return f"`{escaped}`"
-    if key == "tier":
-        return f"**{escaped}**"
-    return escaped
-
-
-def _render_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
-    """Render a parsed ASCII table as GitHub-flavored markdown table lines."""
-    return render_markdown_table(headers, rows, cell_formatter=_format_table_cell)
+from .common import _render_select_json_table
 
 
 def _ci_status_class(outcome: str) -> str:
@@ -181,133 +101,49 @@ def render_ci_comment_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
-def _parse_output_payload(
-    output: str | Path,
-) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]], str]:
-    """Read combined optimizer stdout/stderr and extract method banners, tables, and stray lines."""
-    text = Path(output).read_text(encoding="utf-8", errors="replace")
-    stdout_text, stderr_text = _split_stderr_section(text)
-    blocks = _parse_ascii_output_blocks(stdout_text)
-    tables = [b for b in blocks if b["kind"] == "table"]
-    method_lines: list[str] = []
-    stray_groups: list[dict[str, Any]] = []
-    for block in blocks:
-        if block["kind"] != "lines":
-            continue
-        kept: list[str] = []
-        for line in block["lines"]:
-            if line.startswith("Calculation method:"):
-                method_lines.append(line.removeprefix("Calculation method:").strip())
-            else:
-                kept.append(line)
-        if kept:
-            stray_groups.append({"kind": "lines", "lines": kept})
-    return method_lines, tables, stray_groups, stderr_text
+def _read_optional_text(path: str | Path | None) -> str:
+    if not path or not (file_path := Path(path)).is_file():
+        return ""
+    return file_path.read_text(encoding="utf-8", errors="replace")
 
 
-def _render_output_body(
-    method_lines: list[str],
-    tables: list[dict[str, Any]],
-    stray_groups: list[dict[str, Any]],
+def _render_dual_method_body(
+    payload: dict[str, Any] | None,
     stderr_text: str,
     *,
     failed: bool,
-    empty_message: str = "The optimizer produced no output.",
-    stderr_summary: str = "stderr",
-    additional_summary: str = "Additional optimizer output",
+    empty_message: str,
+    stderr_summary: str,
+    include_aa: bool,
 ) -> list[str]:
-    """Render parsed method banner, tables, stray stdout, and stderr into markdown lines."""
     lines: list[str] = []
-    for method in method_lines:
-        lines.append(f"- **Calculation method**: `{method}`")
-    if method_lines:
-        lines.append("")
-
-    for i, block in enumerate(tables):
-        if i:
-            lines.append("")
-        lines.extend(_render_markdown_table(block["headers"], block["rows"]))
-
-    if stray_groups:
-        if tables:
-            lines.append("")
-        stray_text = "\n\n".join("\n".join(g["lines"]) for g in stray_groups)
-        lines.extend(render_details_block(additional_summary, stray_text))
-
-    if not tables and not stray_groups:
+    if payload is None:
         lines.append(empty_message)
+    else:
+        method = payload.get("method") or payload.get("mode") or "unknown"
+        table, _ = _render_select_json_table(payload, include_aa=include_aa)
+        lines.extend([f"- **Calculation method**: `{method}`", "", *table])
 
-    stderr_details = render_details_block(
-        stderr_summary,
-        stderr_text,
-        open_by_default=(failed or not tables),
-    )
-    if stderr_details:
-        lines.extend(["", *stderr_details])
+    if stderr_text.strip():
+        lines.extend(
+            [
+                "",
+                *render_details_block(
+                    stderr_summary,
+                    stderr_text,
+                    open_by_default=(failed or payload is None),
+                ),
+            ]
+        )
     return lines
-
-
-def render_optimizer_output_comment(
-    output: str | Path,
-    run_url: str | None = None,
-    sha: str | None = None,
-    command: str | None = None,
-    benchmarks: str | None = None,
-    status: str | int | None = None,
-) -> str:
-    """Render a PR comment showing the optimizer's tier selections as a table."""
-    marker = (
-        f"<!-- optimizer-output-comment:commit={sha} -->"
-        if sha
-        else "<!-- optimizer-output-comment -->"
-    )
-    lines = [marker, "## Optimizer Tier Selections", ""]
-    if run_url:
-        lines.append(f"- **Workflow Run**: {run_url}")
-    if sha:
-        lines.append(f"- **Commit**: `{sha}`")
-    if command:
-        lines.append(f"- **Command**: `{command}`")
-    if status is not None and str(status) != "0":
-        lines.append(f"- **Exit status**: `{status}` (see output below)")
-    if benchmarks == "live":
-        lines.append("- **Benchmarks**: Artificial Analysis live fetch (key loaded from 1Password)")
-    elif benchmarks == "cache":
-        lines.append("- **Benchmarks**: Artificial Analysis cached benchmarks")
-    elif benchmarks == "unavailable":
-        lines.append(
-            "- **Benchmarks**: unavailable on this run (1Password secrets absent); "
-            "pareto selection falls back to allowance ranking"
-        )
-    if len(lines) > 3:
-        lines.append("")
-
-    method_lines, tables, stray_groups, stderr_text = _parse_output_payload(output)
-    failed = status is not None and str(status) != "0"
-    lines.extend(
-        _render_output_body(
-            method_lines,
-            tables,
-            stray_groups,
-            stderr_text,
-            failed=failed,
-        )
-    )
-
-    used_aa = (
-        benchmarks in ("live", "cache")
-        and not failed
-        and not any("ALLOWANCE" in m for m in method_lines)
-    )
-    if used_aa:
-        lines.extend(["", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
-    return "\n".join(lines).strip() + "\n"
 
 
 def render_dual_optimizer_output_comment(
     *,
-    pareto_output: str | Path | None = None,
-    allowance_output: str | Path | None = None,
+    pareto_payload: dict[str, Any] | None = None,
+    allowance_payload: dict[str, Any] | None = None,
+    pareto_stderr: str | Path | None = None,
+    allowance_stderr: str | Path | None = None,
     pareto_status: str | int | None = None,
     allowance_status: str | int | None = None,
     run_url: str | None = None,
@@ -369,50 +205,38 @@ def render_dual_optimizer_output_comment(
         )
 
     lines.extend(["### Pareto Method (`--mode pareto`, no fallback)", ""])
-    if pareto_output and Path(pareto_output).is_file():
-        p_methods, p_tables, p_strays, p_stderr = _parse_output_payload(pareto_output)
-        empty_msg = (
-            "Pareto calculation unavailable (1Password secrets absent; no fallback used)."
-            if secrets_missing and not pareto_ok
-            else "Pareto selection failed (no fallback applied)."
-            if not pareto_ok
-            else "The optimizer produced no output."
+    empty_msg = (
+        "Pareto calculation unavailable (1Password secrets absent; no fallback used)."
+        if secrets_missing and not pareto_ok
+        else "Pareto selection failed (no fallback applied)."
+        if not pareto_ok
+        else "The optimizer produced no output."
+    )
+    lines.extend(
+        _render_dual_method_body(
+            pareto_payload,
+            _read_optional_text(pareto_stderr),
+            failed=(not pareto_ok and not secrets_missing),
+            empty_message=empty_msg,
+            stderr_summary="Pareto stderr",
+            include_aa=True,
         )
-        lines.extend(
-            _render_output_body(
-                p_methods,
-                p_tables,
-                p_strays,
-                p_stderr,
-                failed=(not pareto_ok and not secrets_missing),
-                empty_message=empty_msg,
-                stderr_summary="Pareto stderr",
-                additional_summary="Additional Pareto output",
-            )
-        )
-    else:
-        lines.append("No Pareto output captured.")
+    )
 
     lines.extend(["", "### Allowance Method (`--mode allowance`)", ""])
-    if allowance_output and Path(allowance_output).is_file():
-        a_methods, a_tables, a_strays, a_stderr = _parse_output_payload(allowance_output)
-        lines.extend(
-            _render_output_body(
-                a_methods,
-                a_tables,
-                a_strays,
-                a_stderr,
-                failed=not allowance_ok,
-                empty_message="No allowance output produced.",
-                stderr_summary="Allowance stderr",
-                additional_summary="Additional allowance output",
-            )
+    lines.extend(
+        _render_dual_method_body(
+            allowance_payload,
+            _read_optional_text(allowance_stderr),
+            failed=not allowance_ok,
+            empty_message="No allowance output produced.",
+            stderr_summary="Allowance stderr",
+            include_aa=False,
         )
-    else:
-        lines.append("No allowance output captured.")
+    )
 
-    if fetch_log and Path(fetch_log).is_file():
-        fetch_text = Path(fetch_log).read_text(encoding="utf-8", errors="replace")
+    fetch_text = _read_optional_text(fetch_log)
+    if fetch_text:
         fetch_details = render_details_block(
             "Snapshot fetch log",
             fetch_text,

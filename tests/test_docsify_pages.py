@@ -172,12 +172,15 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "--mode pareto" in pr_ci_text
     assert "--mode allowance" in pr_ci_text
     assert "--allow-fallback" not in pr_ci_text
-    assert "--format table --explain --allow-global-region --allow-free-training" in pr_ci_text
+    assert "--format json --explain --allow-global-region --allow-free-training" in pr_ci_text
     assert "continue-on-error: true" in pr_ci_text
     assert "Render optimizer output comment" in pr_ci_text
     assert "scripts/render_optimizer_issue.py" in pr_ci_text
-    assert "--pareto-output" in pr_ci_text
-    assert "--allowance-output" in pr_ci_text
+    assert "--pareto-json out/pareto.json" in pr_ci_text
+    assert "--pareto-stderr out/pareto.err" in pr_ci_text
+    assert "--allowance-json out/allowance.json" in pr_ci_text
+    assert "--allowance-stderr out/allowance.err" in pr_ci_text
+    assert "_combined.txt" not in pr_ci_text
     assert "optimizer-output-comment:commit=" in pr_ci_text
     assert "Post or update PR comment with optimizer output" in pr_ci_text
     assert "Fail if the optimizer run failed" in pr_ci_text
