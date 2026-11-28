@@ -34,11 +34,9 @@ from opencode_go_model_optimizer.formatters.select import (
 )
 from opencode_go_model_optimizer.formatters.table import _append_column, render_table
 from opencode_go_model_optimizer.ingest.models import (
-    ModelLimit,
     PriceMultiplier,
     Privacy,
     RequestEstimate,
-    TokenCost,
 )
 from tests.factories import make_model
 
@@ -214,15 +212,15 @@ def test_format_select_table_with_missing_and_varied_models():
         "model-inf",
         name="Model Inf",
         monthly_allowance=float("inf"),
-        limit=ModelLimit(context=1000000),
+        context=1000000,
     )
     m2 = make_model(
         "model-dollar",
         name="Model Dollar",
         monthly_allowance=60.0,
-        cost=TokenCost(output=0.50),
+        output=0.50,
     )
-    m3 = make_model("model-none", cost=TokenCost(output=1.00))
+    m3 = make_model("model-none", output=1.00)
     models = [m1, m2, m3]
 
     tiers = {
@@ -253,11 +251,11 @@ def test_format_rank_table_pareto():
         aa_iq=75.5,
         composite_burn_pct=2.5,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         release_date="2026-10-01",
     )
     m2 = make_model("pareto-m2", monthly_allowance=float("inf"))
-    m3 = make_model("pareto-m3", cost=TokenCost(output=0.0))
+    m3 = make_model("pareto-m3", output=0.0)
     table = format_rank_table([m1, m2, m3], mode="pareto")
     assert "Tier" in table
     assert "heavy" in table
@@ -278,9 +276,9 @@ def test_format_rank_table_allowance():
         rank=1,
         tier="balanced",
         monthly_allowance=50.0,
-        cost=TokenCost(output=1.5),
+        output=1.5,
         release_date="2026-08-01",
-        limit=ModelLimit(context=500000),
+        context=500000,
     )
     m2 = make_model("allow-m2", monthly_allowance=float("inf"), status="deprecated")
     table = format_rank_table([m1, m2], mode="allowance")
@@ -326,8 +324,10 @@ def test_explain_tiers_and_table():
         "mod-1",
         name="Mod One",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.1),
-        limit=ModelLimit(context=200000),
+        input=1.0,
+        output=2.0,
+        cache_read=0.1,
+        context=200000,
         aa_iq=55.0,
         aa_coding=60.0,
         speed_tps=80.0,
@@ -522,8 +522,9 @@ def test_format_select_table_explain_multiplier_and_missing_padding():
         "mod-mult",
         name="Mod Mult",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=128000),
+        input=1.0,
+        output=2.0,
+        context=128000,
         aa_iq=80.0,
         bpe=1.2,
         composite_burn_pct=12.5,
@@ -534,7 +535,8 @@ def test_format_select_table_explain_multiplier_and_missing_padding():
         "mod-plain",
         name="Mod Plain",
         monthly_allowance=30.0,
-        cost=TokenCost(input=0.5, output=1.0),
+        input=0.5,
+        output=1.0,
     )
     tiers = {
         "heavy": "opencode-go/mod-mult",
@@ -565,9 +567,9 @@ def test_format_rank_table_optional_columns_and_empty():
         aa_iq=85.0,
         composite_burn_pct=15.0,
         monthly_allowance=60.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         release_date="2026-10-01",
-        limit=ModelLimit(context=200000),
+        context=200000,
         privacy=Privacy(zdr=True, trains_on_data=False),
     )
     m1.request_estimate = RequestEstimate(per_5h=50.0, per_week=200.0, per_month=900.0)

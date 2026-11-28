@@ -113,14 +113,14 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     zero = make_model("a", cost=paid, monthly_allowance=0.0)
     assert "zero" in exclusion_reasons(zero, c)[0]
     assert exclusion_reasons(make_model("free"), c) == []  # zero-cost: free pool
-    unlimited = make_model("a", cost=TokenCost(output=1), monthly_allowance=math.inf)
+    unlimited = make_model("a", output=1, monthly_allowance=math.inf)
     assert "unlimited" in exclusion_reasons(unlimited, c)[0]
-    ok = make_model("a", cost=TokenCost(output=1), monthly_allowance=5.0)
+    ok = make_model("a", output=1, monthly_allowance=5.0)
     assert exclusion_reasons(ok, c) == []
     trains = make_model(
         "t",
         privacy=Privacy(trains_on_data=True),
-        cost=TokenCost(output=1),
+        output=1,
         monthly_allowance=5.0,
     )
     assert "paid model trains" in exclusion_reasons(trains, SelectionCriteria())[0]
@@ -129,14 +129,12 @@ def test_exclusion_reasons_unpriced_and_unlimited():
         "consent",
         is_contributor=True,
         privacy=Privacy(trains_on_data=True),
-        cost=TokenCost(output=1),
+        output=1,
         monthly_allowance=5.0,
     )
     # Contributor status no longer adds a separate consent gate.
     assert exclusion_reasons(consent, SelectionCriteria(allow_paid_training=True)) == []
-    contrib_paid = make_model(
-        "cp", is_contributor=True, cost=TokenCost(output=1), monthly_allowance=10.0
-    )
+    contrib_paid = make_model("cp", is_contributor=True, output=1, monthly_allowance=10.0)
     assert exclusion_reasons(contrib_paid, c) == []
     global_model = make_model(
         "g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
@@ -146,14 +144,14 @@ def test_exclusion_reasons_unpriced_and_unlimited():
     contrib = make_model(
         "c1",
         is_contributor=True,
-        cost=TokenCost(output=0.0),
+        output=0.0,
         monthly_allowance=10.0,
     )
     assert exclusion_reasons(contrib, c) == []
     no_priv = make_model(
         "np",
         privacy=None,
-        cost=TokenCost(output=1.0),
+        output=1.0,
         monthly_allowance=10.0,
     )
     assert exclusion_reasons(no_priv, SelectionCriteria(require_zdr=True)) == [
@@ -202,7 +200,7 @@ def test_report_does_not_exclude_zero_cost_unlimited_allowance():
 
 
 def test_empty_tier_becomes_warning():
-    snap = create_snapshot([make_model("only", cost=TokenCost(output=1))])
+    snap = create_snapshot([make_model("only", output=1)])
     report = build_report(snapshot=snap, now=NOW)
     assert any("no model available for tier heavy" in w for w in report["warnings"])
     assert report["plans"]["go"]["explanations"]["heavy"]["why"].startswith("no eligible")

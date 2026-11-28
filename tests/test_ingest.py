@@ -816,7 +816,8 @@ def test_merge_catalogue_metadata_models_dev_backfill():
     existing = make_model(
         "existing-model",
         release_date="2025-01-01",
-        limit=ModelLimit(context=1000, output=2000),
+        context=1000,
+        max_output=2000,
     )
     merge_catalogue_metadata(
         [existing],
@@ -1570,7 +1571,8 @@ def test_apply_request_estimates_without_console_or_go_requests_is_empty():
 
     model = make_model(
         "m",
-        cost=TokenCost(input=1.0, output=1.0),
+        input=1.0,
+        output=1.0,
         plan_allowances={"go": 15.0},
     )
     apply_request_estimates([model], None)
@@ -1580,7 +1582,9 @@ def test_apply_request_estimates_without_console_or_go_requests_is_empty():
 def test_fetch_and_build_applies_scraped_console_profiles():
     model = make_model(
         "test-model",
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+        input=1.0,
+        output=2.0,
+        cache_read=0.5,
         plan_allowances={"go": 15.0},
     )
     with (
@@ -1598,7 +1602,9 @@ def test_fetch_and_build_applies_scraped_console_profiles():
 def test_fetch_and_build_warns_when_console_profiles_are_unavailable():
     model = make_model(
         "test-model",
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+        input=1.0,
+        output=2.0,
+        cache_read=0.5,
         plan_allowances={"go": 15.0},
     )
     with (
