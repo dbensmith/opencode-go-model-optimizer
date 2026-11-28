@@ -2,7 +2,10 @@
 
 from opencode_go_model_optimizer.ingest.artificial_analysis import (
     fetch_aa_benchmarks,
+    get_aa_cache_path,
+    load_cached_aa_benchmarks,
     lookup_aa_benchmark,
+    save_cached_aa_benchmarks,
 )
 from opencode_go_model_optimizer.ingest.catalogue import (
     apply_request_estimates,
@@ -69,7 +72,9 @@ __all__ = [
     "fetch_console_profiles",
     "fetch_docs_mdx",
     "fetch_models_dev",
+    "get_aa_cache_path",
     "get_cache_snapshot_path",
+    "load_cached_aa_benchmarks",
     "load_cached_snapshot",
     "load_snapshot",
     "lookup_aa_benchmark",
@@ -82,6 +87,7 @@ __all__ = [
     "parse_models_dev",
     "parse_privacy",
     "parse_table_rows",
+    "save_cached_aa_benchmarks",
     "save_cached_snapshot",
     "save_snapshot",
 ]

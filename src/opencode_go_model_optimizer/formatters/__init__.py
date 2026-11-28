@@ -12,12 +12,13 @@ from opencode_go_model_optimizer.formatters.select import (
     settings_payload,
     tier_display_names,
 )
-from opencode_go_model_optimizer.formatters.table import render_table
+from opencode_go_model_optimizer.formatters.table import format_method_banner, render_table
 
 __all__ = [
     "explain_tiers",
     "format_diff_json",
     "format_diff_table",
+    "format_method_banner",
     "format_rank_json",
     "format_rank_table",
     "format_select_compact",

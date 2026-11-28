@@ -1,6 +1,9 @@
 """Tests for snapshot drift diffing."""
 
+import pytest
+
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
+from opencode_go_model_optimizer.engine.tiers import BenchmarksUnavailableError
 from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
@@ -166,3 +169,15 @@ def test_capability_changes_detected_and_rendered():
 
     same = diff_snapshots(_snapshot("a", [old]), _snapshot("b", [old]))
     assert same.capability_changes == {}
+
+
+def test_diff_snapshots_pareto_fallback_requires_opt_in():
+    old_snap = _snapshot("2026-01-01T00:00:00Z", _old_models())
+    new_snap = _snapshot("2026-02-01T00:00:00Z", _new_models())
+
+    with pytest.raises(BenchmarksUnavailableError, match="--allow-fallback"):
+        diff_snapshots(old_snap, new_snap, mode="pareto")
+
+    diff_fb = diff_snapshots(old_snap, new_snap, mode="pareto", allow_fallback=True)
+    assert diff_fb.mode == "allowance"
+    assert diff_fb.fallback is True

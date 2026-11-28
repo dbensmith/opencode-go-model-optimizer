@@ -5,7 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
-from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, resolve_mode, select_tiers
+from opencode_go_model_optimizer.engine.pareto import filter_benchmarked_models
+from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, select_tiers
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 from opencode_go_model_optimizer.numbers import serialize_inf_float
@@ -50,6 +51,8 @@ class SnapshotDiff(BaseModel):
     old_fetched_at: str = ""
     new_fetched_at: str = ""
     plan: str = "go"
+    mode: str = "allowance"
+    fallback: bool = False
     added: list[str] = Field(default_factory=list)
     removed: list[str] = Field(default_factory=list)
     status_changes: dict[str, dict[str, str]] = Field(default_factory=dict)
@@ -136,6 +139,8 @@ def diff_snapshots(
     mode: str = "auto",
     plan: str = "go",
     profile: str = "general",
+    *,
+    allow_fallback: bool = False,
 ) -> SnapshotDiff:
     """Compute catalog, pricing, status, and tier-assignment drift between snapshots."""
     old_models = _prepare_models(old_snap, plan)
@@ -195,10 +200,32 @@ def diff_snapshots(
             )
             note(model_id, change_type, {"status": (old_model.status, new_model.status)})
 
-    resolved_mode = resolve_mode(mode, old_models + new_models)
-    criteria = SelectionCriteria(mode=resolved_mode, profile=profile, price_basis="list")
-    old_tiers = select_tiers(old_models, criteria).primary
-    new_tiers = select_tiers(new_models, criteria).primary
+    if mode == "auto":
+        old_mode = "pareto" if filter_benchmarked_models(old_models) else "allowance"
+        new_mode = "pareto" if filter_benchmarked_models(new_models) else "allowance"
+    else:
+        old_mode = mode
+        new_mode = mode
+    old_sel = select_tiers(
+        old_models,
+        SelectionCriteria(
+            mode=old_mode, profile=profile, price_basis="list", allow_fallback=allow_fallback
+        ),
+    )
+    new_sel = select_tiers(
+        new_models,
+        SelectionCriteria(
+            mode=new_mode, profile=profile, price_basis="list", allow_fallback=allow_fallback
+        ),
+    )
+    old_tiers = old_sel.primary
+    new_tiers = new_sel.primary
+    fell_back = old_sel.fell_back or new_sel.fell_back
+    actual_mode = (
+        "allowance"
+        if old_sel.method == "allowance" and new_sel.method == "allowance"
+        else new_sel.method
+    )
     tier_changes = {
         tier: {"old": old_tiers.get(tier, ""), "new": new_tiers.get(tier, "")}
         for tier in STANDARD_TIERS
@@ -209,6 +236,8 @@ def diff_snapshots(
         old_fetched_at=old_snap.fetched_at,
         new_fetched_at=new_snap.fetched_at,
         plan=plan,
+        mode=actual_mode,
+        fallback=fell_back,
         added=added,
         removed=removed,
         status_changes=status_changes,

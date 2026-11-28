@@ -291,7 +291,7 @@ def render_issue_markdown(
         include_pages_home=True,
     )
 
-    has_aa_data = benchmark_source == "aa_live"
+    has_aa_data = benchmark_source in ("aa_live", "aa_cache")
     choice_rows: list[list[str]] = []
     for tier in ordered_tiers:
         ex = explanations.get(tier) or {}
@@ -373,6 +373,322 @@ def render_issue_markdown(
         lines.extend(["", "### Full Script Output", "", *script_details])
 
     if has_aa_data:
+        lines.extend(["", "---", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
+
+    return "\n".join(lines) + "\n"
+
+
+def _render_method_choices_table(
+    ordered_tiers: list[str],
+    explanations: dict[str, Any],
+    tiers: dict[str, Any],
+    *,
+    include_aa: bool,
+) -> tuple[list[str], bool]:
+    """Render a method's choices table, returning ``(markdown_lines, saw_aa_metrics)``."""
+    saw_aa = False
+    headers = ["Tier", "Model ID", "Allowance", "Output Cost", "Context"]
+    if include_aa:
+        headers.extend(["AA IQ", "AA Coding", "Speed (tok/s)", "BPE", "Pareto"])
+    headers.extend(["Burn %", "Turn Cost", "Price x"])
+
+    rows: list[list[str]] = []
+    for tier in ordered_tiers:
+        ex = explanations.get(tier) or {}
+        model_id = _tier_pick_id(tier, explanations, tiers)
+        if any(ex.get(k) is not None for k in ("aa_iq", "aa_coding", "speed_tps")):
+            saw_aa = True
+        burn_str = format_burn(ex.get("quota_burn_pct"))
+        turn_cost = ex.get("turn_cost_usd")
+        turn_str = f"${turn_cost:.4f}" if is_number(turn_cost) else "-"
+        row = [
+            f"**{tier}**",
+            f"`{model_id}`",
+            format_allowance_value(ex.get("monthly_allowance")),
+            format_cost_value(ex.get("output_cost_per_1m")),
+            format_int(ex.get("context")),
+        ]
+        if include_aa:
+            row.extend(
+                [
+                    format_float(ex.get("aa_iq"), 1),
+                    format_float(ex.get("aa_coding"), 1),
+                    format_float(ex.get("speed_tps"), 1),
+                    format_float(ex.get("bpe"), 3),
+                    format_pareto(ex.get("is_pareto")),
+                ]
+            )
+        row.extend(
+            [
+                burn_str,
+                turn_str,
+                format_multiplier(ex.get("price_multiplier"), ex.get("next_price_change")),
+            ]
+        )
+        rows.append(row)
+    return render_markdown_table(headers, rows), saw_aa
+
+
+def _render_dual_published_artifacts_section(site_base: str, *, pareto_ok: bool) -> list[str]:
+    pareto_select_entry = (
+        [
+            "Pareto selection JSON",
+            f"[pareto/select.json]({_site_file(site_base, 'pareto/select.json')})",
+        ]
+        if pareto_ok
+        else [
+            "Pareto failure log",
+            f"[pareto/error.txt]({_site_file(site_base, 'pareto/error.txt')})",
+        ]
+    )
+    rows = [
+        [
+            "Live analysis, Pareto frontier & multi-plan fallbacks",
+            f"[Open page]({_site_page(site_base, 'analysis')})",
+        ],
+        ["Complete data index", f"[Open page]({_site_page(site_base, 'data')})"],
+        pareto_select_entry,
+    ]
+    if pareto_ok:
+        rows.extend(
+            [
+                [
+                    "Pareto ranked catalog (all models)",
+                    f"[pareto/rank.json]({_site_file(site_base, 'pareto/rank.json')})",
+                ],
+                [
+                    "Pareto `go` / `go-plus` / `go-teams` top-3 choices",
+                    f"[go]({_site_file(site_base, 'pareto/plans/go.json')}) | "
+                    f"[go-plus]({_site_file(site_base, 'pareto/plans/go-plus.json')}) | "
+                    f"[go-teams]({_site_file(site_base, 'pareto/plans/go-teams.json')})",
+                ],
+            ]
+        )
+    rows.extend(
+        [
+            [
+                "Allowance selection JSON",
+                f"[allowance/select.json]({_site_file(site_base, 'allowance/select.json')})",
+            ],
+            [
+                "Allowance ranked catalog (all models)",
+                f"[allowance/rank.json]({_site_file(site_base, 'allowance/rank.json')})",
+            ],
+            [
+                "Allowance `go` / `go-plus` / `go-teams` top-3 choices",
+                f"[go]({_site_file(site_base, 'allowance/plans/go.json')}) | "
+                f"[go-plus]({_site_file(site_base, 'allowance/plans/go-plus.json')}) | "
+                f"[go-teams]({_site_file(site_base, 'allowance/plans/go-teams.json')})",
+            ],
+            [
+                "Free-tier choices across privacy/region flags",
+                f"[free-matrix.json]({_site_file(site_base, 'free-matrix.json')})",
+            ],
+            [
+                "Normalized ingest snapshot from every source",
+                f"[snapshot.json]({_site_file(site_base, 'snapshot.json')})",
+            ],
+            [
+                "Full script output (stdout/stderr)",
+                f"[full-output.txt]({_site_file(site_base, 'full-output.txt')})",
+            ],
+            [
+                "Ingest warnings & provenance log",
+                f"[fetch-log.txt]({_site_file(site_base, 'fetch-log.txt')})",
+            ],
+        ]
+    )
+    return [
+        "",
+        "### Other Choices & Published Data",
+        "",
+        "Every artifact from this run is published on the GitHub Pages site:",
+        "",
+        *render_markdown_table(["Artifact", "Link"], rows),
+    ]
+
+
+def render_dual_issue_markdown(
+    pareto_payload: dict[str, Any] | None,
+    allowance_payload: dict[str, Any],
+    *,
+    pareto_rank_models: list[dict[str, Any]] | None = None,
+    allowance_rank_models: list[dict[str, Any]] | None = None,
+    pareto_error: str = "",
+    script_output: str = "",
+    run_url: str | None = None,
+    site_url: str | None = None,
+    snapshot_payload: dict[str, Any] | None = None,
+) -> str:
+    """Render issue and Docsify README publishing both Pareto and Allowance without fallback."""
+    from opencode_go_model_optimizer.formatters.markdown import render_run_settings_lines
+
+    site_base = _normalize_site_url(site_url)
+    primary = pareto_payload or allowance_payload
+    plan = primary.get("plan", "go")
+    evaluated_at = primary.get("evaluated_at", "-")
+    snap_info = primary.get("snapshot") or {}
+    snap_meta = (snapshot_payload or {}).get("metadata") or {}
+    snap_source = snap_info.get("source", "file")
+    fetched_at = (snapshot_payload or {}).get("fetched_at") or snap_info.get("fetched_at", "-")
+    benchmark_source = snap_meta.get("benchmark_source") or snap_info.get(
+        "benchmark_source", "none"
+    )
+    benchmark_error = snap_meta.get("benchmark_error") or snap_info.get("benchmark_error")
+
+    pareto_ok = (
+        pareto_payload is not None
+        and (pareto_payload.get("method") or pareto_payload.get("mode")) == "pareto"
+        and not pareto_payload.get("fallback")
+    )
+
+    lines = [
+        "## OpenCode Go Model Optimizer — Latest Tier Selections",
+        "",
+        f"- **Updated**: `{evaluated_at}`",
+        f"- **Plan**: `{plan}` | **Snapshot**: `{snap_source}` (`{fetched_at}`) | **Benchmarks**: `{benchmark_source}`",
+        f"- **Pareto method (`--mode pareto`, no fallback)**: "
+        f"{'**SUCCEEDED**' if pareto_ok else '**FAILED** (no fallback used)'}",
+        "- **Allowance method (`--mode allowance`, no fallback)**: **SUCCEEDED**",
+    ]
+    if run_url:
+        lines.append(f"- **Workflow Run**: {run_url}")
+    if site_base:
+        lines.append(f"- **GitHub Pages**: {site_base}")
+        lines.append(f"- **All data & other choices**: {_site_page(site_base, 'data')}")
+
+    if not pareto_ok:
+        detail = benchmark_error or (
+            pareto_error.strip().splitlines()[-1] if pareto_error.strip() else ""
+        )
+        suffix = f": `{detail}`" if detail else "."
+        lines.extend(
+            [
+                "",
+                "> [!CAUTION]",
+                f"> **Artificial Analysis / Pareto calculation FAILED (no fallback used)**{suffix}",
+                "> Both methods are published below so the Artificial Analysis failure is immediately visible.",
+            ]
+        )
+
+    # Side-by-side method comparison table
+    a_tiers = allowance_payload.get("tiers") or {}
+    a_ex = allowance_payload.get("explanations") or {}
+    p_tiers = (pareto_payload or {}).get("tiers") or {}
+    p_ex = (pareto_payload or {}).get("explanations") or {}
+    comp_tiers = _ordered_tiers(a_ex, a_tiers)
+    comp_rows: list[list[str]] = []
+    for tier in comp_tiers:
+        a_pick = _tier_pick_id(tier, a_ex, a_tiers)
+        if pareto_ok:
+            p_pick = _tier_pick_id(tier, p_ex, p_tiers)
+            match_str = "Same" if p_pick == a_pick else "Different"
+            p_cell = f"`{p_pick}`"
+        else:
+            p_cell = "FAILED (no fallback)"
+            match_str = "-"
+        comp_rows.append([f"**{tier}**", p_cell, f"`{a_pick}`", match_str])
+    lines.extend(
+        [
+            "",
+            "### Method Comparison",
+            "",
+            *render_markdown_table(
+                [
+                    "Tier",
+                    "Pareto Pick (AA Benchmarks)",
+                    "Allowance Pick (Plan Pricing)",
+                    "Match",
+                ],
+                comp_rows,
+            ),
+        ]
+    )
+
+    settings = primary.get("settings") or {}
+    if settings:
+        display_settings = {
+            **settings,
+            "mode": "pareto + allowance (no fallback)",
+            "allow_fallback": False,
+        }
+        lines.extend(
+            [
+                "",
+                *render_run_settings_lines(
+                    display_settings,
+                    heading="### Run Settings",
+                    default_mode="pareto + allowance",
+                    default_top_n=1,
+                ),
+            ]
+        )
+
+    has_aa_data = False
+    lines.extend(["", "### Pareto Method Selections (`--mode pareto`, no fallback)"])
+    if pareto_ok and pareto_payload is not None:
+        p_ordered = _ordered_tiers(p_ex, p_tiers)
+        p_table, saw_aa = _render_method_choices_table(p_ordered, p_ex, p_tiers, include_aa=True)
+        has_aa_data = benchmark_source in ("aa_live", "aa_cache") or saw_aa
+        lines.extend(["", *p_table])
+        lines.extend(_render_visual_tier_summary(plan, "pareto", p_ordered, p_ex, p_tiers))
+        lines.extend(_render_tier_explanations("pareto", p_ordered, p_ex, p_tiers))
+        if pareto_rank_models:
+            lines.extend(
+                [
+                    "",
+                    "#### Pareto Full Comparison Catalog (`rank --mode pareto`)",
+                    "",
+                    f"All {len(pareto_rank_models)} models evaluated by `rank --mode pareto`.",
+                    "",
+                    *_render_ranked_catalog_rows(pareto_rank_models),
+                ]
+            )
+    else:
+        lines.extend(
+            [
+                "",
+                "Pareto selection failed because Artificial Analysis benchmarks were unavailable and fallback is disabled.",
+            ]
+        )
+        err_block = render_details_block(
+            "Pareto error output",
+            pareto_error or benchmark_error or "Pareto calculation failed (no stderr captured).",
+            open_by_default=True,
+        )
+        if err_block:
+            lines.extend(["", *err_block])
+
+    lines.extend(["", "### Allowance Method Selections (`--mode allowance`, no fallback)"])
+    a_ordered = _ordered_tiers(a_ex, a_tiers)
+    a_table, _ = _render_method_choices_table(a_ordered, a_ex, a_tiers, include_aa=False)
+    lines.extend(["", *a_table])
+    lines.extend(_render_visual_tier_summary(plan, "allowance", a_ordered, a_ex, a_tiers))
+    lines.extend(_render_tier_explanations("allowance", a_ordered, a_ex, a_tiers))
+    if allowance_rank_models:
+        lines.extend(
+            [
+                "",
+                "#### Allowance Full Comparison Catalog (`rank --mode allowance`)",
+                "",
+                f"All {len(allowance_rank_models)} models evaluated by `rank --mode allowance`.",
+                "",
+                *_render_ranked_catalog_rows(allowance_rank_models),
+            ]
+        )
+
+    if site_base:
+        lines.extend(_render_dual_published_artifacts_section(site_base, pareto_ok=pareto_ok))
+
+    script_details = render_details_block(
+        "<code>optimizer</code> full output",
+        script_output,
+        open_by_default=not pareto_ok,
+    )
+    if script_details:
+        lines.extend(["", "### Full Script Output", "", *script_details])
+
+    if pareto_ok and has_aa_data:
         lines.extend(["", "---", "*Source: Artificial Analysis (artificialanalysis.ai)*"])
 
     return "\n".join(lines) + "\n"

@@ -89,9 +89,10 @@ Consumers (such as agent orchestrators, developer tools, CI workflows, or config
 
 ### Operating Modes
 
-- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE). Only Pareto-optimal models are eligible: `heavy` is the value winner among frontier models within 10% of the best quality, `balanced` the value winner among models at least 60% as capable as the best, and `light` the lowest-burn frontier model. Tiers may share a model rather than falling back to a dominated one.
+- **Pareto Mode (`--mode pareto`):** Evaluates Artificial Analysis benchmarks (Intelligence & Engineering capability indices) against monthly quota burn using Bidirectional Pareto Efficiency (BPE). Only Pareto-optimal models are eligible: `heavy` is the value winner among frontier models within 10% of the best quality, `balanced` the value winner among models at least 60% as capable as the best, and `light` the lowest-burn frontier model. Tiers may share a model rather than falling back to a dominated one. If no eligible paid models have Artificial Analysis benchmarks (e.g. `AA_API_KEY` is missing or AA returned HTTP 429), `pareto` fails unless you explicitly opt in with `--allow-fallback`.
 - **Allowance Mode (`--mode allowance`):** Zero-API-key heuristic ranking models by published monthly plan allowance, output token costs, and release recency.
-- **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. Without `AA_API_KEY` no benchmarks exist, so `auto` always resolves to allowance mode.
+- **Auto (`--mode auto`, the default):** Uses Pareto when benchmark data is present, otherwise allowance. When `AA_API_KEY` was configured and the Artificial Analysis fetch failed, `auto` treats that as a Pareto error instead of silently falling back unless `--allow-fallback` is passed.
+- **Loud Method Announcement:** Every invocation of `select`, `rank`, and `diff` loudly announces the calculation method that actually produced the output: `stderr` prints `METHOD=PARETO`, `METHOD=ALLOWANCE`, or `WARNING: FALLBACK ACTIVE ...`, table outputs begin with a `Calculation method:` header line, `json` sets `"mode"`, `"method"`, `"fallback"`, and `"requested_mode"`, `env` emits `OPENCODE_MODEL_METHOD` and `OPENCODE_MODEL_FALLBACK`, and `github-output` emits `method` and `fallback`.
 
 ```mermaid
 flowchart TD
@@ -275,6 +276,9 @@ uvx opencode-go-model-optimizer select --format json
     },
     "evaluated_at": "2026-11-11T02:47:40+00:00",
     "mode": "allowance",
+    "method": "allowance",
+    "fallback": false,
+    "requested_mode": "auto",
     "snapshot": {
       "source": "live",
       "fetched_at": "2026-11-11T02:47:38+00:00",
@@ -286,11 +290,16 @@ uvx opencode-go-model-optimizer select --format json
   `names` mirrors `tiers` in JSON, the table adds a **Model Name** column, `compact`
   lines append the display name (`<tier> <model_id> <display name>`), `env` adds
   `OPENCODE_MODEL_<TIER>_NAME`, and `github-output` adds `<tier>_name`. Picks with no
-  catalogue name (or empty tiers) get an empty string / `-`.
+  catalogue name (or empty tiers) get an empty string / `-`. JSON also reports the actual
+  calculation method (`mode`, `method`, `fallback`, `requested_mode`), tables start with
+  `Calculation method: ...`, `env` adds `OPENCODE_MODEL_METHOD` and `OPENCODE_MODEL_FALLBACK`,
+  and `github-output` adds `method` and `fallback`.
   The `snapshot` block (JSON only) records provenance: `source` is `file` (`--snapshot`),
   `cache`, `live`, or `stale-cache` (your local cache, used after a live fetch failure).
   `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
-  `speed_tps`) came from: `aa_live` (fetched with your own `AA_API_KEY`) or `none`.
+  `speed_tps`) came from: `aa_live` (fetched with your own `AA_API_KEY`), `aa_cache`
+  (loaded from the local AA benchmark cache via `--aa-cache-ttl`), or `none`. When an AA
+  fetch fails, `snapshot.benchmark_error` records the reason (e.g. HTTP 429 and reset time).
   The `settings` block records the effective run criteria: mode, profile, price/burn basis,
   Global/paid-training/free-training flags, retention/ZDR, context/output/cost/burn filters,
   skip list and tier pins. The issue, CI comment and GitHub Pages report render it under
@@ -391,7 +400,7 @@ AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 
 If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
-Pull requests run [`pr-ci.yml`](.github/workflows/pr-ci.yml), which runs the shared test suite ([`ci.yml`](.github/workflows/ci.yml)) and publishes the CI job results and output as a comment on the pull request, then runs the optimizer on the PR's code with the same command and CI privacy flags as the scheduled run (`select --plan go --mode pareto --format table --explain --allow-global-region --allow-free-training`) and posts the resulting tier selections as a Markdown table in a second comment ("Optimizer Tier Selections") keyed to the PR head commit, with any stray stdout lines and stderr (appended after a `--- stderr ---` separator) folded into collapsible sections. The AA key is loaded from 1Password when repository secrets are available to the run (same-repo PRs); fork PRs receive no secrets, so the optimizer runs without Artificial Analysis benchmarks and pareto selection falls back to allowance ranking. A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) then runs tests, runs the optimizer, updates the issue, and uploads the rendered Docsify site as a `docs-site` artifact on merge to `main`, every 8 hours (`0 7,15,23 * * *` UTC), and on demand (`workflow_dispatch`). It loads `AA_API_KEY` via `1password/load-secrets-action` using the `OP_SERVICE_ACCOUNT_TOKEN` repository secret and `AA_SECRET_REF` repository variable/secret (`op://<vault>/<item>/<field>`), fetches one normalized snapshot, runs every selection against that snapshot with `--allow-global-region --allow-free-training` (CI accepts Global-region models and free models that train, while paid training stays blocked), formats a Markdown table, explanation, the full comparison catalog of every ranked model (not just the tier winners), and the full script output via [`scripts/render_optimizer_issue.py`](scripts/render_optimizer_issue.py), and packages the rendered report, CLI usage docs, and every collected artifact (raw selection and rank JSON, per-plan top-3 choices, free-tier matrix, normalized snapshot, full output, tables and charts) as a Docsify site for the `docs-site` artifact. The separate [`publish-pages.yml`](.github/workflows/publish-pages.yml) workflow deploys that artifact to GitHub Pages whenever Run Optimizer completes successfully on `main`; it can also be run manually to deploy a specific run id or the latest successful run. The optimizer workflow creates or updates the open GitHub issue labeled `optimizer-results` in that same optimizer run, without waiting for deployment. The issue includes the GitHub Pages URL and links every published artifact, including the **All Data & Other Choices** page, so models that were not selected remain inspectable.
+Pull requests run [`pr-ci.yml`](.github/workflows/pr-ci.yml), which runs the shared test suite ([`ci.yml`](.github/workflows/ci.yml)) and publishes the CI job results and output as a comment on the pull request, then runs **both** calculation methods (`--mode pareto` and `--mode allowance`, both without `--allow-fallback`) against one shared snapshot and posts both tables in a second PR comment ("Optimizer Tier Selections") keyed to the PR head commit, with stderr folded into collapsible sections. The AA key is loaded from 1Password when repository secrets are available (same-repo PRs) and cached across 8-hour UTC slots via `aa-benchmarks.json` (`OPENCODE_GO_AA_CACHE_TTL=28800`) to stay well within Artificial Analysis's 100-request/day free limit; fork PRs receive no secrets, so Pareto is marked unavailable without falling back while Allowance runs normally. A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) then runs tests, fetches one snapshot (live AA on scheduled/manual runs, 8-hour cached AA on `push` to `main`), runs **both** methods without fallback, updates the `optimizer-results` GitHub issue and `docs-site` artifact with side-by-side Pareto and Allowance outputs (loudly flagging any Artificial Analysis failure while still publishing Allowance), and fails the job if either method failed. The separate [`publish-pages.yml`](.github/workflows/publish-pages.yml) workflow deploys that `docs-site` artifact to GitHub Pages.
 
 ### Offline Usage
 
@@ -430,6 +439,8 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 
 - **`--plan {go,go-plus,go-teams}`**: OpenCode plan tier (default: `go`).
 - **`--mode {auto,pareto,allowance}`**: Ranking mode (default: `auto`).
+- **`--allow-fallback`**: Allow falling back from `pareto` mode to `allowance` mode when Artificial Analysis benchmarks are unavailable (disabled by default; without this flag, `pareto` fails loudly).
+- **`--aa-cache-ttl <seconds>`**: Cache TTL in seconds for Artificial Analysis benchmarks stored in `aa-benchmarks.json` (default: 0, or `OPENCODE_GO_AA_CACHE_TTL`). Accepted by `select`, `rank`, `diff`, and `fetch`.
 - **`--snapshot <file>`**: Use a local snapshot JSON instead of fetching (see [Offline Usage](#offline-usage)).
 - **`-o, --output <file>`**: Write output to a file instead of stdout.
 - **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights the AA Engineering capability index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).

@@ -156,16 +156,22 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     # PR-comment step, which is skipped for push/schedule runs.
     assert "pull-requests: write" in workflow_text
 
-    # The optimizer also runs on PRs and its actual output is posted as a
-    # PR comment, with graceful degradation when secrets are absent.
+    # The optimizer runs BOTH methods without fallback on PRs and posts both outputs.
     assert "optimizer-output:" in pr_ci_text
     assert "Detect 1Password configuration" in pr_ci_text
     assert "Load AA API key from 1Password" in pr_ci_text
     assert "1password/load-secrets-action@v5" in pr_ci_text
+    assert "Restore Artificial Analysis cache" in pr_ci_text
+    assert "Save Artificial Analysis cache" in pr_ci_text
+    assert "--mode pareto" in pr_ci_text
+    assert "--mode allowance" in pr_ci_text
+    assert "--allow-fallback" not in pr_ci_text
     assert "--format table --explain --allow-global-region --allow-free-training" in pr_ci_text
     assert "continue-on-error: true" in pr_ci_text
     assert "Render optimizer output comment" in pr_ci_text
     assert "scripts/render_optimizer_issue.py" in pr_ci_text
+    assert "--pareto-output" in pr_ci_text
+    assert "--allowance-output" in pr_ci_text
     assert "optimizer-output-comment:commit=" in pr_ci_text
     assert "Post or update PR comment with optimizer output" in pr_ci_text
     assert "Fail if the optimizer run failed" in pr_ci_text
@@ -191,25 +197,32 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "Configure GitHub Pages" in workflow_text
     assert "Upload Docsify site artifact" in workflow_text
 
-    # The issue links the published Pages dataset: configure-pages must run
-    # before the optimizer step so its base_url output can be rendered in,
-    # and the whole dataset (per-plan selections, free matrix) ships to the site.
+    # Both methods run without fallback against one shared snapshot, and both are
+    # staged and published before the final failure check.
     assert "id: pages" in workflow_text
     assert "SITE_URL: ${{ steps.pages.outputs.base_url }}" in workflow_text
     assert "--site-url" in workflow_text
     assert "--data-output out/data.md" in workflow_text
     assert "uv run opencode-go-model-optimizer fetch" in workflow_text
+    assert "Restore Artificial Analysis cache" in workflow_text
+    assert "Save Artificial Analysis cache" in workflow_text
+    assert "--allow-fallback" not in workflow_text
     assert "out/snapshot.json" in workflow_text
     assert "out/site/snapshot.json" in workflow_text
-    assert "cp -a out/plans out/site/plans" in workflow_text
+    assert "cp -a out/pareto out/site/pareto" in workflow_text
+    assert "cp -a out/allowance out/site/allowance" in workflow_text
     assert "cp out/free-matrix.json out/site/free-matrix.json" in workflow_text
     assert "out/site/full-output.txt" in workflow_text
-    assert "out/site/table.txt" in workflow_text
     assert "out/site/fetch-log.txt" in workflow_text
     assert "out/site/data.md" in workflow_text
-    assert workflow_text.index("Configure GitHub Pages") < workflow_text.index("Run optimizer")
+    assert workflow_text.index("Configure GitHub Pages") < workflow_text.index(
+        "Run optimizer (Pareto & Allowance, no fallback)"
+    )
     assert workflow_text.index("Upload Docsify site artifact") < workflow_text.index(
         "Create or update GitHub issue"
+    )
+    assert workflow_text.index("Create or update GitHub issue") < workflow_text.index(
+        "Fail if Pareto or Allowance calculation failed"
     )
 
     assert "actions/configure-pages@v6" in workflow_text
@@ -221,6 +234,8 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "types: [completed]" in pages_text
     assert "workflow_dispatch:" in pages_text
     assert "github.event.workflow_run.conclusion == 'success'" in pages_text
+    assert "github.event.workflow_run.conclusion == 'failure'" in pages_text
+    assert "has_artifact" in pages_text
     assert "pages: write" in pages_text
     assert "id-token: write" in pages_text
     assert "name: github-pages" in pages_text
@@ -231,11 +246,15 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "actions/deploy-pages@v5" in pages_text
     assert "Deploy to GitHub Pages" in pages_text
 
-    # Check generation of analysis.md and rank.json
+    # Check generation of analysis.md and dual-method rank/plan JSONs
     assert "out/site/analysis.md" in workflow_text
-    assert "out/site/rank.json" in workflow_text
-    assert "--rank-json out/rank.json" in workflow_text
-    assert "--plan-json" in workflow_text
+    assert "out/pareto/rank.json" in workflow_text
+    assert "out/allowance/rank.json" in workflow_text
+    assert "--pareto-rank-json out/pareto/rank.json" in workflow_text
+    assert "--allowance-rank-json out/allowance/rank.json" in workflow_text
+    assert "--pareto-plan-json" in workflow_text
+    assert "--allowance-plan-json" in workflow_text
+    assert "--pareto-error out/pareto/error.txt" in workflow_text
     assert "--free-matrix-json" in workflow_text
     assert "--charts-dir out/charts" in workflow_text
     assert "out/site/charts" in workflow_text
@@ -258,9 +277,13 @@ def test_docsify_analysis_page_and_sidebar() -> None:
     sidebar_text = sidebar_md.read_text(encoding="utf-8")
     assert "analysis.md" in sidebar_text
     assert "data.md" in sidebar_text
-    assert "rank.json" in sidebar_text
+    assert "pareto/select.json" in sidebar_text
+    assert "pareto/rank.json" in sidebar_text
+    assert "pareto/plans/go.json" in sidebar_text
+    assert "allowance/select.json" in sidebar_text
+    assert "allowance/rank.json" in sidebar_text
+    assert "allowance/plans/go.json" in sidebar_text
     assert "snapshot.json" in sidebar_text
-    assert "plans/go.json" in sidebar_text
     assert "free-matrix.json" in sidebar_text
 
 

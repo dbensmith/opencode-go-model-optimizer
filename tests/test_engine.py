@@ -31,7 +31,13 @@ from opencode_go_model_optimizer.engine.pareto import (
     resolve_burn_basis,
     ssd,
 )
-from opencode_go_model_optimizer.engine.tiers import rank_catalog, select_tiers
+from opencode_go_model_optimizer.engine.tiers import (
+    BenchmarksUnavailableError,
+    rank_catalog,
+    rank_catalog_with_method,
+    resolve_calculation_method,
+    select_tiers,
+)
 from opencode_go_model_optimizer.formatters.rank import format_rank_json
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
@@ -972,6 +978,8 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         id="mod-burn-none",
         aa_iq=80.0,
         effective_quality=80.0,
+        cost=TokenCost(output=5.0),
+        monthly_allowance=100.0,
         bpe=0.5,
         composite_burn_pct=None,
     )
@@ -979,6 +987,8 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         "mod-burn-valid",
         aa_iq=80.0,
         effective_quality=80.0,
+        output=5.0,
+        monthly_allowance=100.0,
         bpe=0.5,
         composite_burn_pct=10.0,
     )
@@ -986,6 +996,8 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         "mod-tied-a",
         aa_iq=80.0,
         effective_quality=80.0,
+        output=5.0,
+        monthly_allowance=100.0,
         bpe=0.5,
         composite_burn_pct=10.0,
         context=500000,
@@ -994,6 +1006,8 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         "mod-tied-b",
         aa_iq=80.0,
         effective_quality=80.0,
+        output=5.0,
+        monthly_allowance=100.0,
         bpe=0.5,
         composite_burn_pct=10.0,
         context=1000000,  # Larger context beats mod-tied-a
@@ -1287,15 +1301,22 @@ def test_allocate_tier_fallbacks_pareto_mode():
     assert len(fallbacks["heavy"]) <= 3
     assert len(fallbacks["free"]) >= 1
 
-    # When benchmarked pool is empty in pareto mode
+    # When benchmarked pool is empty in pareto mode: fails by default, falls back only with allow_fallback
     unbenchmarked = [
         make_model("p1", monthly_allowance=50.0, output=1.0),
         make_model("p2", monthly_allowance=40.0, output=1.0),
         make_model("f1"),
     ]
-    fb_empty = _fallbacks(unbenchmarked, top_n=2, mode="pareto")
-    assert "opencode-go/f1" in fb_empty["free"]
-    assert len(fb_empty["heavy"]) <= 2
+    with pytest.raises(BenchmarksUnavailableError, match="--allow-fallback"):
+        select_tiers(unbenchmarked, SelectionCriteria(mode="pareto", top_n=2))
+
+    sel_fb = select_tiers(
+        unbenchmarked, SelectionCriteria(mode="pareto", top_n=2, allow_fallback=True)
+    )
+    assert sel_fb.method == "allowance"
+    assert sel_fb.fell_back is True
+    assert "opencode-go/f1" in sel_fb.candidates["free"]
+    assert len(sel_fb.candidates["heavy"]) <= 2
 
 
 def test_allocate_tier_fallbacks_allowance_mode():
@@ -1633,3 +1654,41 @@ def test_pareto_cluster_and_rank_tie_breaking_preserved():
     ]
     # rank_catalog omits speed_tps, so release_date breaks the tie in favor of m-sub-newer
     assert [m.id for m in ranked] == ["m-anchor", "m-sub-newer", "m-sub-fast"]
+
+
+def test_resolve_calculation_method_and_opt_in_fallback():
+    paid_no_bm = [make_model("p1", monthly_allowance=50.0, output=1.0)]
+    paid_bm = [make_model("p1", monthly_allowance=50.0, output=1.0, aa_iq=80.0)]
+
+    assert resolve_calculation_method(paid_no_bm, SelectionCriteria(mode="allowance")) == (
+        "allowance",
+        False,
+    )
+    assert resolve_calculation_method(paid_bm, SelectionCriteria(mode="pareto")) == (
+        "pareto",
+        False,
+    )
+    assert resolve_calculation_method(
+        paid_no_bm, SelectionCriteria(mode="pareto", allow_fallback=True)
+    ) == ("allowance", True)
+
+    with pytest.raises(BenchmarksUnavailableError, match="HTTP 429"):
+        resolve_calculation_method(
+            paid_no_bm, SelectionCriteria(mode="pareto"), benchmark_error="HTTP 429"
+        )
+    with pytest.raises(ValueError, match="unknown mode"):
+        resolve_calculation_method(paid_no_bm, SelectionCriteria(mode="bogus"))
+
+    with pytest.raises(BenchmarksUnavailableError):
+        rank_catalog_with_method(paid_no_bm, SelectionCriteria(mode="pareto"))
+
+    ranked, method, fell_back = rank_catalog_with_method(
+        paid_no_bm, SelectionCriteria(mode="pareto", allow_fallback=True)
+    )
+    assert method == "allowance"
+    assert fell_back is True
+    assert ranked[0].tier == "heavy"
+
+    sel_pareto = select_tiers(paid_bm, SelectionCriteria(mode="pareto"))
+    assert sel_pareto.method == "pareto"
+    assert sel_pareto.fell_back is False

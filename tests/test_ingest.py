@@ -921,8 +921,37 @@ def test_fetch_aa_benchmarks_reports_http_status_without_leaking_key():
     bench = fetch_aa_benchmarks("super-secret-key", client=client, errors=errors)
 
     assert bench == {}
-    assert errors == ["Artificial Analysis returned HTTP 401"]
+    assert errors == ["Artificial Analysis returned HTTP 401 (API key is required)"]
     assert "super-secret-key" not in " ".join(errors)
+
+
+def test_fetch_aa_benchmarks_429_reports_reset_and_retry_without_leaking_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"error": "Rate limit exceeded for super-secret-key"},
+            headers={"x-ratelimit-reset": "1795895369", "retry-after": "70023"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    errors: list[str] = []
+    assert fetch_aa_benchmarks("super-secret-key", client=client, errors=errors) == {}
+    assert errors == ["Artificial Analysis returned HTTP 429 (resets at 2026-11-28T19:49:29+00:00)"]
+    assert "super-secret-key" not in errors[0]
+
+    def handler_retry_only(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"message": "Too many requests"},
+            headers={"retry-after": "120"},
+        )
+
+    client2 = httpx.Client(transport=httpx.MockTransport(handler_retry_only))
+    errors2: list[str] = []
+    assert fetch_aa_benchmarks("k", client=client2, errors=errors2) == {}
+    assert errors2 == [
+        "Artificial Analysis returned HTTP 429 (Too many requests; retry after 120s)"
+    ]
 
 
 def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
@@ -1635,3 +1664,80 @@ def test_artificial_analysis_module_exports_and_lookup():
     benchmarks = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
     assert artificial_analysis.lookup_aa_benchmark(model, benchmarks) == benchmarks["glm5"]
     assert artificial_analysis.lookup_aa_benchmark(model, {}) is None
+
+
+def test_aa_benchmark_cache_lifecycle(tmp_path):
+    from opencode_go_model_optimizer.ingest.artificial_analysis import (
+        get_aa_cache_path,
+        load_cached_aa_benchmarks,
+        save_cached_aa_benchmarks,
+    )
+
+    with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
+        assert save_cached_aa_benchmarks({}) is None
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+
+        data = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
+        saved = save_cached_aa_benchmarks(data)
+        assert saved == get_aa_cache_path()
+        assert saved is not None and saved.exists()
+
+        assert load_cached_aa_benchmarks(ttl_seconds=0) is None
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) == data
+
+        with patch("time.time", return_value=time.time() + 4000):
+            assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+
+        saved.write_text('{"schema_version": 99, "benchmarks": {}}', encoding="utf-8")
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+
+        saved.write_text("{corrupt", encoding="utf-8")
+        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+
+        with patch(
+            "opencode_go_model_optimizer.ingest.artificial_analysis.atomic_write_text",
+            side_effect=OSError("disk full"),
+        ):
+            assert save_cached_aa_benchmarks(data) is None
+
+
+def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
+    from opencode_go_model_optimizer.ingest.artificial_analysis import get_aa_cache_path
+
+    model = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
+    aa_data = {"snap-m": {"iq": 70.0, "coding": 65.0, "tps": 80.0}}
+
+    with (
+        patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path), "AA_API_KEY": "k"}, clear=True),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=[model]),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_docs_mdx", return_value=""),
+        patch("opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev", return_value={}),
+        patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
+            return_value=aa_data,
+        ) as mock_aa,
+    ):
+        snap_live = fetch_and_build_snapshot(plan="go", aa_cache_ttl=28800)
+        assert mock_aa.call_count == 1
+        assert snap_live.metadata.benchmark_source == "aa_live"
+        assert snap_live.metadata.benchmark_error is None
+        assert get_aa_cache_path().exists()
+
+        # Second call with fresh cache reuses aa-benchmarks.json without hitting AA API.
+        model2 = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
+        with patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=[model2]
+        ):
+            snap_cached = fetch_and_build_snapshot(plan="go", aa_cache_ttl=28800)
+        assert mock_aa.call_count == 1
+        assert snap_cached.metadata.benchmark_source == "aa_cache"
+        assert snap_cached.models[0].aa_iq == 70.0
+
+        # use_aa=False ignores both live fetch and cached AA benchmarks.
+        model3 = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
+        with patch(
+            "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue", return_value=[model3]
+        ):
+            snap_no_aa = fetch_and_build_snapshot(plan="go", use_aa=False, aa_cache_ttl=28800)
+        assert snap_no_aa.metadata.benchmark_source == "none"
+        assert snap_no_aa.models[0].aa_iq is None

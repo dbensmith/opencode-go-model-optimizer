@@ -1,17 +1,24 @@
 """Ingestor and matching helpers for Artificial Analysis benchmarks."""
 
+import contextlib
+import json
+import os
 import re
+import time
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from opencode_go_model_optimizer.ingest.docs import norm_name
-from opencode_go_model_optimizer.ingest.http import client_scope
+from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
 from opencode_go_model_optimizer.numbers import finite_float
 
 AA_MODELS_URL = "https://artificialanalysis.ai/api/v2/language/models/free"
 AA_MAX_PAGES = 20
+AA_CACHE_FILENAME = "aa-benchmarks.json"
 
 _AA_EFFORT_TAG_RE = re.compile(
     r"\(\s*(?:max|xhigh|high|medium|low|minimal|non-reasoning)(?:\s*,[^)]*)?\s*\)",
@@ -153,6 +160,85 @@ def lookup_aa_benchmark(
     )
 
 
+def get_aa_cache_path() -> Path:
+    """Return filesystem path for the local Artificial Analysis benchmark cache."""
+    base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return base / "opencode-go-model-optimizer" / AA_CACHE_FILENAME
+
+
+def load_cached_aa_benchmarks(ttl_seconds: float = 0) -> dict[str, dict[str, Any]] | None:
+    """Load cached Artificial Analysis benchmarks if present and within ``ttl_seconds``."""
+    if ttl_seconds <= 0:
+        return None
+    path = get_aa_cache_path()
+    if not path.exists():
+        return None
+    try:
+        if time.time() - path.stat().st_mtime > ttl_seconds:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError, json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or not isinstance(payload.get("benchmarks"), dict)
+        or not payload["benchmarks"]
+    ):
+        return None
+    return payload["benchmarks"]
+
+
+def save_cached_aa_benchmarks(benchmarks: dict[str, dict[str, Any]]) -> Path | None:
+    """Write non-empty Artificial Analysis benchmarks to the local cache directory."""
+    if not benchmarks:
+        return None
+    path = get_aa_cache_path()
+    payload = {
+        "schema_version": 1,
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "benchmarks": benchmarks,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(payload))
+        return path
+    except OSError:
+        return None
+
+
+def _format_http_error(response: httpx.Response, api_key: str) -> str:
+    """Format an Artificial Analysis HTTP status error with safe rate-limit/body details."""
+    base = f"Artificial Analysis returned HTTP {response.status_code}"
+    details: list[str] = []
+    with contextlib.suppress(Exception):
+        body = response.json()
+        if isinstance(body, dict):
+            for key in ("error", "message"):
+                val = body.get(key)
+                if isinstance(val, str):
+                    msg = " ".join(val.split())
+                    if msg and (not api_key or api_key not in msg):
+                        details.append(msg[:120])
+                        break
+    if response.status_code == 429:
+        reset_raw = (response.headers.get("x-ratelimit-reset") or "").strip()
+        retry_raw = (response.headers.get("retry-after") or "").strip()
+        reset_added = False
+        if reset_raw:
+            with contextlib.suppress(ValueError, OSError, OverflowError):
+                ts = int(reset_raw)
+                if ts > 0:
+                    reset_iso = datetime.fromtimestamp(ts, tz=UTC).isoformat(timespec="seconds")
+                    details.append(f"resets at {reset_iso}")
+                    reset_added = True
+        if not reset_added and retry_raw and (not api_key or api_key not in retry_raw):
+            details.append(
+                f"retry after {retry_raw}s" if retry_raw.isdigit() else f"retry after {retry_raw}"
+            )
+    return f"{base} ({'; '.join(details)})" if details else base
+
+
 def fetch_aa_benchmarks(
     api_key: str,
     client: httpx.Client | None = None,
@@ -217,7 +303,7 @@ def fetch_aa_benchmarks(
             return benchmarks
     except httpx.HTTPStatusError as exc:
         if errors is not None:
-            errors.append(f"Artificial Analysis returned HTTP {exc.response.status_code}")
+            errors.append(_format_http_error(exc.response, api_key))
         return {}
     except (httpx.HTTPError, ValueError) as exc:
         if errors is not None:
