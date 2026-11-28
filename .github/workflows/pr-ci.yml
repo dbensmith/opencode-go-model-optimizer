@@ -9,7 +9,7 @@ name: PR CI
 # the 24-hour AA benchmark cache (plus persisted 429 cooldown state) so PRs not
 # changing artificial_analysis.py spend 0 AA requests; fork PRs receive no
 # secrets, skip 1Password, and mark Pareto unavailable without falling back. Only
-# the issue upsert and the Pages deploy never run on a PR; they live in
+# the Pages artifact build and deploy never run on a PR; they live in
 # run-optimizer.yml, which triggers on push/schedule/dispatch.
 
 on:
@@ -165,16 +165,13 @@ jobs:
           AA_AVAILABLE: ${{ steps.opgate.outputs.available }}
         run: |
           mkdir -p out
-          pareto_status=0
-          allowance_status=0
-
-          uv run opencode-go-model-optimizer select --plan go --mode pareto --snapshot out/snapshot.json \
-            --format json --explain --allow-global-region --allow-free-training \
-            > out/pareto.json 2> out/pareto.err || pareto_status=$?
-
-          uv run opencode-go-model-optimizer select --plan go --mode allowance --snapshot out/snapshot.json \
-            --format json --explain --allow-global-region --allow-free-training \
-            > out/allowance.json 2> out/allowance.err || allowance_status=$?
+          method_args=(--snapshot out/snapshot.json --format json --explain --allow-global-region --allow-free-training)
+          for method in pareto allowance; do
+            status=0
+            uv run opencode-go-model-optimizer select --plan go --mode "$method" "${method_args[@]}" \
+              > "out/${method}.json" 2> "out/${method}.err" || status=$?
+            printf -v "${method}_status" '%s' "$status"
+          done
 
           echo "pareto_status=$pareto_status" >> "$GITHUB_OUTPUT"
           echo "allowance_status=$allowance_status" >> "$GITHUB_OUTPUT"

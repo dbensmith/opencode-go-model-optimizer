@@ -6,6 +6,7 @@ This file is populated in CI by `scripts/render_optimizer_issue.py` from paired 
 flowchart LR
     FETCH["Fetch Snapshot (catalogue, docs, models.dev, AA)"] --> DATA["data.md (All Data & Other Choices)"]
     DATA --> RAW["pareto/select.json / allowance/select.json / snapshot.json"]
+    DATA --> CONSUMER["select.json (consumer endpoint)"]
     DATA --> RANK["pareto/rank.json / allowance/rank.json"]
     DATA --> PLANS["pareto/plans/*.json / allowance/plans/*.json"]
     DATA --> FREE["free-matrix.json"]
@@ -17,4 +18,5 @@ flowchart LR
     FREE --> PAGES
     OUTPUT --> PAGES
     CHARTS --> PAGES
+    CONSUMER --> PAGES
 ```

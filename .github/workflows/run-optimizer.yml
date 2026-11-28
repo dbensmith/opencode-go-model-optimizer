@@ -3,16 +3,18 @@ name: Run Optimizer
 # Runs both OpenCode Go model optimizer methods (Pareto and Allowance, without
 # fallback) every 8 hours starting at 02:00 ET (07:00, 15:00, 23:00 UTC in EST /
 # UTC-5) and on demand, retrieves AA_API_KEY from 1Password via a service
-# account token, publishes the output of both methods to the tracking GitHub
-# issue labeled `optimizer-results` and uploads the rendered Docsify site as a
-# `docs-site` artifact. To protect Artificial Analysis's 100 req/day free tier,
-# live AA fetches are cached daily (22h TTL on cron so 07:00 UTC refreshes AA
-# once per day while 15:00/23:00 UTC reuse that day's AA cache for 4 req/day
+# account token, and uploads the rendered Docsify site as a `docs-site` artifact.
+# The site includes a canonical consumer `select.json` from auto mode with
+# explicit fallback, plus the paired no-fallback method outputs, analysis pages,
+# and Actions step summary. To protect Artificial Analysis's 100 req/day free
+# tier, live AA fetches are cached daily (22h TTL on cron so 07:00 UTC refreshes
+# AA once per day while 15:00/23:00 UTC reuse that day's AA cache for 4 req/day
 # total; 24h TTL on push/default manual runs; pass `refresh_aa=true` to force a
-# live AA refresh), and 429 cooldown state is persisted across runs. Publishing the
-# artifact to GitHub Pages is handled by `publish-pages.yml`. Also runs tests on
-# pushes to main. Pull request checks live in pr-ci.yml; this workflow never runs
-# on a PR.
+# live AA refresh), and 429 cooldown state is persisted across runs. Publishing
+# the artifact to GitHub Pages is handled by `publish-pages.yml`. Offline tests
+# run on every trigger; non-blocking live contract tests run on schedule and
+# manual dispatch. Pull request checks live in pr-ci.yml; this workflow never
+# runs on a PR.
 #
 # CI privacy policy: pass --allow-global-region and --allow-free-training so Global-region
 # models and free models that train are eligible. Paid and consent-required training remain
@@ -60,17 +62,48 @@ jobs:
       # startup if the caller does not grant every permission they declare.
       pull-requests: write
 
-  optimize:
-    needs: test
-    name: Run Optimizer & Update Issue
+  live-tests:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: Live Contract Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      issues: write
-      # configure-pages only reads Pages metadata to resolve the site URL for
-      # the issue's dataset links; the deployment itself lives in
-      # publish-pages.yml, which holds pages: write and id-token: write.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up environment
+        uses: ./.github/actions/setup-env
+
+      - name: Run live contract tests
+        continue-on-error: true
+        env:
+          OCGO_LIVE: "1"
+        run: |
+          mkdir -p out
+          status=0
+          uv run pytest tests/live -m live 2>&1 | tee out/live-tests.txt || status=$?
+          {
+            echo "## Live contract tests"
+            cat out/live-tests.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" -ne 0 ]]; then
+            echo "::warning::Live contract tests failed; see Job Summary."
+            echo "Live contract tests failed; see the output above." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+  optimize:
+    needs: test
+    name: Run Optimizer & Publish Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # configure-pages only reads Pages metadata to resolve dataset links; the
+      # deployment itself lives in publish-pages.yml, which holds pages: write
+      # and id-token: write.
       pages: read
 
     steps:
@@ -133,8 +166,8 @@ jobs:
             aa-ratelimit-v1-${{ steps.aa_day.outputs.day }}-
             aa-ratelimit-v1-
 
-      # Resolves the Pages site URL up front so the issue can link the published
-      # dataset in the same run that renders it.
+      # Resolve the Pages site URL up front so rendered pages can link the
+      # published datasets in the same run.
       - name: Configure GitHub Pages
         id: pages
         uses: actions/configure-pages@v6
@@ -219,91 +252,84 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           SITE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
-          mkdir -p out/pareto/plans out/allowance/plans out/charts
+          mkdir -p out/site out/pareto/plans out/allowance/plans out/charts
           snapshot_args=(--snapshot out/snapshot.json)
           privacy_args=(--allow-global-region --allow-free-training)
 
-          # 1. Pareto method (NO fallback)
-          pareto_status=0
-          OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
-            > out/pareto/select.json 2> out/pareto/select.err || pareto_status=$?
-
-          if [[ "$pareto_status" -eq 0 ]]; then
-            OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" "${privacy_args[@]}" \
-              > out/pareto/table.txt 2> out/pareto/table.err || pareto_status=$?
+          # Consumer endpoint: auto mode explicitly reports any allowance fallback.
+          canonical_status=0
+          uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode auto --allow-fallback \
+            "${snapshot_args[@]}" --format json --explain --top-n 3 "${privacy_args[@]}" \
+            > out/site/select.json 2> out/select.err || canonical_status=$?
+          if [[ "$canonical_status" -ne 0 ]]; then
+            rm -f out/site/select.json
           fi
 
-          if [[ "$pareto_status" -eq 0 ]]; then
-            uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode pareto "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
-              > out/pareto/rank.json 2> out/pareto/rank.err || pareto_status=$?
-            for p in go go-plus go-teams; do
-              uv run opencode-go-model-optimizer select --plan "$p" --mode pareto "${snapshot_args[@]}" --top-n 3 --format json --explain "${privacy_args[@]}" \
-                > "out/pareto/plans/${p}.json" 2>> out/pareto/plans.err || pareto_status=$?
-            done
-          else
-            rm -f out/pareto/select.json out/pareto/rank.json out/pareto/plans/*.json
-            {
-              cat out/fetch.log 2>/dev/null || true
-              cat out/pareto/select.err 2>/dev/null || true
-              cat out/pareto/table.err 2>/dev/null || true
-            } > out/pareto/error.txt
-          fi
-
-          # 2. Allowance method (always run independently, no fallback)
-          allowance_status=0
-          uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format json --explain "${privacy_args[@]}" \
-            > out/allowance/select.json 2> out/allowance/select.err || allowance_status=$?
-          uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format table --explain "${privacy_args[@]}" \
-            > out/allowance/table.txt 2> out/allowance/table.err || allowance_status=$?
-          uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
-            > out/allowance/rank.json 2> out/allowance/rank.err || allowance_status=$?
-          for p in go go-plus go-teams; do
-            uv run opencode-go-model-optimizer select --plan "$p" --mode allowance "${snapshot_args[@]}" --top-n 3 --format json --explain "${privacy_args[@]}" \
-              > "out/allowance/plans/${p}.json" 2>> out/allowance/plans.err || allowance_status=$?
-          done
-
-          # Combine full output of both methods for inspection
-          {
-            echo "=== Pareto Method (--mode pareto, no fallback) ==="
-            if [[ "$pareto_status" -eq 0 ]]; then
-              cat out/pareto/table.txt
-            else
-              echo "Pareto calculation FAILED (exit $pareto_status; no fallback used)."
+          run_method() {
+            local method="$1" status=0 p dir="out/$1"
+            uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode "$method" "${snapshot_args[@]}" \
+              --format json --explain "${privacy_args[@]}" > "$dir/select.json" 2> "$dir/select.err" || status=$?
+            if [[ "$method" != "pareto" || "$status" -eq 0 ]]; then
+              uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode "$method" "${snapshot_args[@]}" \
+                --format table --explain "${privacy_args[@]}" > "$dir/table.txt" 2> "$dir/table.err" || status=$?
+              uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode "$method" "${snapshot_args[@]}" \
+                --format json "${privacy_args[@]}" > "$dir/rank.json" 2> "$dir/rank.err" || status=$?
+              for p in go go-plus go-teams; do
+                uv run opencode-go-model-optimizer select --plan "$p" --mode "$method" "${snapshot_args[@]}" \
+                  --top-n 3 --format json --explain "${privacy_args[@]}" > "$dir/plans/${p}.json" 2>> "$dir/plans.err" || status=$?
+              done
             fi
-            cat out/pareto/select.err out/pareto/table.err out/pareto/rank.err out/pareto/plans.err 2>/dev/null || true
-            echo ""
-            echo "=== Allowance Method (--mode allowance) ==="
-            cat out/allowance/table.txt 2>/dev/null || true
-            cat out/allowance/select.err out/allowance/table.err out/allowance/rank.err out/allowance/plans.err 2>/dev/null || true
+            if [[ "$method" == "pareto" && "$status" -ne 0 ]]; then
+              rm -f "$dir/select.json" "$dir/rank.json" "$dir/plans/"*.json
+              {
+                cat out/fetch.log 2>/dev/null || true
+                cat "$dir/select.err" "$dir/table.err" "$dir/rank.err" "$dir/plans.err" 2>/dev/null || true
+              } > "$dir/error.txt"
+            fi
+            printf -v "${method}_status" '%s' "$status"
+          }
+          run_method pareto
+          run_method allowance
+
+          # Combine full output of both methods for inspection.
+          {
+            for method in pareto allowance; do
+              status_var="${method}_status"
+              status="${!status_var}"
+              mode_desc="$method"
+              [[ "$method" == "pareto" ]] && mode_desc+=", no fallback"
+              echo "=== ${method^} Method (--mode $mode_desc) ==="
+              if [[ "$status" -eq 0 ]]; then
+                cat "out/$method/table.txt"
+              elif [[ "$method" == "pareto" ]]; then
+                echo "Pareto calculation FAILED (exit $status; no fallback used)."
+              fi
+              cat "out/$method/select.err" "out/$method/table.err" "out/$method/rank.err" "out/$method/plans.err" 2>/dev/null || true
+              echo ""
+            done
             if [[ -s out/fetch.log ]]; then
               printf '\n--- fetch stderr ---\n'
               cat out/fetch.log
             fi
           } > out/full_output.txt
 
-          python3 - << 'EOF'
-          import json, subprocess, os, pathlib
-          plan = os.environ.get("OPTIMIZER_PLAN", "go")
-          matrix = [
-              {"label": "Default (no training, region locked)", "flags": "", "model_id": ""},
-              {"label": "Allow free training", "flags": "--allow-free-training", "model_id": ""},
-              {"label": "Allow global region", "flags": "--allow-global-region", "model_id": ""},
-              {"label": "Allow both (CI setting)", "flags": "--allow-global-region --allow-free-training", "model_id": ""}
-          ]
-          for row in matrix:
-              cmd = ["uv", "run", "opencode-go-model-optimizer", "select", "--plan", plan, "--mode", "allowance", "--snapshot", "out/snapshot.json", "--format", "json"] + row["flags"].split()
-              cmd = [c for c in cmd if c]
-              res = subprocess.run(cmd, capture_output=True, text=True)
-              if res.returncode != 0:
-                  row["model_id"] = "Error"
-              elif res.stdout.strip():
-                  try:
-                      data = json.loads(res.stdout)
-                      row["model_id"] = data.get("tiers", {}).get("free", "None")
-                  except Exception:
-                      row["model_id"] = "Error"
-          pathlib.Path("out/free-matrix.json").write_text(json.dumps(matrix, indent=2), encoding="utf-8")
+          free_matrix='[]'
+          while IFS='|' read -r label flags; do
+            read -r -a flag_args <<< "$flags"
+            model_id="Error"
+            if selection="$(uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance \
+              "${snapshot_args[@]}" --format json "${flag_args[@]}" 2>/dev/null)"; then
+              model_id="$(jq -r '.tiers.free // "None"' <<< "$selection")" || model_id="Error"
+            fi
+            free_matrix="$(jq --arg label "$label" --arg flags "$flags" --arg model_id "$model_id" \
+              '. + [{label: $label, flags: $flags, model_id: $model_id}]' <<< "$free_matrix")"
+          done <<'EOF'
+          Default (no training, region locked)|
+          Allow free training|--allow-free-training
+          Allow global region|--allow-global-region
+          Allow both (CI setting)|--allow-global-region --allow-free-training
           EOF
+          jq . <<< "$free_matrix" > out/free-matrix.json
 
           run_url="${GITHUB_SERVER_URL}/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}"
           render_args=(
@@ -338,7 +364,6 @@ jobs:
 
           cat out/issue.md >> "$GITHUB_STEP_SUMMARY"
 
-          mkdir -p out/site
           cp -a docs/. out/site/
           cp out/issue.md out/site/README.md
           cp out/analysis.md out/site/analysis.md
@@ -353,14 +378,12 @@ jobs:
           cp -a out/charts out/site/charts
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
-          issues_url="${repo_url}/issues?q=is%3Aissue+is%3Aopen+label%3Aoptimizer-results"
-          sed -i \
-            -e "s|{{REPO_URL}}|${repo_url}|g" \
-            -e "s|{{ISSUES_URL}}|${issues_url}|g" \
+          sed -i -e "s|{{REPO_URL}}|${repo_url}|g" \
             out/site/index.html out/site/_sidebar.md out/site/data.md
 
           echo "pareto_status=$pareto_status" >> "$GITHUB_OUTPUT"
           echo "allowance_status=$allowance_status" >> "$GITHUB_OUTPUT"
+          echo "canonical_status=$canonical_status" >> "$GITHUB_OUTPUT"
 
       # The site is published by publish-pages.yml from this artifact; splitting
       # the build upload from the deploy keeps the same-job upload→deploy race
@@ -374,47 +397,12 @@ jobs:
           path: out/site
           retention-days: 1
 
-      - name: Create or update GitHub issue
-        if: always() && hashFiles('out/issue.md') != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_LABEL: optimizer-results
-          ISSUE_TITLE: "OpenCode Go Model Optimizer — Latest Tier Selections"
-        run: |
-          gh label create "$ISSUE_LABEL" \
-            --repo "$GH_REPO" \
-            --description "Automated OpenCode Go model optimizer results" \
-            --color "0e8a16" \
-            --force
-
-          issue_number="$(gh issue list \
-            --repo "$GH_REPO" \
-            --label "$ISSUE_LABEL" \
-            --state open \
-            --limit 1 \
-            --json number \
-            --jq '.[0].number // empty')"
-
-          if [[ -n "$issue_number" ]]; then
-            gh issue edit "$issue_number" \
-              --repo "$GH_REPO" \
-              --title "$ISSUE_TITLE" \
-              --body-file out/issue.md
-            echo "Updated existing issue #$issue_number"
-          else
-            gh issue create \
-              --repo "$GH_REPO" \
-              --title "$ISSUE_TITLE" \
-              --label "$ISSUE_LABEL" \
-              --body-file out/issue.md
-          fi
-
-      - name: Fail if Pareto or Allowance calculation failed
-        if: steps.optimizer.outputs.pareto_status != '0' || steps.optimizer.outputs.allowance_status != '0'
+      - name: Fail if an optimizer calculation failed
+        if: steps.optimizer.outputs.pareto_status != '0' || steps.optimizer.outputs.allowance_status != '0' || steps.optimizer.outputs.canonical_status != '0'
         env:
           PARETO_STATUS: ${{ steps.optimizer.outputs.pareto_status }}
           ALLOWANCE_STATUS: ${{ steps.optimizer.outputs.allowance_status }}
+          CANONICAL_STATUS: ${{ steps.optimizer.outputs.canonical_status }}
         run: |
-          echo "::error::Optimizer failed (pareto_status=$PARETO_STATUS, allowance_status=$ALLOWANCE_STATUS); both methods' outputs were still published."
+          echo "::error::Optimizer failed (pareto_status=$PARETO_STATUS, allowance_status=$ALLOWANCE_STATUS, canonical_status=$CANONICAL_STATUS); available outputs were still published."
           exit 1
