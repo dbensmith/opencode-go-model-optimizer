@@ -1,0 +1,1147 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-28T14:15:01+00:00",
+  "tool_version": "0.1.0",
+  "git_sha": "15d3ca05e9e9a80bdf426de3011d90d0a1a8fecc",
+  "plans": {
+    "go": {
+      "plan": "go",
+      "mode": "allowance",
+      "criteria": {
+        "mode": "allowance",
+        "allow_fallback": false,
+        "top_n": 3,
+        "profile": "general",
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "tokens": null,
+        "weights": null,
+        "at": "2026-11-28T14:15:01+00:00"
+      },
+      "tiers": {
+        "heavy": "opencode-go/kimi-k3.1-pro",
+        "balanced": "opencode-go/glm-5.3",
+        "light": "opencode-go/deepseek-v4.1-flash",
+        "free": "opencode-go/hungerg-free"
+      },
+      "fallbacks": {
+        "heavy": [
+          "opencode-go/gemini-4-argon",
+          "opencode-go/kimi-k3"
+        ],
+        "balanced": [
+          "opencode-go/hy4",
+          "opencode-go/kimi-k2.7-code"
+        ],
+        "light": [
+          "opencode-go/mimo-v2.6-flash",
+          "opencode-go/glm-5.3-flash"
+        ],
+        "free": [
+          "opencode-go/hy4-flash-free",
+          "opencode-go/beam-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "fallbacks": [
+            "opencode-go/gemini-4-argon",
+            "opencode-go/kimi-k3"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/kimi-k3.1-pro",
+            "name": "Kimi K3.1 Pro",
+            "monthly_allowance": 60.0,
+            "output_cost_per_1m": 10.0,
+            "turn_cost_usd": 0.016,
+            "quota_burn_pct": 34.01,
+            "context": 1048576,
+            "requests_per_5h": 588,
+            "requests_per_month": 2940,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/kimi-k3.1-pro",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 10.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-23",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/gemini-4-argon",
+              "monthly_allowance": 30,
+              "output_cost_per_1m": 16.562524,
+              "price_multiplier": 1.6563,
+              "release_date": "2026-10-13",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k3",
+              "monthly_allowance": 15,
+              "output_cost_per_1m": 15.0,
+              "price_multiplier": 1,
+              "release_date": "2026-07-16",
+              "context": 1048576
+            }
+          ],
+          "cluster": {
+            "size": 3,
+            "output_cost_per_1m_range": [
+              10.0,
+              16.562524
+            ]
+          },
+          "why": "opencode-go/kimi-k3.1-pro has the highest allowance among eligible models in the heavy price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "balanced": {
+          "model_id": "opencode-go/glm-5.3",
+          "fallbacks": [
+            "opencode-go/hy4",
+            "opencode-go/kimi-k2.7-code"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/glm-5.3",
+            "name": "GLM-5.3",
+            "monthly_allowance": 200.0,
+            "output_cost_per_1m": 4.4,
+            "turn_cost_usd": 0.01775,
+            "quota_burn_pct": 7.58,
+            "context": 1000000,
+            "requests_per_5h": 2640,
+            "requests_per_month": 13200,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/glm-5.3",
+              "monthly_allowance": 200,
+              "output_cost_per_1m": 4.4,
+              "price_multiplier": 1,
+              "release_date": "2026-08-14",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 2.501,
+              "price_multiplier": 1,
+              "release_date": "2026-11-04",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k2.7-code",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 4.0,
+              "price_multiplier": 1,
+              "release_date": "2026-06-12",
+              "context": 262144
+            }
+          ],
+          "cluster": {
+            "size": 9,
+            "output_cost_per_1m_range": [
+              2.3925,
+              6.0
+            ]
+          },
+          "why": "opencode-go/glm-5.3 has the highest allowance among eligible models in the balanced price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "light": {
+          "model_id": "opencode-go/deepseek-v4.1-flash",
+          "fallbacks": [
+            "opencode-go/mimo-v2.6-flash",
+            "opencode-go/glm-5.3-flash"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/deepseek-v4.1-flash",
+            "name": "DeepSeek V4.1 Flash 1017",
+            "monthly_allowance": 100.0,
+            "output_cost_per_1m": 0.725,
+            "turn_cost_usd": 0.000535,
+            "quota_burn_pct": 0.56,
+            "context": 1000000,
+            "requests_per_5h": 43300,
+            "requests_per_month": 217000,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": "ZDR agreement is renewed monthly. The current agreement is valid through December 31, 2026.",
+              "agreement_valid_until": "2026-12-31"
+            },
+            "price_multiplier": 1.2083,
+            "next_price_change": {
+              "at": "2026-11-30T01:00+00:00",
+              "multiplier": 2.0
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/deepseek-v4.1-flash",
+              "monthly_allowance": 100,
+              "output_cost_per_1m": 0.725,
+              "price_multiplier": 1.2083,
+              "release_date": "2026-10-17",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/mimo-v2.6-flash",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 0.28,
+              "price_multiplier": 1,
+              "release_date": "2026-09-22",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/glm-5.3-flash",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 0.5,
+              "price_multiplier": 1,
+              "release_date": "2026-08-26",
+              "context": 1000000
+            }
+          ],
+          "cluster": {
+            "size": 12,
+            "output_cost_per_1m_range": [
+              0.28,
+              1.6
+            ]
+          },
+          "why": "opencode-go/deepseek-v4.1-flash has the highest allowance among eligible models in the light price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "free": {
+          "model_id": "opencode-go/hungerg-free",
+          "fallbacks": [
+            "opencode-go/hy4-flash-free",
+            "opencode-go/beam-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hungerg-free",
+            "name": "HungerG Free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1000000,
+            "requests_per_5h": "unlimited",
+            "requests_per_month": "unlimited",
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": null,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hungerg-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-24",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/beam-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-05",
+              "context": 1048576
+            }
+          ],
+          "why": "opencode-go/hungerg-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/gemini-decision-1",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-embedding-2",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna-decision",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/iceman-contributor-free",
+          "reasons": [
+            "free model trains on request data (enable --allow-free-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/jev-1.14",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.5",
+          "reasons": [
+            "requires Global workspace region (enable --allow-global-region)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3-embedding-8b",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/text-embedding-3-small",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        }
+      ]
+    },
+    "go-plus": {
+      "plan": "go-plus",
+      "mode": "allowance",
+      "criteria": {
+        "mode": "allowance",
+        "allow_fallback": false,
+        "top_n": 3,
+        "profile": "general",
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "tokens": null,
+        "weights": null,
+        "at": "2026-11-28T14:15:01+00:00"
+      },
+      "tiers": {
+        "heavy": "opencode-go/kimi-k3.1-pro",
+        "balanced": "opencode-go/glm-5.3",
+        "light": "opencode-go/hy3",
+        "free": "opencode-go/hungerg-free"
+      },
+      "fallbacks": {
+        "heavy": [
+          "opencode-go/gemini-4-argon",
+          "opencode-go/kimi-k3"
+        ],
+        "balanced": [
+          "opencode-go/hy4",
+          "opencode-go/kimi-k2.7-code"
+        ],
+        "light": [
+          "opencode-go/deepseek-v4.1-flash",
+          "opencode-go/glm-5.3-flash"
+        ],
+        "free": [
+          "opencode-go/hy4-flash-free",
+          "opencode-go/beam-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "fallbacks": [
+            "opencode-go/gemini-4-argon",
+            "opencode-go/kimi-k3"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/kimi-k3.1-pro",
+            "name": "Kimi K3.1 Pro",
+            "monthly_allowance": 120.0,
+            "output_cost_per_1m": 10.0,
+            "turn_cost_usd": 0.016,
+            "quota_burn_pct": 17.01,
+            "context": 1048576,
+            "requests_per_5h": 1180,
+            "requests_per_month": 5880,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/kimi-k3.1-pro",
+              "monthly_allowance": 120,
+              "output_cost_per_1m": 10.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-23",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/gemini-4-argon",
+              "monthly_allowance": 120,
+              "output_cost_per_1m": 16.562524,
+              "price_multiplier": 1.6563,
+              "release_date": "2026-10-13",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k3",
+              "monthly_allowance": 60,
+              "output_cost_per_1m": 15.0,
+              "price_multiplier": 1,
+              "release_date": "2026-07-16",
+              "context": 1048576
+            }
+          ],
+          "cluster": {
+            "size": 3,
+            "output_cost_per_1m_range": [
+              10.0,
+              16.562524
+            ]
+          },
+          "why": "opencode-go/kimi-k3.1-pro has the highest allowance among eligible models in the heavy price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "balanced": {
+          "model_id": "opencode-go/glm-5.3",
+          "fallbacks": [
+            "opencode-go/hy4",
+            "opencode-go/kimi-k2.7-code"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/glm-5.3",
+            "name": "GLM-5.3",
+            "monthly_allowance": 400.0,
+            "output_cost_per_1m": 4.4,
+            "turn_cost_usd": 0.01775,
+            "quota_burn_pct": 3.79,
+            "context": 1000000,
+            "requests_per_5h": 5280,
+            "requests_per_month": 26400,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/glm-5.3",
+              "monthly_allowance": 400,
+              "output_cost_per_1m": 4.4,
+              "price_multiplier": 1,
+              "release_date": "2026-08-14",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4",
+              "monthly_allowance": 240,
+              "output_cost_per_1m": 2.501,
+              "price_multiplier": 1,
+              "release_date": "2026-11-04",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k2.7-code",
+              "monthly_allowance": 180,
+              "output_cost_per_1m": 4.0,
+              "price_multiplier": 1,
+              "release_date": "2026-06-12",
+              "context": 262144
+            }
+          ],
+          "cluster": {
+            "size": 9,
+            "output_cost_per_1m_range": [
+              2.3925,
+              6.0
+            ]
+          },
+          "why": "opencode-go/glm-5.3 has the highest allowance among eligible models in the balanced price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "light": {
+          "model_id": "opencode-go/hy3",
+          "fallbacks": [
+            "opencode-go/deepseek-v4.1-flash",
+            "opencode-go/glm-5.3-flash"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hy3",
+            "name": "Hy3",
+            "monthly_allowance": 240.0,
+            "output_cost_per_1m": 0.58,
+            "turn_cost_usd": 0.00235,
+            "quota_burn_pct": 1.16,
+            "context": 256000,
+            "requests_per_5h": 17200,
+            "requests_per_month": 86000,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hy3",
+              "monthly_allowance": 240,
+              "output_cost_per_1m": 0.58,
+              "price_multiplier": 1,
+              "release_date": "2026-07-06",
+              "context": 256000
+            },
+            {
+              "model_id": "opencode-go/deepseek-v4.1-flash",
+              "monthly_allowance": 200,
+              "output_cost_per_1m": 0.725,
+              "price_multiplier": 1.2083,
+              "release_date": "2026-10-17",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/glm-5.3-flash",
+              "monthly_allowance": 180,
+              "output_cost_per_1m": 0.5,
+              "price_multiplier": 1,
+              "release_date": "2026-08-26",
+              "context": 1000000
+            }
+          ],
+          "cluster": {
+            "size": 12,
+            "output_cost_per_1m_range": [
+              0.28,
+              1.6
+            ]
+          },
+          "why": "opencode-go/hy3 has the highest allowance among eligible models in the light price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "free": {
+          "model_id": "opencode-go/hungerg-free",
+          "fallbacks": [
+            "opencode-go/hy4-flash-free",
+            "opencode-go/beam-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hungerg-free",
+            "name": "HungerG Free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1000000,
+            "requests_per_5h": "unlimited",
+            "requests_per_month": "unlimited",
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": null,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hungerg-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-24",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/beam-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-05",
+              "context": 1048576
+            }
+          ],
+          "why": "opencode-go/hungerg-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/gemini-decision-1",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-embedding-2",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna-decision",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/iceman-contributor-free",
+          "reasons": [
+            "free model trains on request data (enable --allow-free-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/jev-1.14",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.5",
+          "reasons": [
+            "requires Global workspace region (enable --allow-global-region)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3-embedding-8b",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/text-embedding-3-small",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        }
+      ]
+    },
+    "go-teams": {
+      "plan": "go-teams",
+      "mode": "allowance",
+      "criteria": {
+        "mode": "allowance",
+        "allow_fallback": false,
+        "top_n": 3,
+        "profile": "general",
+        "price_basis": "blended",
+        "burn_basis": "auto",
+        "allow_global_region": false,
+        "allow_paid_training": false,
+        "allow_free_training": false,
+        "max_retention_days": null,
+        "require_zdr": false,
+        "min_context": 0,
+        "min_output": 0,
+        "max_output_cost": null,
+        "max_burn": null,
+        "skip": [],
+        "prefer": {},
+        "tokens": null,
+        "weights": null,
+        "at": "2026-11-28T14:15:01+00:00"
+      },
+      "tiers": {
+        "heavy": "opencode-go/kimi-k3.1-pro",
+        "balanced": "opencode-go/glm-5.3",
+        "light": "opencode-go/deepseek-v4.1-flash",
+        "free": "opencode-go/hungerg-free"
+      },
+      "fallbacks": {
+        "heavy": [
+          "opencode-go/gemini-4-argon",
+          "opencode-go/kimi-k3"
+        ],
+        "balanced": [
+          "opencode-go/hy4",
+          "opencode-go/kimi-k2.7-code"
+        ],
+        "light": [
+          "opencode-go/mimo-v2.6-flash",
+          "opencode-go/glm-5.3-flash"
+        ],
+        "free": [
+          "opencode-go/hy4-flash-free",
+          "opencode-go/beam-free"
+        ]
+      },
+      "explanations": {
+        "heavy": {
+          "model_id": "opencode-go/kimi-k3.1-pro",
+          "fallbacks": [
+            "opencode-go/gemini-4-argon",
+            "opencode-go/kimi-k3"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/kimi-k3.1-pro",
+            "name": "Kimi K3.1 Pro",
+            "monthly_allowance": 65.0,
+            "output_cost_per_1m": 10.0,
+            "turn_cost_usd": 0.016,
+            "quota_burn_pct": 31.35,
+            "context": 1048576,
+            "requests_per_5h": 637,
+            "requests_per_month": 3190,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/kimi-k3.1-pro",
+              "monthly_allowance": 65,
+              "output_cost_per_1m": 10.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-23",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/gemini-4-argon",
+              "monthly_allowance": 35,
+              "output_cost_per_1m": 16.562524,
+              "price_multiplier": 1.6563,
+              "release_date": "2026-10-13",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k3",
+              "monthly_allowance": 20,
+              "output_cost_per_1m": 15.0,
+              "price_multiplier": 1,
+              "release_date": "2026-07-16",
+              "context": 1048576
+            }
+          ],
+          "cluster": {
+            "size": 3,
+            "output_cost_per_1m_range": [
+              10.0,
+              16.562524
+            ]
+          },
+          "why": "opencode-go/kimi-k3.1-pro has the highest allowance among eligible models in the heavy price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "balanced": {
+          "model_id": "opencode-go/glm-5.3",
+          "fallbacks": [
+            "opencode-go/hy4",
+            "opencode-go/kimi-k2.7-code"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/glm-5.3",
+            "name": "GLM-5.3",
+            "monthly_allowance": 205.0,
+            "output_cost_per_1m": 4.4,
+            "turn_cost_usd": 0.01775,
+            "quota_burn_pct": 7.41,
+            "context": 1000000,
+            "requests_per_5h": 2700,
+            "requests_per_month": 13500,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/glm-5.3",
+              "monthly_allowance": 205,
+              "output_cost_per_1m": 4.4,
+              "price_multiplier": 1,
+              "release_date": "2026-08-14",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4",
+              "monthly_allowance": 65,
+              "output_cost_per_1m": 2.501,
+              "price_multiplier": 1,
+              "release_date": "2026-11-04",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/kimi-k2.7-code",
+              "monthly_allowance": 65,
+              "output_cost_per_1m": 4.0,
+              "price_multiplier": 1,
+              "release_date": "2026-06-12",
+              "context": 262144
+            }
+          ],
+          "cluster": {
+            "size": 9,
+            "output_cost_per_1m_range": [
+              2.3925,
+              6.0
+            ]
+          },
+          "why": "opencode-go/glm-5.3 has the highest allowance among eligible models in the balanced price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "light": {
+          "model_id": "opencode-go/deepseek-v4.1-flash",
+          "fallbacks": [
+            "opencode-go/mimo-v2.6-flash",
+            "opencode-go/glm-5.3-flash"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/deepseek-v4.1-flash",
+            "name": "DeepSeek V4.1 Flash 1017",
+            "monthly_allowance": 105.0,
+            "output_cost_per_1m": 0.725,
+            "turn_cost_usd": 0.000535,
+            "quota_burn_pct": 0.53,
+            "context": 1000000,
+            "requests_per_5h": 45500,
+            "requests_per_month": 228000,
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": 0,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": "ZDR agreement is renewed monthly. The current agreement is valid through December 31, 2026.",
+              "agreement_valid_until": "2026-12-31"
+            },
+            "price_multiplier": 1.2083,
+            "next_price_change": {
+              "at": "2026-11-30T01:00+00:00",
+              "multiplier": 2.0
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/deepseek-v4.1-flash",
+              "monthly_allowance": 105,
+              "output_cost_per_1m": 0.725,
+              "price_multiplier": 1.2083,
+              "release_date": "2026-10-17",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/mimo-v2.6-flash",
+              "monthly_allowance": 65,
+              "output_cost_per_1m": 0.28,
+              "price_multiplier": 1,
+              "release_date": "2026-09-22",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/glm-5.3-flash",
+              "monthly_allowance": 65,
+              "output_cost_per_1m": 0.5,
+              "price_multiplier": 1,
+              "release_date": "2026-08-26",
+              "context": 1000000
+            }
+          ],
+          "cluster": {
+            "size": 12,
+            "output_cost_per_1m_range": [
+              0.28,
+              1.6
+            ]
+          },
+          "why": "opencode-go/deepseek-v4.1-flash has the highest allowance among eligible models in the light price cluster, with ties broken by lower output price, newer release, larger context"
+        },
+        "free": {
+          "model_id": "opencode-go/hungerg-free",
+          "fallbacks": [
+            "opencode-go/hy4-flash-free",
+            "opencode-go/beam-free"
+          ],
+          "explanation": {
+            "model_id": "opencode-go/hungerg-free",
+            "name": "HungerG Free",
+            "monthly_allowance": null,
+            "output_cost_per_1m": 0.0,
+            "turn_cost_usd": 0.0,
+            "quota_burn_pct": 0.0,
+            "context": 1000000,
+            "requests_per_5h": "unlimited",
+            "requests_per_month": "unlimited",
+            "burn_basis_used": "estimate",
+            "privacy": {
+              "trains_on_data": false,
+              "retention_days": null,
+              "zdr": true,
+              "requires_global_region": false,
+              "limited_regions": false,
+              "note": null,
+              "agreement_valid_until": null
+            }
+          },
+          "candidates": [
+            {
+              "model_id": "opencode-go/hungerg-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-24",
+              "context": 1000000
+            },
+            {
+              "model_id": "opencode-go/hy4-flash-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-11-16",
+              "context": 1048576
+            },
+            {
+              "model_id": "opencode-go/beam-free",
+              "monthly_allowance": null,
+              "output_cost_per_1m": 0.0,
+              "price_multiplier": 1,
+              "release_date": "2026-10-05",
+              "context": 1048576
+            }
+          ],
+          "why": "opencode-go/hungerg-free is the newest eligible zero-cost model (then larger context, then id)"
+        }
+      },
+      "excluded": [
+        {
+          "model_id": "opencode-go/gemini-decision-1",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gemini-embedding-2",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/gpt-6-luna-decision",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/iceman-contributor-free",
+          "reasons": [
+            "free model trains on request data (enable --allow-free-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/jev-1.14",
+          "reasons": [
+            "not a text model (type 'decision')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/longcat-2.5",
+          "reasons": [
+            "requires Global workspace region (enable --allow-global-region)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.2-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/muse-spark-1.3-contributor",
+          "reasons": [
+            "paid model trains on request data (enable --allow-paid-training)"
+          ]
+        },
+        {
+          "model_id": "opencode-go/qwen3-embedding-8b",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        },
+        {
+          "model_id": "opencode-go/text-embedding-3-small",
+          "reasons": [
+            "not a text model (type 'embedding')"
+          ]
+        }
+      ]
+    }
+  },
+  "warnings": [],
+  "provenance": {
+    "sources": {
+      "docs": {
+        "url": "https://raw.githubusercontent.com/anomalyco/opencode/dev/services/site/src/docs/content/console/go.mdx",
+        "status": 200,
+        "fetched_at": "2026-11-28T14:15:01+00:00",
+        "sha256": "f5631af8531fcb260986e0284c57de6b24e731377bfe4c1b29da18497bccc206",
+        "bytes": 22802
+      },
+      "console": {
+        "url": "https://opencode.ai/console/go",
+        "status": 200,
+        "fetched_at": "2026-11-28T14:15:01+00:00",
+        "sha256": "86908eac0b58546519499e6b1d94eae9b4e2911923db07f097f3f33c51d17563",
+        "bytes": 159013
+      },
+      "catalogue": {
+        "url": "https://opencode.ai/inference/go/v1/models",
+        "status": 200,
+        "fetched_at": "2026-11-28T14:15:01+00:00",
+        "sha256": "16910131cc8ae2151bdf6b3e046c504339320e8cb9b86a482b52d17f81868e8a",
+        "bytes": 49432
+      },
+      "models_dev": {
+        "url": "https://models.dev/api.json",
+        "status": 200,
+        "fetched_at": "2026-11-28T14:15:01+00:00",
+        "sha256": "85cbedfbf1813fb12b79bda127121323d6a7c67a546b920bc76326dd5411e9c3",
+        "bytes": 6857422
+      }
+    },
+    "note": "sha256 and byte length of each raw response body; bodies are not published"
+  },
+  "how_decided": [
+    "Mode: allowance. No benchmark data is used; models are ranked by published plan allowance and price only.",
+    "Sources: per-plan allowance and the training/ZDR flags come from the Go models API (`go.monthly_usage`, `go.training`, `go.zdr`); token prices come from the same catalogue. The docs Privacy table supplies retention days and agreement notes, and explicit docs text supplies the workspace Global-region requirement. `go.limited_regions` is recorded as advisory only, because regional availability is not the same as the Global setting.",
+    "Eligibility: only active text (chat) models are considered. Models without a positive finite allowance are excluded from the paid tiers. OpenCode Go privacy defaults apply: Global-region models are blocked, paid endpoints that train on request data are blocked, and free endpoints that train are blocked. Preview models are included. Retention is unrestricted unless a retention/ZDR flag is set. A model that publishes a monthly allowance but no token prices is treated as incomplete catalogue data and excluded from every tier.",
+    "Price: catalogue token prices are scaled by each model's price multiplier (peak hours, promo expiry) using the 7-day time-weighted average starting at generation time.",
+    "Tiers: eligible paid models are split into three clusters by log effective output price (natural breaks): the dearest cluster is heavy, the middle balanced, the cheapest light.",
+    "Ranking inside a cluster: highest monthly allowance first, then lowest effective output price, then newest release date, then largest context window, then model id.",
+    "Free tier: zero-cost (or contributor/unlimited) models, newest release first, then largest context window, then model id.",
+    "Quota burn: percent of the monthly allowance consumed per 1,000 turns, using the console's per-model token profile to estimate requests per month (scaled by the price multiplier). Shown for context; it is not a ranking key in allowance mode.",
+    "Fallbacks: the next 2 candidates per tier, drawn from the same cluster and then from the general paid ranking."
+  ],
+  "tests": {
+    "result": "pass",
+    "runs": [
+      {
+        "name": "offline",
+        "passed": 339,
+        "failed": 0,
+        "skipped": 0,
+        "failing": []
+      },
+      {
+        "name": "live",
+        "passed": 13,
+        "failed": 0,
+        "skipped": 0,
+        "failing": []
+      }
+    ]
+  }
+}
