@@ -165,10 +165,10 @@ jobs:
           AA_AVAILABLE: ${{ steps.opgate.outputs.available }}
         run: |
           mkdir -p out
+          method_args=(--snapshot out/snapshot.json --format json --explain --allow-global-region --allow-free-training)
           for method in pareto allowance; do
             status=0
-            uv run opencode-go-model-optimizer select --plan go --mode "$method" --snapshot out/snapshot.json \
-              --format json --explain --allow-global-region --allow-free-training \
+            uv run opencode-go-model-optimizer select --plan go --mode "$method" "${method_args[@]}" \
               > "out/${method}.json" 2> "out/${method}.err" || status=$?
             printf -v "${method}_status" '%s' "$status"
           done

@@ -9,7 +9,6 @@ flowchart LR
     OPT --> RENDER["scripts/render_optimizer_issue.py"]
     RENDER --> TIERS["docs/README.md (Latest Tier Selections)"]
     RENDER --> CHARTS["docs/analysis.md (Live Pareto & Catalog)"]
-    RENDER --> ISSUE["GitHub Issue #optimizer-results"]
     RENDER --> ARTIFACT["Upload docs-site Artifact"]
     ARTIFACT --> DOWNLOAD["publish-pages.yml: Download docs-site Artifact"]
     DOWNLOAD --> PAGES["Deploy to Docsify GitHub Pages"]

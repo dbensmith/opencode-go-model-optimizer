@@ -89,7 +89,8 @@ jobs:
             cat out/live-tests.txt
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$status" -ne 0 ]]; then
-            echo "::warning::Live contract tests failed; see Job Summary." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Live contract tests failed; see Job Summary."
+            echo "Live contract tests failed; see the output above." >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$status"
 
@@ -258,8 +259,11 @@ jobs:
           # Consumer endpoint: auto mode explicitly reports any allowance fallback.
           canonical_status=0
           uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode auto --allow-fallback \
-            --snapshot out/snapshot.json --format json --explain --top-n 3 --allow-global-region --allow-free-training \
+            "${snapshot_args[@]}" --format json --explain --top-n 3 "${privacy_args[@]}" \
             > out/site/select.json 2> out/select.err || canonical_status=$?
+          if [[ "$canonical_status" -ne 0 ]]; then
+            rm -f out/site/select.json
+          fi
 
           run_method() {
             local method="$1" status=0 p dir="out/$1"
@@ -268,8 +272,6 @@ jobs:
             if [[ "$method" != "pareto" || "$status" -eq 0 ]]; then
               uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode "$method" "${snapshot_args[@]}" \
                 --format table --explain "${privacy_args[@]}" > "$dir/table.txt" 2> "$dir/table.err" || status=$?
-            fi
-            if [[ "$method" != "pareto" || "$status" -eq 0 ]]; then
               uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode "$method" "${snapshot_args[@]}" \
                 --format json "${privacy_args[@]}" > "$dir/rank.json" 2> "$dir/rank.err" || status=$?
               for p in go go-plus go-teams; do
@@ -376,10 +378,7 @@ jobs:
           cp -a out/charts out/site/charts
 
           repo_url="${GITHUB_SERVER_URL}/${GH_REPO}"
-          sed -i \
-            -e "s|{{REPO_URL}}|${repo_url}|g" \
-            -e '/^- \*\*GitHub Issue\*\*:/d' \
-            -e '/^- \*\*Issue\*\*:/d' \
+          sed -i -e "s|{{REPO_URL}}|${repo_url}|g" \
             out/site/index.html out/site/_sidebar.md out/site/data.md
 
           echo "pareto_status=$pareto_status" >> "$GITHUB_OUTPUT"
