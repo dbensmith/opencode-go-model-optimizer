@@ -16,8 +16,7 @@ EXIT_CODES = """\
 exit codes:
   0    success
   1    runtime error
-  2    usage error, diff --fail-on-change detected changes, or report --fail-on-warnings
-       found warnings
+  2    usage error or diff --fail-on-change detected changes
   3    select --strict found an empty tier
   130  interrupted
 """
@@ -301,7 +300,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     select_parser.add_argument(
         "--explain",
         action="store_true",
-        help="Include detailed per-tier metrics and selection rationale",
+        help="Include detailed per-tier metrics and rationale; JSON also lists excluded models",
     )
 
     rank_parser = subparsers.add_parser(
@@ -351,26 +350,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--out",
         default="snapshot.json",
         help="Destination path for snapshot (default: snapshot.json)",
-    )
-
-    report_parser = subparsers.add_parser(
-        "report",
-        help="Fetch live and publish per-plan results with how and why they were decided",
-    )
-    report_parser.add_argument(
-        "--out-dir", required=True, help="Directory to write results.json and README.md into"
-    )
-    report_parser.add_argument(
-        "--tests-junit",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="JUnit XML from a test run to summarise in the report (can be repeated)",
-    )
-    report_parser.add_argument(
-        "--fail-on-warnings",
-        action="store_true",
-        help="Exit with code 2 (after writing) when the report contains warnings",
     )
 
     return parser.parse_args(argv)

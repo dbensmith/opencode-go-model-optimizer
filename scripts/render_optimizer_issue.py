@@ -191,10 +191,10 @@ def _write_site_pages(
     rank_models: list[dict[str, Any]] | None,
 ) -> None:
     pareto_ok = bool(args.pareto_json and Path(args.pareto_json).is_file())
+    allowance_select = _load_json(args.allowance_json)
     if args.analysis_output:
         plan_payloads = _load_plan_payloads(args.pareto_plan_json)
         allowance_plan_payloads = _load_plan_payloads(args.allowance_plan_json)
-        allowance_select = _load_json(args.allowance_json)
         allowance_rank = _load_rank_models(args.allowance_rank_json)
         pareto_error = (
             Path(args.pareto_error).read_text(encoding="utf-8", errors="replace")
@@ -223,6 +223,7 @@ def _write_site_pages(
             evaluated_at=select_payload.get("evaluated_at"),
             run_url=args.run_url or None,
             pareto_ok=pareto_ok,
+            allowance_select_payload=allowance_select,
         )
         _write_text(args.data_output, data_md)
 

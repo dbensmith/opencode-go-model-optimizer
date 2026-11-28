@@ -1,6 +1,7 @@
 """Tests for ranking engines and capability tier allocator."""
 
 import json
+import math
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
@@ -43,6 +44,7 @@ from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
     ModelLimit,
     NormalizedModel,
+    Privacy,
     RequestEstimate,
     TokenCost,
 )
@@ -127,6 +129,131 @@ def test_zero_cost_model_with_allowance_is_not_free():
         [odd, NormalizedModel(id="real-free")], SelectionCriteria(mode="allowance")
     )
     assert selection.primary["free"] == "opencode-go/real-free"
+
+
+def test_selection_reports_excluded_models_with_reasons():
+    models = [
+        make_model("eligible", output=1.0, monthly_allowance=5.0),
+        make_model("embedding", model_type="embedding"),
+        make_model("free"),
+        make_model(
+            "global",
+            output=1.0,
+            monthly_allowance=5.0,
+            privacy=Privacy(requires_global_region=True),
+        ),
+        make_model("incomplete", plan_allowances={"go": 15.0}),
+        make_model("old", status="deprecated"),
+        make_model(
+            "train",
+            output=1.0,
+            monthly_allowance=5.0,
+            privacy=Privacy(trains_on_data=True),
+        ),
+        make_model("unlimited", output=1.0, monthly_allowance=math.inf),
+        make_model("unpriced", output=1.0),
+        make_model("zero", output=1.0, monthly_allowance=0.0),
+    ]
+
+    selection = select_tiers(models, SelectionCriteria(mode="allowance"))
+
+    assert [item["model_id"] for item in selection.excluded] == [
+        "opencode-go/embedding",
+        "opencode-go/global",
+        "opencode-go/incomplete",
+        "opencode-go/old",
+        "opencode-go/train",
+        "opencode-go/unlimited",
+        "opencode-go/unpriced",
+        "opencode-go/zero",
+    ]
+    reasons = {item["model_id"]: item["reasons"] for item in selection.excluded}
+    assert reasons["opencode-go/embedding"] == ["not a text model (type 'embedding')"]
+    assert "Global workspace region" in reasons["opencode-go/global"][0]
+    assert reasons["opencode-go/incomplete"] == [
+        "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
+    ]
+    assert reasons["opencode-go/old"] == ["status is 'deprecated' (not active)"]
+    assert "paid model trains" in reasons["opencode-go/train"][0]
+    assert "unlimited allowance" in reasons["opencode-go/unlimited"][0]
+    assert "no monthly allowance" in reasons["opencode-go/unpriced"][0]
+    assert "allowance is zero" in reasons["opencode-go/zero"][0]
+
+
+def test_selection_excluded_models_use_applied_plan_and_allow_free_unlimited():
+    paid = TokenCost(input=1.0, output=2.0)
+    go_only = make_model("go-only", cost=paid, plan_allowances={"go": 15.0})
+    both = make_model(
+        "both",
+        cost=paid,
+        plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": 100.0},
+    )
+    selection = select_tiers(
+        apply_plan([go_only, both], "go-plus"), SelectionCriteria(mode="allowance")
+    )
+    assert selection.excluded == [
+        {
+            "model_id": "opencode-go/go-only",
+            "reasons": ["unpriced: no monthly allowance published for this plan"],
+        }
+    ]
+    assert "opencode-go/go-only" not in selection.primary.values()
+
+    unlimited_free = make_model(
+        "unlimited-free",
+        plan_allowances={"go": math.inf, "go-plus": math.inf, "go-teams": math.inf},
+    )
+    free_selection = select_tiers(
+        apply_plan([unlimited_free], "go"), SelectionCriteria(mode="allowance")
+    )
+    assert free_selection.excluded == []
+    assert free_selection.primary["free"] == "opencode-go/unlimited-free"
+
+
+def test_pareto_exclusions_use_benchmark_eligibility_instead_of_allowance():
+    benchmarked = make_model("benchmarked", input=1.0, output=2.0, aa_iq=80.0)
+    unbenchmarked = make_model("unbenchmarked", input=1.0, output=2.0, monthly_allowance=10.0)
+
+    pareto = select_tiers([benchmarked, unbenchmarked], SelectionCriteria(mode="pareto"))
+    assert pareto.method == "pareto"
+    assert pareto.primary["heavy"] == "opencode-go/benchmarked"
+    assert pareto.excluded == [
+        {
+            "model_id": "opencode-go/unbenchmarked",
+            "reasons": ["no Artificial Analysis benchmark for Pareto paid tiers"],
+        }
+    ]
+
+    allowance = select_tiers([benchmarked, unbenchmarked], SelectionCriteria(mode="allowance"))
+    assert allowance.excluded == [
+        {
+            "model_id": "opencode-go/benchmarked",
+            "reasons": ["unpriced: no monthly allowance published for this plan"],
+        }
+    ]
+
+    fallback = select_tiers([unbenchmarked], SelectionCriteria(mode="pareto", allow_fallback=True))
+    assert fallback.method == "allowance"
+    assert fallback.excluded == []
+
+
+def test_preferred_models_are_not_reported_as_excluded():
+    benchmarked = make_model("benchmarked", input=1.0, output=2.0, aa_iq=80.0)
+    unbenchmarked = make_model("unbenchmarked", input=1.0, output=2.0, monthly_allowance=10.0)
+
+    pareto = select_tiers(
+        [benchmarked, unbenchmarked],
+        SelectionCriteria(mode="pareto", preferred_tiers={"heavy": "unbenchmarked"}),
+    )
+    assert pareto.primary["heavy"] == "opencode-go/unbenchmarked"
+    assert pareto.excluded == []
+
+    allowance = select_tiers(
+        [benchmarked, unbenchmarked],
+        SelectionCriteria(mode="allowance", preferred_tiers={"heavy": "benchmarked"}),
+    )
+    assert allowance.primary["heavy"] == "opencode-go/benchmarked"
+    assert allowance.excluded == []
 
 
 def test_preferred_zero_cost_catalogue_anomaly_is_not_selected():
@@ -1486,6 +1613,7 @@ def test_tier_selection_clusters_and_allocate_efficiency():
     # 1. TierSelection default field
     ts = TierSelection(primary={"free": "f"}, candidates={"free": ["f"]}, models=[])
     assert ts.clusters == {}
+    assert ts.excluded == []
 
     # 2. select_tiers returns clusters populated
     m1 = make_model("p1", output=10.0, monthly_allowance=100.0)

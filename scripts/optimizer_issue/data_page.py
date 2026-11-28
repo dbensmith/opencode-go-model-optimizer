@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from opencode_go_model_optimizer.formatters.markdown import render_markdown_table
 
 from .common import _normalize_site_url, _site_file
@@ -13,6 +15,7 @@ def render_data_markdown(
     run_url: str | None = None,
     *,
     pareto_ok: bool = True,
+    allowance_select_payload: dict[str, Any] | None = None,
 ) -> str:
     """Render the data index page linking every artifact published to GitHub Pages."""
     site_base = _normalize_site_url(site_url)
@@ -166,7 +169,6 @@ def render_data_markdown(
 
     lines.extend(
         [
-            "- **GitHub Issue**: {{ISSUES_URL}}",
             "- **GitHub Repository**: {{REPO_URL}}",
             "",
             "## Rendered pages",
@@ -190,12 +192,25 @@ def render_data_markdown(
             "",
         ]
     )
+    if allowance_select_payload is not None and "excluded" in allowance_select_payload:
+        excluded = allowance_select_payload["excluded"] or []
+        excluded_rows = [
+            [f"`{item['model_id']}`", "; ".join(item["reasons"])] for item in excluded
+        ] or [["None", "All models are eligible"]]
+        plan = allowance_select_payload.get("plan", "go")
+        lines.extend(
+            [
+                "",
+                "## Excluded models",
+                "",
+                f"Allowance selection for plan `{plan}`.",
+                "",
+                *render_markdown_table(["Model", "Reason"], excluded_rows),
+                "",
+            ]
+        )
     if site_base:
-        quick_links = [
-            "## Quick links",
-            "",
-            "- **Issue**: {{ISSUES_URL}}",
-        ]
+        quick_links = ["## Quick links", ""]
         if pareto_ok:
             quick_links.append(
                 f"- **Pareto ranked catalog**: {_site_file(site_base, 'pareto/rank.json')}"

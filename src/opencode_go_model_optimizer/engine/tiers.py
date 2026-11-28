@@ -11,6 +11,7 @@ from opencode_go_model_optimizer.engine.allowance import (
 from opencode_go_model_optimizer.engine.criteria import (
     SelectionCriteria,
     catalogue_eligibility_reason,
+    exclusion_reasons,
     passes_privacy,
 )
 from opencode_go_model_optimizer.engine.pareto import (
@@ -90,6 +91,18 @@ def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[
     ]
 
 
+def _excluded_models(
+    models: list[NormalizedModel], c: SelectionCriteria, *, method: str
+) -> list[dict[str, object]]:
+    """Describe models that cannot occupy any tier under the effective method and criteria."""
+    excluded: list[dict[str, object]] = []
+    for m in sorted(models, key=lambda model: model.id):
+        reasons = exclusion_reasons(m, c, method=method)
+        if reasons:
+            excluded.append({"model_id": m.full_id, "reasons": reasons})
+    return excluded
+
+
 @dataclass(frozen=True)
 class TierSelection:
     """Primary pick and ordered candidates per tier, plus the models the picks came from.
@@ -104,6 +117,7 @@ class TierSelection:
     clusters: dict[str, list[NormalizedModel]] = field(default_factory=dict)
     method: str = "allowance"
     fell_back: bool = False
+    excluded: list[dict[str, object]] = field(default_factory=list)
 
 
 def _is_unused(m: NormalizedModel, used: set[str]) -> bool:
@@ -334,6 +348,13 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         effective_c = replace(c, mode="allowance") if c.mode != "allowance" else c
         selected, clusters, free_ranked, general_paid = _allocate_allowance(filtered, effective_c)
     primary = {k: selected.get(k, "") for k in STANDARD_TIERS}
+    # Preferred pins can override method-specific eligibility.
+    selected_ids = set(primary.values())
+    excluded = [
+        item
+        for item in _excluded_models(models, c, method=actual_method)
+        if item["model_id"] not in selected_ids
+    ]
 
     if c.top_n <= 1:
         return TierSelection(
@@ -343,6 +364,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
             clusters,
             method=actual_method,
             fell_back=fell_back,
+            excluded=excluded,
         )
 
     if general_paid is None:
@@ -372,6 +394,7 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
         clusters,
         method=actual_method,
         fell_back=fell_back,
+        excluded=excluded,
     )
 
 

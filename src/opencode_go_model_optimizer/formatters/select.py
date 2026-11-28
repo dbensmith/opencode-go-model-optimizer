@@ -39,6 +39,7 @@ def format_select_json(
     *,
     requested_mode: str | None = None,
     fell_back: bool = False,
+    excluded: list[dict[str, object]] | None = None,
 ) -> str:
     """Format tier selection as standard JSON.
 
@@ -64,6 +65,8 @@ def format_select_json(
         payload["fallbacks"] = fallbacks
     if explanations is not None:
         payload["explanations"] = explanations
+    if excluded is not None:
+        payload["excluded"] = excluded
     return json.dumps(payload, indent=2)
 
 

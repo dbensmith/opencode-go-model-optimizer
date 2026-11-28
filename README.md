@@ -30,10 +30,9 @@ flowchart LR
     end
 
     subgraph Surfaces["Outputs & Surfaces"]
-        CLI["CLI: select / rank / diff / report"]
+        CLI["CLI: select / rank / diff"]
         GH_ISSUE["GitHub Issue & Step Summary"]
         PAGES["Docsify GitHub Pages"]
-        RESULTS_BR["Orphan results Branch"]
     end
 
     I1 --> SNAP
@@ -50,7 +49,6 @@ flowchart LR
     PARETO --> PAGES
 
     ALLOWANCE --> CLI
-    ALLOWANCE --> RESULTS_BR
     ALLOWANCE --> PAGES
 ```
 
@@ -307,8 +305,11 @@ uvx opencode-go-model-optimizer select --format json
   quota.
   The `settings` block records the effective run criteria: mode, profile, price/burn basis,
   Global/paid-training/free-training flags, retention/ZDR, context/output/cost/burn filters,
-  skip list and tier pins. The issue, CI comment and GitHub Pages report render it under
+  skip list and tier pins. The issue, CI comment and GitHub Pages data page render it under
   **Run Settings**.
+  `select --format json --explain` also includes a top-level `excluded` list with each
+  ineligible model's ID and reasons. The Docsify data page renders the allowance exclusions
+  as an **Excluded models** table.
   `--format table` (the default for `rank`) and `--format json` are also available.
 
 - **`rank`**: Produces a ranked comparison of every model in the catalog. Table output is the default:
@@ -351,27 +352,10 @@ uvx opencode-go-model-optimizer select --format json
   prices, unreachable console profiles, an AA key that returned no benchmarks) are stored
   in the snapshot's `warnings` list and printed to stderr; they never fail the fetch.
 
-- **`report`**: Fetches live (never from the cache) and writes `results.json` and `README.md` to `--out-dir`, covering every plan (`go`, `go-plus`, `go-teams`) in allowance mode with default criteria and `--top-n 3`. It records the tier picks and fallbacks, why each was chosen (the effective criteria including Global/paid-training/free-training flags, ranking keys and their values, allowance, effective price multiplier, burn and the basis used, privacy fields), every excluded model with its reason, warnings, and source provenance (URL, HTTP status, fetch time, sha256 and byte length of each raw response, never the bodies). Pass `--tests-junit PATH` (repeatable) to embed pass/fail/skip counts and failing test names. It exits `0` even with warnings; `--fail-on-warnings` exits `2` after writing. No Artificial Analysis data ever enters the report.
-  ```bash
-  opencode-go-model-optimizer report --out-dir out --tests-junit offline.xml --tests-junit live.xml
-  ```
-
-### Published results
-
-A scheduled workflow ([`publish-results.yml`](.github/workflows/publish-results.yml)) runs twice daily (05:17 and 17:17 UTC), executes the offline and live contract tests, runs `report`, and force-pushes a single orphan commit to the `results` branch, so the branch has no history. It is published whatever the test outcome, and the job then fails if a test run failed.
-
-- Machine-readable: <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/results.json>
-- Human-readable (tables, how it was decided, warnings, provenance, test results): <https://raw.githubusercontent.com/<owner>/opencode-go-model-optimizer/results/README.md>
+### Publishing workflow
 
 ```mermaid
 flowchart LR
-    subgraph W1["publish-results.yml (Keyless Allowance Report)"]
-        CRON1["Twice Daily Schedule (05:17, 17:17 UTC)"] --> TEST1["Contract & Offline Tests"]
-        TEST1 --> REP1["report Command (Keyless Allowance Mode)"]
-        REP1 --> ARTIFACT1["Generate results.json & README.md"]
-        ARTIFACT1 --> PUSH1["Force Push Orphan Commit to results Branch"]
-    end
-
     subgraph W2["run-optimizer.yml (1Password Pareto Optimizer)"]
         CRON2["8-Hourly Schedule (07:00, 15:00, 23:00 UTC)"] --> OP2["Load AA_API_KEY via 1Password Service Account"]
         OP2 --> OPT2["run-optimizer.sh (Pareto Mode & Benchmarks)"]
@@ -480,7 +464,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--cache-ttl <seconds>`**: Cache snapshot fetches locally for TTL seconds (default: 0, or `OPENCODE_GO_CACHE_TTL`).
 - **`--prefer <tier>=<model_id>`** *(`select` only)*: Pin a model to a tier (e.g. `--prefer heavy=model-a`).
 - **`--top-n <count>`** *(`select` only)*: Number of ordered candidate models per tier for fallback chains (default: 1). When `top_n > 1`, includes `"fallbacks"` in JSON, `OPENCODE_MODEL_<TIER>_FALLBACKS` in env, and `<tier>_fallbacks` in github-output.
-- **`--explain`** *(`select` only)*: Include detailed per-tier metrics (`model_id`, `name`, `turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) and selection rationale in table and JSON output.
+- **`--explain`** *(`select` only)*: Include detailed per-tier metrics (`model_id`, `name`, `turn_cost_usd`, `quota_burn_pct`, `bpe`, `aa_iq`, etc.) and selection rationale in table and JSON output; JSON also includes the top-level `excluded` list.
 - **`--strict`** *(`select` only)*: Still writes output, but exits `3` with an stderr error when any tier is empty.
 - **`--format`**: Output format. `select` accepts `{json,table,compact,env,github-output}` (default: `json`); `rank` accepts `{table,json}` (default: `table`). Every `select` format outputs the display name of each tier's pick alongside its model ID.
   - `json`: Structured JSON schema; `names` maps each tier to its pick's display name.
@@ -495,7 +479,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 | ---- | ------- |
 | 0 | Success |
 | 1 | Runtime error |
-| 2 | Usage error, `diff --fail-on-change` detected changes, or `report --fail-on-warnings` found warnings |
+| 2 | Usage error or `diff --fail-on-change` detected changes |
 | 3 | `select --strict` found an empty tier |
 | 130 | Interrupted |
 
@@ -528,7 +512,6 @@ Code lives in `src/opencode_go_model_optimizer/`, one package per pipeline stage
 | `engine/` | Selection logic: `pareto`, `allowance`, `pricing`, `criteria`, `tiers`, `diff` |
 | `formatters/` | Output renderers per command (`select`, `rank`, `diff`) plus shared `table` and `markdown` helpers; the package `__init__` is the public entry point |
 | `cli_parser.py`, `cli.py` | Argument parsing and command dispatch |
-| `report.py`, `report_markdown.py` | The `report` command and its Markdown output |
 
 `scripts/render_optimizer_issue.py` and `scripts/optimizer_issue/` render the CI issue and Docsify pages from paired dual-method optimizer outputs. Issue/page generation uses `--allowance-json` plus optional `--pareto-json`, with `--allowance-rank-json` / `--pareto-rank-json` and `--allowance-plan-json` / `--pareto-plan-json` for catalogs and per-plan choices. The legacy single-method `--json`, `--rank-json`, and `--plan-json` flags and `render_issue_markdown` entry point have been removed; migrate to the paired Allowance/Pareto flags.
 

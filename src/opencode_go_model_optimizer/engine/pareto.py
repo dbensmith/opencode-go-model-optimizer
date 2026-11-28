@@ -7,6 +7,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from opencode_go_model_optimizer.engine.allowance import tie_break_key
+from opencode_go_model_optimizer.engine.criteria import has_benchmark_data
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, matches_any_id
 
 # Uniform agentic turn token mix: 750 in / 60,000 cached read / 250 out
@@ -235,7 +236,7 @@ def filter_benchmarked_models(
         m
         for m in models
         if m.status == "active"
-        and (m.aa_iq is not None or m.aa_coding is not None)
+        and has_benchmark_data(m)
         and not m.is_zero_cost
         and not matches_any_id(m, skip_models)
     ]
