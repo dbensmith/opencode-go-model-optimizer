@@ -313,7 +313,7 @@ def render_dual_issue_markdown(
 
     pareto_ok = (
         pareto_payload is not None
-        and (pareto_payload.get("method") or pareto_payload.get("mode")) == "pareto"
+        and pareto_payload["method"] == "pareto"
         and not pareto_payload.get("fallback")
     )
 

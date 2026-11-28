@@ -14,7 +14,7 @@ MODELS_DEV_PROVIDER = "opencode-go"
 def _extract_metadata(entry: dict[str, Any]) -> dict[str, Any]:
     """Extract the metadata fields this optimizer can backfill from a models.dev entry."""
     metadata: dict[str, Any] = {}
-    release_date = entry.get("release_date") or entry.get("releaseDate")
+    release_date = entry.get("release_date")
     if release_date:
         metadata["release_date"] = str(release_date)
 

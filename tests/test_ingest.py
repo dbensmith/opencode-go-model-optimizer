@@ -737,7 +737,6 @@ def test_parse_models_dev_payload():
                     "release_date": "2026-03-01",
                     "limit": {"context": 200000, "output": 64000},
                 },
-                "model-b": {"name": "Model B", "releaseDate": "2026-04-01"},
                 "model-empty": {"name": "Empty Model"},
                 "model-non-dict": "not-a-dict",
             }
@@ -758,7 +757,6 @@ def test_parse_models_dev_payload():
         "context": 200000,
         "output": 64000,
     }
-    assert parsed["modelb"] == {"release_date": "2026-04-01"}
     assert "emptymodel" not in parsed
     assert "modelc" not in parsed
 
@@ -767,7 +765,7 @@ def test_parse_models_dev_payload():
 
 def test_extract_metadata_edge_cases():
     assert _extract_metadata({"limit": "invalid"}) == {}
-    assert _extract_metadata({"releaseDate": "2026-05-01", "limit": {"context": 0}}) == {
+    assert _extract_metadata({"release_date": "2026-05-01", "limit": {"context": 0}}) == {
         "release_date": "2026-05-01"
     }
 

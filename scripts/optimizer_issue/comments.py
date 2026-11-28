@@ -120,7 +120,7 @@ def _render_dual_method_body(
     if payload is None:
         lines.append(empty_message)
     else:
-        method = payload.get("method") or payload.get("mode") or "unknown"
+        method = payload.get("method") or "unknown"
         table, _ = _render_select_json_table(payload, include_aa=include_aa)
         lines.extend([f"- **Calculation method**: `{method}`", "", *table])
 
