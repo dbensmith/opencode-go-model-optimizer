@@ -21,6 +21,7 @@ from opencode_go_model_optimizer.formatters.markdown import (
     render_mermaid_pie,
     render_run_settings_lines,
 )
+from opencode_go_model_optimizer.numbers import finite_float
 
 _RANKED_CATALOG_COLUMN_NAMES = (
     "Rank",
@@ -57,13 +58,22 @@ def _site_page(site_url: str, page: str) -> str:
 
 def _model_burn_pct(m: dict[str, Any]) -> float | None:
     """Extract composite burn percentage from a serialized rank row."""
-    burn = m.get("composite_burn_pct")
-    return float(burn) if is_number(burn) else None
+    return finite_float(m.get("composite_burn_pct"))
+
+
+def _short_model_id(model_id: Any) -> str:
+    """Return a model id without the provider prefix."""
+    return str(model_id).removeprefix("opencode-go/")
 
 
 def _short_id(m: dict[str, Any]) -> str:
     """Return a rank row's model id without the provider prefix."""
-    return str(m["full_id"]).removeprefix("opencode-go/")
+    return _short_model_id(m["full_id"])
+
+
+def _has_benchmarks(m: dict[str, Any]) -> bool:
+    """Return whether a serialized model or explanation has AA benchmark data."""
+    return m.get("aa_iq") is not None or m.get("aa_coding") is not None
 
 
 def _tier_pick_id(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]) -> str:
@@ -73,7 +83,7 @@ def _tier_pick_id(tier: str, explanations: dict[str, Any], tiers: dict[str, Any]
 
 def _model_quality(m: dict[str, Any]) -> float:
     """Read effective quality from a serialized model entry."""
-    return float(m.get("effective_quality") or 0.0)
+    return finite_float(m.get("effective_quality")) or 0.0
 
 
 def _ordered_tiers(explanations: dict[str, Any], tiers: dict[str, Any]) -> list[str]:
@@ -132,15 +142,20 @@ def _render_select_json_table(
     return render_markdown_table(headers, rows), saw_aa
 
 
-def _format_settings_lines(payload: dict[str, Any], default_mode: str) -> list[str]:
-    """Render Run Settings lines when effective settings are present in payload."""
-    settings = payload.get("settings") or {}
-    if not settings:
+def _format_settings_lines(
+    payload: dict[str, Any],
+    default_mode: str,
+    *,
+    settings: dict[str, Any] | None = None,
+) -> list[str]:
+    """Render Run Settings lines from payload settings or an explicit override."""
+    effective_settings = (payload.get("settings") or {}) if settings is None else settings
+    if not effective_settings:
         return []
     return [
         "",
         *render_run_settings_lines(
-            settings,
+            effective_settings,
             heading="### Run Settings",
             default_mode=default_mode,
             default_top_n=1,
@@ -157,7 +172,7 @@ def _render_report_header(
     site_base: str | None,
     include_pages_home: bool,
 ) -> list[str]:
-    """Render the common metadata header shared by issue and analysis pages."""
+    """Render the common metadata header shared by run summaries and analysis pages."""
     plan = payload.get("plan", "go")
     mode = payload.get("mode", default_mode)
     method = payload.get("method") or mode
@@ -254,6 +269,23 @@ def _render_ranked_catalog_rows(rank_models: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _render_full_catalog_section(
+    heading: str,
+    rank_models: list[dict[str, Any]],
+    *,
+    command: str | None = None,
+    chart: str | None = None,
+) -> list[str]:
+    """Render a ranked catalog heading, optional preamble, table, pie, and chart."""
+    lines = [heading, ""]
+    if command:
+        lines.extend([f"All {len(rank_models)} models evaluated by `{command}`.", ""])
+    lines.extend(_render_ranked_catalog_rows(rank_models))
+    if chart:
+        lines.extend(["", f"![Catalog Ranking Breakdown](charts/{chart})"])
+    return lines
+
+
 def _catalog_composition_pie_lines(rank_models: list[dict[str, Any]]) -> list[str]:
     """Mermaid pie block summarizing the catalog by eligibility & frontier status."""
     if not rank_models:
@@ -289,11 +321,23 @@ def _catalog_composition_pie_lines(rank_models: list[dict[str, Any]]) -> list[st
     return ["", *pie_lines] if pie_lines else []
 
 
+def _load_json(path: str | Path) -> Any:
+    """Load JSON from a file."""
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _read_optional_text(path: str | Path | None) -> str:
+    """Read a text file, returning an empty string when it is missing."""
+    if not path or not (file_path := Path(path)).is_file():
+        return ""
+    return file_path.read_text(encoding="utf-8", errors="replace")
+
+
 def _load_rank_models(path: str | None) -> list[dict[str, Any]]:
     """Load model entries from a ``rank --format json`` output file."""
     if not path:
         return []
-    rank_data = json.loads(Path(path).read_text(encoding="utf-8"))
+    rank_data = _load_json(path)
     if isinstance(rank_data, list):
         return rank_data
     if isinstance(rank_data, dict):

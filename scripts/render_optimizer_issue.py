@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,11 @@ from optimizer_issue import (  # noqa: E402
     render_dual_issue_markdown,
     render_dual_optimizer_output_comment,
 )
-from optimizer_issue.common import _load_rank_models  # noqa: E402
+from optimizer_issue.common import (  # noqa: E402
+    _load_json,
+    _load_rank_models,
+    _read_optional_text,
+)
 
 __all__ = [
     "generate_analysis_svgs",
@@ -57,10 +60,6 @@ _OPTIONAL_FLAGS: tuple[tuple[str, str], ...] = (
     ("--charts-dir", "Optional directory to output generated SVG analysis charts"),
     ("--data-output", "Optional path to write the all-data index page (data.md)"),
 )
-
-
-def _load_json(path: str) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _write_text(path: str | Path, content: str) -> None:
@@ -105,13 +104,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _load_plan_payloads(items: list[str]) -> dict[str, dict[str, Any]]:
-    return {
-        name: _load_json(path)
-        for item in items
-        if "=" in item
-        and Path(path := item.split("=", 1)[1]).is_file()
-        and (name := item.split("=", 1)[0]) is not None
-    }
+    payloads: dict[str, dict[str, Any]] = {}
+    for item in items:
+        name, separator, path = item.partition("=")
+        if separator and path and Path(path).is_file():
+            payloads[name] = _load_json(path)
+    return payloads
 
 
 def _load_optional_json(path: str | None) -> Any:
@@ -120,16 +118,30 @@ def _load_optional_json(path: str | None) -> Any:
     return None
 
 
+def _load_dual_inputs(args: argparse.Namespace) -> dict[str, Any]:
+    """Load the shared inputs used by the run summary and Docsify pages."""
+    return {
+        "pareto_payload": _load_optional_json(args.pareto_json),
+        "allowance_payload": _load_json(args.allowance_json),
+        "pareto_rank_models": _load_rank_models(args.pareto_rank_json),
+        "allowance_rank_models": _load_rank_models(args.allowance_rank_json),
+        "snapshot_payload": _load_optional_json(args.snapshot_json),
+        "pareto_error": _read_optional_text(args.pareto_error),
+        "script_output": _read_optional_text(args.script_output),
+        "run_url": args.run_url or None,
+        "site_url": args.site_url or None,
+    }
+
+
 def _render_primary_markdown(
     args: argparse.Namespace,
-) -> tuple[str | None, dict[str, Any] | None, list[dict[str, Any]] | None]:
+) -> tuple[str | None, dict[str, Any] | None]:
     if args.ci_dir:
         outcomes = {s: getattr(args, f"{s}_outcome") for s in ("format", "lint", "pytest", "build")}
         return (
             render_ci_comment_markdown(
                 ci_dir=args.ci_dir, run_url=args.run_url, sha=args.sha, outcomes=outcomes
             ),
-            None,
             None,
         )
 
@@ -151,68 +163,33 @@ def _render_primary_markdown(
             benchmarks=args.benchmarks or None,
             fetch_log=args.fetch_log or None,
         )
-        return md, None, None
+        return md, None
 
     if args.allowance_json:
-        pareto_payload = _load_optional_json(args.pareto_json)
-        allowance_payload = _load_json(args.allowance_json)
-        pareto_rank = _load_rank_models(args.pareto_rank_json)
-        allowance_rank = _load_rank_models(args.allowance_rank_json)
-        snapshot_payload = _load_optional_json(args.snapshot_json)
-        pareto_error = (
-            Path(args.pareto_error).read_text(encoding="utf-8", errors="replace")
-            if args.pareto_error and Path(args.pareto_error).is_file()
-            else ""
-        )
-        script_output = (
-            Path(args.script_output).read_text(encoding="utf-8", errors="replace")
-            if args.script_output and Path(args.script_output).is_file()
-            else ""
-        )
-        md = render_dual_issue_markdown(
-            pareto_payload,
-            allowance_payload,
-            pareto_rank_models=pareto_rank,
-            allowance_rank_models=allowance_rank,
-            pareto_error=pareto_error,
-            script_output=script_output,
-            run_url=args.run_url or None,
-            site_url=args.site_url or None,
-            snapshot_payload=snapshot_payload,
-        )
-        return md, pareto_payload or allowance_payload, pareto_rank
+        inputs = _load_dual_inputs(args)
+        return render_dual_issue_markdown(**inputs), inputs
 
-    return None, None, None
+    return None, None
 
 
-def _write_site_pages(
-    args: argparse.Namespace,
-    select_payload: dict[str, Any],
-    rank_models: list[dict[str, Any]] | None,
-) -> None:
+def _write_site_pages(args: argparse.Namespace, inputs: dict[str, Any]) -> None:
+    select_payload = inputs["pareto_payload"] or inputs["allowance_payload"]
     pareto_ok = bool(args.pareto_json and Path(args.pareto_json).is_file())
     if args.analysis_output:
         plan_payloads = _load_plan_payloads(args.pareto_plan_json)
         allowance_plan_payloads = _load_plan_payloads(args.allowance_plan_json)
-        allowance_select = _load_json(args.allowance_json)
-        allowance_rank = _load_rank_models(args.allowance_rank_json)
-        pareto_error = (
-            Path(args.pareto_error).read_text(encoding="utf-8", errors="replace")
-            if args.pareto_error and Path(args.pareto_error).is_file()
-            else ""
-        )
         free_matrix = _load_optional_json(args.free_matrix_json)
         analysis_md = render_analysis_markdown(
             select_payload=select_payload,
-            rank_models=rank_models or [],
+            rank_models=inputs["pareto_rank_models"] or [],
             plan_payloads=plan_payloads or None,
             free_matrix=free_matrix,
             run_url=args.run_url or None,
             charts_dir=args.charts_dir,
             site_url=args.site_url or None,
-            pareto_error=pareto_error,
-            allowance_select_payload=allowance_select,
-            allowance_rank_models=allowance_rank,
+            pareto_error=inputs["pareto_error"],
+            allowance_select_payload=inputs["allowance_payload"],
+            allowance_rank_models=inputs["allowance_rank_models"],
             allowance_plan_payloads=allowance_plan_payloads or None,
         )
         _write_text(args.analysis_output, analysis_md)
@@ -229,7 +206,7 @@ def _write_site_pages(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    markdown, select_payload, rank_models = _render_primary_markdown(args)
+    markdown, dual_inputs = _render_primary_markdown(args)
     if markdown is None:
         sys.stderr.write(
             "Error: one of --allowance-json, --ci-dir, or dual PR comment "
@@ -239,10 +216,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if (
         args.allowance_json
-        and select_payload is not None
+        and dual_inputs is not None
         and (args.analysis_output or args.data_output)
     ):
-        _write_site_pages(args, select_payload, rank_models)
+        _write_site_pages(args, dual_inputs)
 
     if args.output:
         _write_text(args.output, markdown)

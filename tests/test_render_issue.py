@@ -539,8 +539,8 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     assert "opencode-go/model-a" in content
     assert "opencode-go/model-fallback" in content
     assert "opencode-go/free-default" in content
-    assert "xychart-beta" in content
-    assert "quadrantChart" in content
+    assert "xychart-beta" not in content
+    assert "quadrantChart" not in content
     assert "flowchart LR" in content
     assert "pie showData" in content
     assert "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)" in content
@@ -565,6 +565,11 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         svg_text = svg_path.read_text(encoding="utf-8")
         root = ET.fromstring(svg_text)
         assert root.tag.endswith("svg")
+        if svg_name == "pareto-frontier.svg":
+            assert "Heavy Band" in svg_text
+            assert "Balanced Band" in svg_text
+            assert 'stroke-dasharray="4,3"' in svg_text
+            assert "model-a" in svg_text
 
 
 def test_render_ci_comment_cli(tmp_path: Path) -> None:
