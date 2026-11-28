@@ -1436,6 +1436,24 @@ def test_cli_allowance_skips_aa_and_passes_aa_cache_ttl(tmp_path, monkeypatch, c
         return snap
 
     monkeypatch.setattr("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", fake_fetch)
+
+    # Default AA cache TTL is 86400s (24h).
+    monkeypatch.delenv("OPENCODE_GO_AA_CACHE_TTL", raising=False)
+    assert main(["fetch", "--out", str(tmp_path / "default.json")]) == 0
+    capsys.readouterr()
+    assert seen[-1].get("aa_cache_ttl") == 86400
+
+    # OPENCODE_GO_AA_CACHE_TTL=0 or --aa-cache-ttl 0 forces live fetch (not passed as > 0).
+    assert main(["fetch", "--aa-cache-ttl", "0", "--out", str(tmp_path / "live.json")]) == 0
+    capsys.readouterr()
+    assert "aa_cache_ttl" not in seen[-1]
+
+    # Invalid env var or negative CLI value warns and falls back to 86400.
+    monkeypatch.setenv("OPENCODE_GO_AA_CACHE_TTL", "bad")
+    assert main(["fetch", "--out", str(tmp_path / "bad_env.json")]) == 0
+    assert "invalid OPENCODE_GO_AA_CACHE_TTL='bad'; using 86400" in capsys.readouterr().err
+    assert seen[-1].get("aa_cache_ttl") == 86400
+
     monkeypatch.setenv("OPENCODE_GO_AA_CACHE_TTL", "28800")
 
     assert main(["select", "--mode", "allowance", "--format", "compact"]) == 0
@@ -1447,3 +1465,86 @@ def test_cli_allowance_skips_aa_and_passes_aa_cache_ttl(tmp_path, monkeypatch, c
     assert main(["fetch", "--aa-cache-ttl", "600", "--out", str(tmp_path / "out.json")]) == 0
     capsys.readouterr()
     assert seen[-1].get("aa_cache_ttl") == 600
+
+    assert main(["fetch", "--aa-cache-ttl", "-5", "--out", str(tmp_path / "neg.json")]) == 0
+    assert "invalid --aa-cache-ttl=-5; using 86400" in capsys.readouterr().err
+    assert seen[-1].get("aa_cache_ttl") == 86400
+
+
+def test_cli_prints_aa_telemetry_to_stderr(tmp_path, monkeypatch, capsys):
+    base = load_snapshot(create_temp_snapshot(tmp_path))
+
+    # 1. Cache hit telemetry across duration ranges
+    for age_secs, expected_label in (
+        (30, "<1m"),
+        (1800, "30m"),
+        (8100, "2h 15m"),
+        (90000, "1d 1h"),
+    ):
+        snap_cache = base.model_copy(deep=True)
+        snap_cache.metadata.benchmark_source = "aa_cache"
+        snap_cache.metadata.benchmark_stats = {
+            "requests": 0,
+            "cache_hit": True,
+            "cache_age_seconds": age_secs,
+        }
+        monkeypatch.setattr(
+            "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
+            lambda s=snap_cache, **k: s,
+        )
+        assert main(["fetch", "--out", str(tmp_path / "c.json")]) == 0
+        assert (
+            f"Artificial Analysis: cache hit (0 requests; age {expected_label})"
+            in capsys.readouterr().err
+        )
+
+    # 2. Cooldown telemetry
+    snap_cool = base.model_copy(deep=True)
+    snap_cool.metadata.benchmark_stats = {
+        "requests": 0,
+        "cooldown_active": True,
+        "ratelimit_reset": "2026-11-28T19:49:29+00:00",
+    }
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.cli.fetch_and_build_snapshot", lambda **k: snap_cool
+    )
+    assert main(["fetch", "--out", str(tmp_path / "cool.json")]) == 0
+    assert (
+        "Artificial Analysis: 0 requests (cooldown active until 2026-11-28T19:49:29+00:00)"
+        in capsys.readouterr().err
+    )
+
+    # 3. Live fetch telemetry without limit header
+    snap_rem = base.model_copy(deep=True)
+    snap_rem.metadata.benchmark_stats = {"requests": 4, "ratelimit_remaining": 5}
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.cli.fetch_and_build_snapshot", lambda **k: snap_rem
+    )
+    assert main(["fetch", "--out", str(tmp_path / "rem.json")]) == 0
+    assert "Artificial Analysis: 4 request(s) used, 5 remaining" in capsys.readouterr().err
+
+    # 4. Live fetch telemetry + select JSON benchmark_stats
+    snap_live = base.model_copy(deep=True)
+    for m in snap_live.models:
+        if not m.is_zero_cost:
+            m.aa_iq = 70.0
+            m.aa_coding = 65.0
+            m.speed_tps = 90.0
+    snap_live.metadata.benchmark_source = "aa_live"
+    snap_live.metadata.benchmark_stats = {
+        "requests": 4,
+        "pages_fetched": 4,
+        "ratelimit_limit": 100,
+        "ratelimit_remaining": 96,
+        "ratelimit_reset": "2026-11-28T19:49:29+00:00",
+    }
+    monkeypatch.setattr(
+        "opencode_go_model_optimizer.cli.fetch_and_build_snapshot", lambda **k: snap_live
+    )
+    assert main(["select", "--mode", "pareto", "--format", "json"]) == 0
+    cap = capsys.readouterr()
+    assert (
+        "Artificial Analysis: 4 request(s) used, 96/100 remaining, resets at 2026-11-28T19:49:29+00:00"
+        in cap.err
+    )
+    assert json.loads(cap.out)["snapshot"]["benchmark_stats"]["requests"] == 4

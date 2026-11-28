@@ -298,8 +298,13 @@ uvx opencode-go-model-optimizer select --format json
   `cache`, `live`, or `stale-cache` (your local cache, used after a live fetch failure).
   `snapshot.benchmark_source` says where the AA benchmark values (`aa_iq`, `aa_coding`,
   `speed_tps`) came from: `aa_live` (fetched with your own `AA_API_KEY`), `aa_cache`
-  (loaded from the local AA benchmark cache via `--aa-cache-ttl`), or `none`. When an AA
-  fetch fails, `snapshot.benchmark_error` records the reason (e.g. HTTP 429 and reset time).
+  (loaded from the local AA benchmark cache via `--aa-cache-ttl`, which defaults to 24 hours),
+  or `none`. When an AA fetch fails, `snapshot.benchmark_error` records the reason (e.g. HTTP
+  429 and reset time), and `snapshot.benchmark_stats` records non-sensitive request and
+  remaining-quota telemetry (also printed on stderr). Persisted 429 cooldown state
+  (`aa-ratelimit.json`) short-circuits repeat calls before the reset window with 0 HTTP requests,
+  and mid-pagination quota checks abort incomplete page sequences before exhausting remaining
+  quota.
   The `settings` block records the effective run criteria: mode, profile, price/burn basis,
   Global/paid-training/free-training flags, retention/ZDR, context/output/cost/burn filters,
   skip list and tier pins. The issue, CI comment and GitHub Pages report render it under
@@ -400,7 +405,7 @@ AA_SECRET_REF='op://<vault>/<item>/<field>' scripts/run-optimizer.sh
 
 If `AA_API_KEY` is already exported, the script uses it directly and skips 1Password resolution. Otherwise it detects 1Password auth in the CLI's precedence order — Connect (`OP_CONNECT_HOST` + `OP_CONNECT_TOKEN`), service account (`OP_SERVICE_ACCOUNT_TOKEN`), then a signed-in account — and always retrieves the value with `op read`, which supports all three.
 
-Pull requests run [`pr-ci.yml`](.github/workflows/pr-ci.yml), which runs the shared test suite ([`ci.yml`](.github/workflows/ci.yml)) and publishes the CI job results and output as a comment on the pull request, then runs **both** calculation methods (`--mode pareto` and `--mode allowance`, both without `--allow-fallback`) against one shared snapshot and posts both tables in a second PR comment ("Optimizer Tier Selections") keyed to the PR head commit, with stderr folded into collapsible sections. The AA key is loaded from 1Password when repository secrets are available (same-repo PRs) and cached across 8-hour UTC slots via `aa-benchmarks.json` (`OPENCODE_GO_AA_CACHE_TTL=28800`) to stay well within Artificial Analysis's 100-request/day free limit; fork PRs receive no secrets, so Pareto is marked unavailable without falling back while Allowance runs normally. A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) then runs tests, fetches one snapshot (live AA on scheduled/manual runs, 8-hour cached AA on `push` to `main`), runs **both** methods without fallback, updates the `optimizer-results` GitHub issue and `docs-site` artifact with side-by-side Pareto and Allowance outputs (loudly flagging any Artificial Analysis failure while still publishing Allowance), and fails the job if either method failed. The separate [`publish-pages.yml`](.github/workflows/publish-pages.yml) workflow deploys that `docs-site` artifact to GitHub Pages.
+Pull requests run [`pr-ci.yml`](.github/workflows/pr-ci.yml), which runs the shared test suite ([`ci.yml`](.github/workflows/ci.yml)) and publishes the CI job results and output as a comment on the pull request, then (via `needs: test`, once tests pass) runs **both** calculation methods (`--mode pareto` and `--mode allowance`, both without `--allow-fallback`) against one shared snapshot and posts both tables in a second PR comment ("Optimizer Tier Selections") keyed to the PR head commit, with stderr folded into collapsible sections. The AA key is loaded from 1Password when repository secrets are available (same-repo PRs) and reuses the 24-hour cached AA benchmarks (`aa-benchmarks.json`, `OPENCODE_GO_AA_CACHE_TTL=86400`) plus persisted 429 cooldown state (`aa-ratelimit.json`), costing 0 AA requests when `artificial_analysis.py` is unchanged; fork PRs receive no secrets, so Pareto is marked unavailable without falling back while Allowance runs normally. A scheduled workflow ([`run-optimizer.yml`](.github/workflows/run-optimizer.yml)) runs tests, fetches one snapshot (cron runs use a 22-hour TTL `OPENCODE_GO_AA_CACHE_TTL=79200` so only the `07:00 UTC` run refreshes AA live — **4 requests/day**, 4% of AA's 100/day free quota — while `15:00` and `23:00` UTC, `push` to `main`, and default manual runs reuse the daily AA cache and still fetch OpenCode catalogue/docs live; pass `refresh_aa=true` on `workflow_dispatch` to force a live AA refresh), runs **both** methods without fallback, updates the `optimizer-results` GitHub issue and `docs-site` artifact with side-by-side Pareto and Allowance outputs (loudly flagging any Artificial Analysis failure while still publishing Allowance), and fails the job if either method failed. The separate [`publish-pages.yml`](.github/workflows/publish-pages.yml) workflow deploys that `docs-site` artifact to GitHub Pages.
 
 ### Offline Usage
 
@@ -440,7 +445,7 @@ The filter and optimization flags below apply to both `select` and `rank`. Flags
 - **`--plan {go,go-plus,go-teams}`**: OpenCode plan tier (default: `go`).
 - **`--mode {auto,pareto,allowance}`**: Ranking mode (default: `auto`).
 - **`--allow-fallback`**: Allow falling back from `pareto` mode to `allowance` mode when Artificial Analysis benchmarks are unavailable (disabled by default; without this flag, `pareto` fails loudly).
-- **`--aa-cache-ttl <seconds>`**: Cache TTL in seconds for Artificial Analysis benchmarks stored in `aa-benchmarks.json` (default: 0, or `OPENCODE_GO_AA_CACHE_TTL`). Accepted by `select`, `rank`, `diff`, and `fetch`.
+- **`--aa-cache-ttl <seconds>`**: Cache TTL in seconds for Artificial Analysis benchmarks stored in `aa-benchmarks.json` (default: 86400 [24h], or `OPENCODE_GO_AA_CACHE_TTL`; pass `0` to force a live fetch). Accepted by `select`, `rank`, `diff`, and `fetch`.
 - **`--snapshot <file>`**: Use a local snapshot JSON instead of fetching (see [Offline Usage](#offline-usage)).
 - **`-o, --output <file>`**: Write output to a file instead of stdout.
 - **`--profile {general,coding,reasoning,fast}`**: Workload profile adjusting token mix and benchmark weights (e.g. `coding` weights the AA Engineering capability index higher, `reasoning` weights Intelligence Index higher, `fast` rewards high TPS).

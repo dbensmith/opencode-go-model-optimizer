@@ -14,7 +14,7 @@ import httpx
 
 from opencode_go_model_optimizer.ingest.artificial_analysis import (
     fetch_aa_benchmarks,
-    load_cached_aa_benchmarks,
+    load_cached_aa_benchmarks_with_age,
     lookup_aa_benchmark,
     save_cached_aa_benchmarks,
 )
@@ -229,6 +229,7 @@ def create_snapshot(
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
     benchmark_source: str = "none",
     benchmark_error: str | None = None,
+    benchmark_stats: dict[str, Any] | None = None,
     warnings: list[str] | None = None,
     privacy: dict[str, dict[str, Any]] | None = None,
     sources: dict[str, dict[str, Any]] | None = None,
@@ -262,6 +263,7 @@ def create_snapshot(
             catalogue_count=len(models),
             benchmark_source=benchmark_source,
             benchmark_error=benchmark_error,
+            benchmark_stats=benchmark_stats,
             sources=dict(sources or {}),
         ),
         warnings=all_warnings,
@@ -414,10 +416,13 @@ def _fetch_and_build(
     aa_cache_ttl: float = 0,
 ) -> Snapshot:
     aa_key = os.environ.get("AA_API_KEY") if use_aa else None
-    cached_aa = (
-        load_cached_aa_benchmarks(ttl_seconds=aa_cache_ttl) if aa_key and aa_cache_ttl > 0 else None
+    cached_result = (
+        load_cached_aa_benchmarks_with_age(ttl_seconds=aa_cache_ttl)
+        if aa_key and aa_cache_ttl > 0
+        else None
     )
     aa_errors: list[str] = []
+    aa_stats: dict[str, Any] = {}
     console_errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         fut_cat = executor.submit(fetch_catalogue, client=active_client)
@@ -427,8 +432,14 @@ def _fetch_and_build(
             fetch_console_profiles, client=active_client, errors=console_errors
         )
         fut_aa = (
-            executor.submit(fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors)
-            if aa_key and cached_aa is None
+            executor.submit(
+                fetch_aa_benchmarks,
+                aa_key,
+                client=active_client,
+                errors=aa_errors,
+                stats=aa_stats,
+            )
+            if aa_key and cached_result is None
             else None
         )
 
@@ -451,10 +462,18 @@ def _fetch_and_build(
     aa_benchmarks: dict[str, dict[str, Any]] | None = None
     benchmark_source = "none"
     benchmark_error: str | None = None
-    if cached_aa is not None:
-        aa_benchmarks = cached_aa
+    benchmark_stats: dict[str, Any] | None = None
+    if cached_result is not None:
+        aa_benchmarks, cache_age = cached_result
         benchmark_source = "aa_cache"
+        benchmark_stats = {
+            "requests": 0,
+            "cache_hit": True,
+            "cache_age_seconds": int(cache_age),
+        }
     elif aa_key:
+        if aa_stats:
+            benchmark_stats = aa_stats
         if fetched_aa:
             aa_benchmarks = fetched_aa
             save_cached_aa_benchmarks(aa_benchmarks)
@@ -475,6 +494,7 @@ def _fetch_and_build(
         privacy=parse_privacy(docs_text),
         benchmark_source=benchmark_source,
         benchmark_error=benchmark_error,
+        benchmark_stats=benchmark_stats,
         warnings=warnings,
         sources=recorder.sources,
     )
