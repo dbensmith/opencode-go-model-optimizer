@@ -15,7 +15,6 @@ from opencode_go_model_optimizer.cli import (
     LoadedSnapshot,
     SnapshotUnavailableError,
     _age,
-    _load_or_fetch_models,
     _load_or_fetch_snapshot,
     _parse_preferred_tiers,
     _parse_token_mix,
@@ -29,10 +28,12 @@ from opencode_go_model_optimizer.ingest.models import (
     NormalizedModel,
     Snapshot,
     SnapshotMetadata,
+    effective_plan,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
     get_cache_snapshot_path,
     load_snapshot,
+    plan_models,
     save_cached_snapshot,
     save_snapshot,
 )
@@ -522,14 +523,7 @@ def testresolve_mode():
     assert resolve_mode("auto", [m_inactive]) == "allowance"
 
 
-def test_load_or_fetch_models(tmp_path):
-    # Snapshot provided
-    snap_path = create_temp_snapshot(tmp_path)
-    models, plan = _load_or_fetch_models(str(snap_path))
-    assert len(models) == 14
-    assert plan == "go"
-
-    # Live fetch succeeds
+def test_load_or_fetch_snapshot_cache_and_plan_models(tmp_path):
     dummy_snap = Snapshot(
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
@@ -537,31 +531,14 @@ def test_load_or_fetch_models(tmp_path):
         models=[make_model("m1")],
         metadata=SnapshotMetadata(),
     )
-    with patch(
-        "opencode_go_model_optimizer.cli.fetch_and_build_snapshot",
-        return_value=dummy_snap,
-    ):
-        models, plan = _load_or_fetch_models(plan="go-plus")
-        assert len(models) == 1
-        assert plan == "go-plus"
-
-    # Cache hit when cache_ttl > 0
-    with patch(
-        "opencode_go_model_optimizer.cli.load_cached_snapshot",
-        return_value=dummy_snap,
-    ) as mock_load:
-        models, plan = _load_or_fetch_models(plan="go-plus", cache_ttl=3600)
-        assert len(models) == 1
-        assert plan == "go-plus"
-        mock_load.assert_called_once_with(plan="go-plus", ttl_seconds=3600)
-
     # Cache miss when cache_ttl > 0 -> fetches and saves cache
     with (
         patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=None),
         patch("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", return_value=dummy_snap),
         patch("opencode_go_model_optimizer.cli.save_cached_snapshot") as mock_save,
     ):
-        models, plan = _load_or_fetch_models(plan="go-plus", cache_ttl=3600)
+        loaded = _load_or_fetch_snapshot(plan="go-plus", cache_ttl=3600)
+        models = plan_models(loaded.snapshot, loaded.snapshot.plan)
         assert len(models) == 1
         mock_save.assert_called_once_with(dummy_snap)
 
@@ -575,7 +552,9 @@ def test_load_or_fetch_models(tmp_path):
     )
     multi_path = tmp_path / "snap_multi.json"
     save_snapshot(snap_multi, multi_path)
-    models, plan = _load_or_fetch_models(str(multi_path), plan="go-plus")
+    loaded = _load_or_fetch_snapshot(str(multi_path), plan="go-plus")
+    plan = effective_plan(loaded.snapshot.plan, "go-plus", loaded.snapshot.models)
+    models = plan_models(loaded.snapshot, plan)
     assert plan == "go-plus"
 
     # Live fetch fails with a network error: the consumer cache (any age) is used
@@ -596,7 +575,9 @@ def test_load_or_fetch_models(tmp_path):
             return_value=stale_with_allowances,
         ) as mock_stale,
     ):
-        models, plan = _load_or_fetch_models(plan="go-plus")
+        loaded = _load_or_fetch_snapshot(plan="go-plus")
+        plan = effective_plan(loaded.snapshot.plan, "go-plus", loaded.snapshot.models)
+        models = plan_models(loaded.snapshot, plan)
         assert plan == "go-plus"
         assert models[0].monthly_allowance == 100.0
         mock_stale.assert_called_once_with(plan="go-plus", ttl_seconds=math.inf)
@@ -610,7 +591,7 @@ def test_load_or_fetch_models(tmp_path):
         patch("opencode_go_model_optimizer.cli.load_cached_snapshot", return_value=None),
         pytest.raises(SnapshotUnavailableError, match=r"--snapshot FILE.*'fetch'"),
     ):
-        _load_or_fetch_models()
+        _load_or_fetch_snapshot()
 
 
 def test_handle_rank_modes_and_formats(tmp_path, capsys):

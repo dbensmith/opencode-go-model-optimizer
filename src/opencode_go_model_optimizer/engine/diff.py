@@ -8,7 +8,7 @@ from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.pareto import filter_benchmarked_models
 from opencode_go_model_optimizer.engine.tiers import STANDARD_TIERS, select_tiers
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, Snapshot
-from opencode_go_model_optimizer.ingest.snapshot import apply_plan
+from opencode_go_model_optimizer.ingest.snapshot import plan_models
 from opencode_go_model_optimizer.numbers import serialize_inf_float
 
 ChangeType = Literal["added", "removed", "deprecated", "modified"]
@@ -127,12 +127,6 @@ def _privacy(m: NormalizedModel) -> dict[str, Any]:
     return {f: getattr(m.privacy, f) for f in PRIVACY_FIELDS}
 
 
-def _prepare_models(snapshot: Snapshot, plan: str) -> list[NormalizedModel]:
-    """Return deep-copied models with the requested plan allowances applied."""
-    models = [m.model_copy(deep=True) for m in snapshot.models]
-    return apply_plan(models, plan)
-
-
 def diff_snapshots(
     old_snap: Snapshot,
     new_snap: Snapshot,
@@ -143,8 +137,8 @@ def diff_snapshots(
     allow_fallback: bool = False,
 ) -> SnapshotDiff:
     """Compute catalog, pricing, status, and tier-assignment drift between snapshots."""
-    old_models = _prepare_models(old_snap, plan)
-    new_models = _prepare_models(new_snap, plan)
+    old_models = plan_models(old_snap, plan)
+    new_models = plan_models(new_snap, plan)
     old_by_id = {m.id: m for m in old_models}
     new_by_id = {m.id: m for m in new_models}
 

@@ -6,7 +6,7 @@ from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.engine.pricing import validate_multiplier
 from opencode_go_model_optimizer.engine.tiers import select_tiers
 from opencode_go_model_optimizer.ingest.docs import parse_privacy
-from opencode_go_model_optimizer.ingest.snapshot import apply_plan
+from opencode_go_model_optimizer.ingest.snapshot import plan_models
 
 pytestmark = pytest.mark.live
 
@@ -51,7 +51,7 @@ def test_active_models_get_allowance_and_privacy(live_snapshot):
 
 @pytest.mark.parametrize("plan", PLANS)
 def test_request_estimates_are_positive(live_snapshot, plan):
-    models = apply_plan([m.model_copy(deep=True) for m in live_snapshot.models], plan)
+    models = plan_models(live_snapshot, plan)
     for m in models:
         if m.status != "active" or m.model_type != "chat" or m.is_zero_cost:
             continue
@@ -75,7 +75,7 @@ def test_multipliers_parse_without_unknown_conditions(live_snapshot):
 
 @pytest.mark.parametrize("plan", PLANS)
 def test_select_yields_paid_tiers(live_snapshot, plan):
-    models = apply_plan([m.model_copy(deep=True) for m in live_snapshot.models], plan)
+    models = plan_models(live_snapshot, plan)
     tiers = select_tiers(models, SelectionCriteria(mode="allowance")).primary
     for tier in ("heavy", "balanced", "light"):
         assert tiers[tier], f"{plan}: empty {tier} tier"
