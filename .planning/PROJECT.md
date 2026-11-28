@@ -2,11 +2,11 @@
 
 ## What This Is
 
-`opencode-go-model-optimizer` is a CLI that evaluates the active OpenCode Go catalogue—pricing, monthly allowances, privacy constraints, and optional Artificial Analysis benchmarks—and assigns models to the `heavy`, `balanced`, `light`, and `free` tiers. Its first purpose is to produce machine-readable tier selections for populating OpenCode and Paseo agent profiles. Its second purpose is to publish the findings transparently through Docsify GitHub Pages with analysis and data pages, SVG/Mermaid charts, and raw JSON datasets; the GitHub issue and step summary; per-method PR comments; and the scheduled machine-readable report on the orphan `results` branch.
+`opencode-go-model-optimizer` is a decoupled CLI engine that evaluates the active OpenCode Go catalogue—pricing, monthly allowances, privacy constraints, and optional Artificial Analysis benchmarks—and assigns models to the `heavy`, `balanced`, `light`, and `free` tiers without being bound to any specific consumer framework. It provides consumer-agnostic, machine-readable tier selections through a stable JSON contract that downstream tools, such as OpenCode or Paseo profile tooling, can consume. It also publishes the findings transparently through Docsify GitHub Pages with analysis and data pages, SVG/Mermaid charts, and raw JSON datasets; the GitHub issue and step summary; per-method PR comments; and the scheduled machine-readable report on the orphan `results` branch.
 
 ## Core Value
 
-Accurate tier selections that are machine-readable for OpenCode and Paseo profile tooling and published openly so humans can see and audit why each model was chosen.
+Accurate tier selections exposed as a stable, consumer-agnostic machine-readable contract and published openly so humans can audit why each model was chosen.
 
 ## Requirements
 
@@ -21,17 +21,19 @@ Accurate tier selections that are machine-readable for OpenCode and Paseo profil
 - ✓ Apply privacy, region, training, zero-data-retention, and retention-day filters — existing
 - ✓ Account for time-aware price multipliers, workload profiles, token mixes, and quota-burn estimates — existing
 - ✓ Run paired Pareto and Allowance methods in CI — existing
-- ✓ Render optimizer findings, selection explanations, run settings, Mermaid diagrams, and generated SVG charts for the GitHub issue, step summary, and Docsify analysis/data pages — existing
+- ✓ Render optimizer findings, selection explanations, run settings, and Mermaid diagrams for the GitHub issue, step summary, and Docsify analysis/data pages — existing
+- ✓ Generate SVG Pareto-frontier, catalog-ranking, and multi-plan comparison charts for the Docsify analysis/data pages — existing
 - ✓ Deploy Docsify pages with raw JSON datasets (`select.json`, `rank.json`, `plans/*.json`, the normalized snapshot, and supporting artifacts) to GitHub Pages — existing
 - ✓ Post per-method optimizer results and a separate CI status comment to pull requests — existing
 - ✓ Publish a twice-daily machine-readable `results.json` report and human-readable README to a single-commit orphan `results` branch — existing
 
 ### Active
 
-- [ ] Populate OpenCode and Paseo profiles directly from tier output (e.g. a select output format or consumer script that emits profile entries per tier)
+(None — define next milestone)
 
 ### Out of Scope
 
+- Consumer-specific integrations (e.g. generating OpenCode or Paseo profile files) — the engine stays consumer-agnostic; consumers build on the JSON contract.
 - Silent fallback from Pareto to allowance without `--allow-fallback` — PR #65 made fallback explicit so unavailable or failed benchmarks cannot produce silently mislabeled selections.
 - Legacy single-method issue/page rendering and backward-compatibility re-export facades — PRs #67 and #70 removed them; CI consumes the paired Pareto/Allowance flow.
 
@@ -41,9 +43,8 @@ The repository is an existing Python package that ingests the OpenCode API and d
 
 ## Constraints
 
-- **Compatibility — JSON output is a public contract**: The CLI `--format json` output of `select`, `rank`, and `diff` exists so consumers can parse it easily (it feeds OpenCode/Paseo profile population). Additive fields are fine; renaming or removing keys requires explicit owner sign-off plus migration notes. Internal script inputs (e.g. `scripts/render_optimizer_issue.py` flags) are not part of the contract. Published artifacts are consumer-facing too: Pages raw JSON (including `rank.json`, `select.json`, `plans/*.json`, and `snapshot.json`) and `results.json` on the `results` branch follow the same additive-only rule, with owner sign-off and migration notes required for removed or renamed keys.
+- **Compatibility — JSON output is a public contract**: The CLI `--format json` output of `select`, `rank`, and `diff` exists so consumers can parse it easily (downstream consumers, e.g. profile tooling, depend on it). Additive fields are fine; renaming or removing keys requires explicit owner sign-off plus migration notes. Internal script inputs (e.g. `scripts/render_optimizer_issue.py` flags) are not part of the contract. Published artifacts are consumer-facing too: Pages raw JSON (including `rank.json`, `select.json`, `plans/*.json`, and `snapshot.json`) and `results.json` on the `results` branch follow the same additive-only rule, with owner sign-off and migration notes required for removed or renamed keys.
 - **Tech stack**: Python `>=3.15` (`requires-python`), `uv`, `ruff`, and `pytest` — declared in `pyproject.toml` and used by the documented development workflow.
-- **Data policy**: No catalogue, docs, pricing, or benchmark snapshots are stored in the repository; caches are consumer-maintained and Artificial Analysis data is never republished — required by the README data policy and Artificial Analysis terms.
 - **Privacy defaults**: Global-region models and training endpoints are excluded unless explicitly allowed; ZDR and retention filters fail closed when requested — selection must not silently weaken privacy criteria.
 
 ## Key Decisions
@@ -51,6 +52,7 @@ The repository is an existing Python package that ingests the OpenCode API and d
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | JSON output treated as a stable consumer contract | consumers parse it to build profiles | ✓ Good (verified 2026-11-28: a before/after schema diff across PRs #59–#70 showed only additive keys) |
+| Keep the engine consumer-agnostic | consumer integrations live in consumers, which parse the JSON contract | ✓ Good |
 | Pareto requires benchmarks; fallback only with `--allow-fallback` (PR #65) | avoid silently mislabelled selections | — Pending |
 | Removed single-method render paths and legacy snapshot compatibility (PRs #67, #70) | dual-method flow is the only one CI uses | ✓ Good |
 
