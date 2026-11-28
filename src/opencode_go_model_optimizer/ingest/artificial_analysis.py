@@ -67,7 +67,7 @@ def _aa_creator_name(item: dict[str, Any]) -> str:
     creator = item.get("model_creator")
     if isinstance(creator, dict):
         return str(creator.get("name") or "")
-    return str(item.get("model_creator.name") or "")
+    return ""
 
 
 def _aa_index_keys(slug: str, name: str, creator: str) -> list[str]:
