@@ -14,7 +14,7 @@ from opencode_go_model_optimizer.ingest.catalogue import (
     parse_catalogue_http,
 )
 from opencode_go_model_optimizer.ingest.docs import DOCS_URLS
-from opencode_go_model_optimizer.ingest.models import Snapshot, TokenCost
+from opencode_go_model_optimizer.ingest.models import Snapshot
 from opencode_go_model_optimizer.ingest.models_dev import MODELS_DEV_URL, parse_models_dev
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
@@ -43,14 +43,12 @@ def test_warning_when_catalogue_has_no_plan_usage():
 
 
 def test_warning_lists_paid_models_without_usage_for_the_plan():
-    priced = make_model(
-        "priced", name="Priced", cost=TokenCost(output=1.0), plan_allowances={"go": 15.0}
-    )
-    missing = make_model("missing-usage", name="Missing", cost=TokenCost(output=1.0))
+    priced = make_model("priced", name="Priced", output=1.0, plan_allowances={"go": 15.0})
+    missing = make_model("missing-usage", name="Missing", output=1.0)
     partial = make_model(
         "plus-only",
         name="PlusOnly",
-        cost=TokenCost(output=1.0),
+        output=1.0,
         plan_allowances={"go-plus": 60.0},
     )
     snap = create_snapshot([priced, missing, partial], plan="go")
