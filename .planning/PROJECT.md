@@ -2,11 +2,11 @@
 
 ## What This Is
 
-`opencode-go-model-optimizer` is a decoupled CLI engine that evaluates the active OpenCode Go catalogue—pricing, monthly allowances, privacy constraints, and optional Artificial Analysis benchmarks—and assigns models to the `heavy`, `balanced`, `light`, and `free` tiers without being bound to any specific consumer framework. It provides consumer-agnostic, machine-readable tier selections through a stable JSON contract that downstream tools, such as OpenCode or Paseo profile tooling, can consume. It also publishes the findings transparently through Docsify GitHub Pages with analysis and data pages, SVG/Mermaid charts, and raw JSON datasets; the GitHub issue and step summary; per-method PR comments; and the scheduled machine-readable report on the orphan `results` branch.
+`opencode-go-model-optimizer` is a decoupled CLI engine that evaluates the active OpenCode Go catalogue—pricing, monthly allowances, privacy constraints, and optional Artificial Analysis benchmarks—and assigns models to the `heavy`, `balanced`, `light`, and `free` tiers without being bound to any specific consumer framework. Consumers such as OpenCode or Paseo profile tooling do not need to install or run the CLI: CI publishes the CLI's JSON output as a static file on GitHub Pages (`https://dbensmith.github.io/opencode-go-model-optimizer/select.json`), so a consumer reads the selected tiers from one public endpoint, with explicit `method` and `fallback` fields identifying how they were calculated. Humans audit optimizer runs through the Docsify analysis/data pages, the Actions step summary, and the paired-method PR comment.
 
 ## Core Value
 
-Accurate tier selections exposed as a stable, consumer-agnostic machine-readable contract and published openly so humans can audit why each model was chosen.
+Accurate tier selections published at a stable public JSON endpoint that consumers can read without running anything, alongside human-readable pages explaining why each model was chosen.
 
 ## Requirements
 
@@ -29,11 +29,17 @@ Accurate tier selections exposed as a stable, consumer-agnostic machine-readable
 
 ### Active
 
-(None — define next milestone)
+- [ ] Publish a canonical `select.json` (`--mode auto --allow-fallback --explain --top-n 3`, `go` plan) at the Pages root on every Run Optimizer run, so AA availability does not suppress the canonical output
+- [ ] Publish excluded models with their exclusion reasons on Pages as part of normal runs
+- [ ] Run the live contract tests on the Run Optimizer schedule
+- [ ] Retire the orphan `results` branch, the `report` command and the optimizer GitHub issue; Pages, the step summary and PR comments replace them
+- [ ] Code goals: modularity, DRY, and fewer lines of code without losing core functionality
 
 ### Out of Scope
 
-- Consumer-specific integrations (e.g. generating OpenCode or Paseo profile files) — the engine stays consumer-agnostic; consumers build on the JSON contract.
+- Consumer-specific integrations (e.g. generating OpenCode or Paseo profile files) — the engine stays consumer-agnostic; consumers read the published Pages JSON endpoint.
+- Consumers retrieving or running the CLI themselves — the Pages endpoint removes that need.
+- Withholding AA-derived data from publication — owner decision (2026-11-28): Pages publishes the full CLI JSON, with AA metrics included when available.
 - Silent fallback from Pareto to allowance without `--allow-fallback` — PR #65 made fallback explicit so unavailable or failed benchmarks cannot produce silently mislabeled selections.
 - Legacy single-method issue/page rendering and backward-compatibility re-export facades — PRs #67 and #70 removed them; CI consumes the paired Pareto/Allowance flow.
 
@@ -43,7 +49,7 @@ The repository is an existing Python package that ingests the OpenCode API and d
 
 ## Constraints
 
-- **Compatibility — JSON output is a public contract**: The CLI `--format json` output of `select`, `rank`, and `diff` exists so consumers can parse it easily (downstream consumers, e.g. profile tooling, depend on it). Additive fields are fine; renaming or removing keys requires explicit owner sign-off plus migration notes. Internal script inputs (e.g. `scripts/render_optimizer_issue.py` flags) are not part of the contract. Published artifacts are consumer-facing too: Pages raw JSON (including `rank.json`, `select.json`, `plans/*.json`, and `snapshot.json`) and `results.json` on the `results` branch follow the same additive-only rule, with owner sign-off and migration notes required for removed or renamed keys.
+- **Compatibility — JSON output is a public contract**: The CLI `--format json` output of `select`, `rank`, and `diff` exists so consumers can parse it easily (downstream consumers, e.g. profile tooling, depend on it). Additive fields are fine; renaming or removing keys requires explicit owner sign-off plus migration notes. Internal script inputs (e.g. `scripts/render_optimizer_issue.py` flags) are not part of the contract. Published artifacts are consumer-facing too: the canonical Pages endpoint `select.json` is the primary consumer contract, and the other Pages raw JSON (`pareto/`, `allowance/`, `pareto/plans/*.json`, `allowance/plans/*.json`, `snapshot.json`) follows the same additive-only rule, with owner sign-off and migration notes required for removed or renamed keys.
 - **Tech stack**: Python `>=3.15` (`requires-python`), `uv`, `ruff`, and `pytest` — declared in `pyproject.toml` and used by the documented development workflow.
 - **Privacy defaults**: Global-region models and training endpoints are excluded unless explicitly allowed; ZDR and retention filters fail closed when requested — selection must not silently weaken privacy criteria.
 
@@ -55,6 +61,8 @@ The repository is an existing Python package that ingests the OpenCode API and d
 | Keep the engine consumer-agnostic | consumer integrations live in consumers, which parse the JSON contract | ✓ Good |
 | Pareto requires benchmarks; fallback only with `--allow-fallback` (PR #65) | avoid silently mislabelled selections | — Pending |
 | Removed single-method render paths and legacy snapshot compatibility (PRs #67, #70) | dual-method flow is the only one CI uses | ✓ Good |
+| Consumers read a static `select.json` on GitHub Pages instead of running the CLI (2026-11-28) | removes per-consumer retrieval/run plumbing; one public endpoint | — Pending |
+| Canonical endpoint uses `--mode auto --allow-fallback` (2026-11-28) | AA 429 cooldowns made `pareto/select.json` 404; explicit `fallback` flag publishes allowance selections without silent mislabelling | — Pending |
 
 ## Evolution
 
@@ -74,4 +82,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-28 after DRY refactor rounds (PRs #59–#70)*
+*Last updated: 2026-11-28 after pivot to the Pages JSON endpoint for consumers*
