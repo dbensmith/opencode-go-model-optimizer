@@ -225,16 +225,12 @@ jobs:
 
           # 1. Pareto method (NO fallback)
           pareto_status=0
-          if ! OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
-            > out/pareto/select.json 2> out/pareto/select.err; then
-            pareto_status=$?
-          fi
+          OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
+            > out/pareto/select.json 2> out/pareto/select.err || pareto_status=$?
 
           if [[ "$pareto_status" -eq 0 ]]; then
-            if ! OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" "${privacy_args[@]}" \
-              > out/pareto/table.txt 2> out/pareto/table.err; then
-              pareto_status=$?
-            fi
+            OPTIMIZER_MODE=pareto scripts/run-optimizer.sh --plan "$OPTIMIZER_PLAN" "${snapshot_args[@]}" "${privacy_args[@]}" \
+              > out/pareto/table.txt 2> out/pareto/table.err || pareto_status=$?
           fi
 
           if [[ "$pareto_status" -eq 0 ]]; then
@@ -255,14 +251,10 @@ jobs:
 
           # 2. Allowance method (always run independently, no fallback)
           allowance_status=0
-          if ! uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format json --explain "${privacy_args[@]}" \
-            > out/allowance/select.json 2> out/allowance/select.err; then
-            allowance_status=$?
-          fi
-          if ! uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format table --explain "${privacy_args[@]}" \
-            > out/allowance/table.txt 2> out/allowance/table.err; then
-            allowance_status=$?
-          fi
+          uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format json --explain "${privacy_args[@]}" \
+            > out/allowance/select.json 2> out/allowance/select.err || allowance_status=$?
+          uv run opencode-go-model-optimizer select --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format table --explain "${privacy_args[@]}" \
+            > out/allowance/table.txt 2> out/allowance/table.err || allowance_status=$?
           uv run opencode-go-model-optimizer rank --plan "$OPTIMIZER_PLAN" --mode allowance "${snapshot_args[@]}" --format json "${privacy_args[@]}" \
             > out/allowance/rank.json 2> out/allowance/rank.err || allowance_status=$?
           for p in go go-plus go-teams; do
