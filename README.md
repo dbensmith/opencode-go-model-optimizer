@@ -528,7 +528,7 @@ Code lives in `src/opencode_go_model_optimizer/`, one package per pipeline stage
 | `cli_parser.py`, `cli.py` | Argument parsing and command dispatch |
 | `report.py`, `report_markdown.py` | The `report` command and its Markdown output |
 
-`scripts/render_optimizer_issue.py` and `scripts/optimizer_issue/` render the CI issue and Docsify pages from the optimizer's JSON outputs.
+`scripts/render_optimizer_issue.py` and `scripts/optimizer_issue/` render the CI issue and Docsify pages from paired dual-method optimizer outputs. Issue/page generation uses `--allowance-json` plus optional `--pareto-json`, with `--allowance-rank-json` / `--pareto-rank-json` and `--allowance-plan-json` / `--pareto-plan-json` for catalogs and per-plan choices. The legacy single-method `--json`, `--rank-json`, and `--plan-json` flags and `render_issue_markdown` entry point have been removed; migrate to the paired Allowance/Pareto flags.
 
 There are no backward-compatibility re-export facades. Import each name from the module that defines it (for example `fetch_aa_benchmarks` from `ingest.artificial_analysis`, not `ingest.snapshot`), and import formatters from `opencode_go_model_optimizer.formatters`.
 

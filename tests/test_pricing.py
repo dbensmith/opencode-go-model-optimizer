@@ -49,6 +49,7 @@ def model(mid="m", out=10.0, whens=(), **kw) -> NormalizedModel:
         context=200000,
         max_output=8000,
         monthly_allowance=15.0,
+        plan_allowances={"go": 15.0},
         multipliers=[PriceMultiplier(factor=f, when=w) for f, w in whens],
         **kw,
     )

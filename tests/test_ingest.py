@@ -483,7 +483,7 @@ def test_fetch_and_build_with_aa_key():
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_aa_benchmarks",
-            return_value={"snap-m": {"iq": 65.0, "coding": 60.0, "tps": 30.0}},
+            return_value={"snapmodel": {"iq": 65.0, "coding": 60.0, "tps": 30.0}},
         ),
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_models_dev",
@@ -634,11 +634,6 @@ def test_plan_allowances_and_apply_plan():
     apply_plan([go_only], "go-plus")
     assert go_only.monthly_allowance is None
 
-    # Legacy snapshots without per-plan allowances keep their existing allowance.
-    legacy = make_model("legacy", monthly_allowance=12.0)
-    apply_plan([legacy], "go-plus")
-    assert legacy.monthly_allowance == 12.0
-
 
 def test_apply_plan_matches_plan_names_exactly():
     m = make_model(
@@ -657,7 +652,7 @@ def test_apply_plan_matches_plan_names_exactly():
 def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
     # Benchmarks may match a model by its id or by its normalized display name
     aa = {
-        "m_coding": {"iq": None, "coding": 85.0, "tps": 110.0},
+        "mcoding": {"iq": None, "coding": 85.0, "tps": 110.0},
         "prettymodelv1": {"iq": 92.0, "coding": None, "tps": None},
     }
     target_mod1 = make_model("m_coding", name="Target 1", plan_allowances={"go": 15.0})
@@ -1667,6 +1662,7 @@ def test_artificial_analysis_module_exports_and_lookup():
     model = make_model("glm-5", name="GLM-5")
     benchmarks = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
     assert artificial_analysis.lookup_aa_benchmark(model, benchmarks) == benchmarks["glm5"]
+    assert artificial_analysis.lookup_aa_benchmark(model, {"glm-5": benchmarks["glm5"]}) is None
     assert artificial_analysis.lookup_aa_benchmark(model, {}) is None
 
 
@@ -1894,7 +1890,7 @@ def test_fetch_and_build_snapshot_uses_and_populates_aa_cache(tmp_path):
     )
 
     model = make_model("snap-m", name="Snap Model", output=2.0, plan_allowances={"go": 50.0})
-    aa_data = {"snap-m": {"iq": 70.0, "coding": 65.0, "tps": 80.0}}
+    aa_data = {"snapmodel": {"iq": 70.0, "coding": 65.0, "tps": 80.0}}
 
     def fake_live(api_key, client=None, errors=None, stats=None):
         if stats is not None:

@@ -1,6 +1,6 @@
 # OpenCode Go Model Optimizer — Live Pareto Analysis & Catalog
 
-This file is populated dynamically in CI by `scripts/render_optimizer_issue.py` during each optimizer run.
+This file is populated dynamically in CI by `scripts/render_optimizer_issue.py` from paired Pareto and Allowance JSON outputs (`--pareto-json` / `--allowance-json`) during each optimizer run.
 
 ```mermaid
 flowchart LR

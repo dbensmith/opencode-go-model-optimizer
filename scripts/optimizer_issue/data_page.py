@@ -12,7 +12,6 @@ def render_data_markdown(
     evaluated_at: str | None = None,
     run_url: str | None = None,
     *,
-    dual_mode: bool = False,
     pareto_ok: bool = True,
 ) -> str:
     """Render the data index page linking every artifact published to GitHub Pages."""
@@ -43,99 +42,71 @@ def render_data_markdown(
         ],
         ["[Documentation & CLI usage](usage.md)", "How to run the optimizer yourself"],
     ]
-    if dual_mode:
-        artifact_rows: list[list[str]] = []
-        if pareto_ok:
-            artifact_rows.extend(
-                [
-                    [
-                        "[pareto/select.json](pareto/select.json ':ignore')",
-                        "Pareto `select --format json --explain` payload (no fallback)",
-                    ],
-                    [
-                        "[pareto/rank.json](pareto/rank.json ':ignore')",
-                        "Every model ranked by Pareto efficiency",
-                    ],
-                    [
-                        "[pareto/plans/go.json](pareto/plans/go.json ':ignore')",
-                        "Pareto `go` plan top-3 choices per tier",
-                    ],
-                    [
-                        "[pareto/plans/go-plus.json](pareto/plans/go-plus.json ':ignore')",
-                        "Pareto `go-plus` plan top-3 choices per tier",
-                    ],
-                    [
-                        "[pareto/plans/go-teams.json](pareto/plans/go-teams.json ':ignore')",
-                        "Pareto `go-teams` plan top-3 choices per tier",
-                    ],
-                    [
-                        "[pareto/table.txt](pareto/table.txt ':ignore')",
-                        "Pareto human-readable ASCII table output",
-                    ],
-                ]
-            )
-        else:
-            artifact_rows.append(
-                [
-                    "[pareto/error.txt](pareto/error.txt ':ignore')",
-                    "Pareto failure log (Artificial Analysis unavailable; no fallback used)",
-                ]
-            )
+    artifact_rows: list[list[str]] = []
+    if pareto_ok:
         artifact_rows.extend(
             [
                 [
-                    "[allowance/select.json](allowance/select.json ':ignore')",
-                    "Allowance `select --format json --explain` payload",
+                    "[pareto/select.json](pareto/select.json ':ignore')",
+                    "Pareto `select --format json --explain` payload (no fallback)",
                 ],
                 [
-                    "[allowance/rank.json](allowance/rank.json ':ignore')",
-                    "Every model ranked by allowance and price heuristic",
+                    "[pareto/rank.json](pareto/rank.json ':ignore')",
+                    "Every model ranked by Pareto efficiency",
                 ],
                 [
-                    "[allowance/plans/go.json](allowance/plans/go.json ':ignore')",
-                    "Allowance `go` plan top-3 choices per tier",
+                    "[pareto/plans/go.json](pareto/plans/go.json ':ignore')",
+                    "Pareto `go` plan top-3 choices per tier",
                 ],
                 [
-                    "[allowance/plans/go-plus.json](allowance/plans/go-plus.json ':ignore')",
-                    "Allowance `go-plus` plan top-3 choices per tier",
+                    "[pareto/plans/go-plus.json](pareto/plans/go-plus.json ':ignore')",
+                    "Pareto `go-plus` plan top-3 choices per tier",
                 ],
                 [
-                    "[allowance/plans/go-teams.json](allowance/plans/go-teams.json ':ignore')",
-                    "Allowance `go-teams` plan top-3 choices per tier",
+                    "[pareto/plans/go-teams.json](pareto/plans/go-teams.json ':ignore')",
+                    "Pareto `go-teams` plan top-3 choices per tier",
                 ],
                 [
-                    "[allowance/table.txt](allowance/table.txt ':ignore')",
-                    "Allowance human-readable ASCII table output",
+                    "[pareto/table.txt](pareto/table.txt ':ignore')",
+                    "Pareto human-readable ASCII table output",
                 ],
             ]
         )
     else:
-        artifact_rows = [
+        artifact_rows.append(
             [
-                "[select.json](select.json ':ignore')",
-                "Raw `select --format json --explain` payload for the configured plan",
+                "[pareto/error.txt](pareto/error.txt ':ignore')",
+                "Pareto failure log (Artificial Analysis unavailable; no fallback used)",
+            ]
+        )
+    artifact_rows.extend(
+        [
+            [
+                "[allowance/select.json](allowance/select.json ':ignore')",
+                "Allowance `select --format json --explain` payload",
             ],
             [
-                "[rank.json](rank.json ':ignore')",
-                "Every model ranked by the optimizer, including models that did not win a tier",
+                "[allowance/rank.json](allowance/rank.json ':ignore')",
+                "Every model ranked by allowance and price heuristic",
             ],
             [
-                "[plans/go.json](plans/go.json ':ignore')",
-                "`go` plan top-3 choices per tier with explanations",
+                "[allowance/plans/go.json](allowance/plans/go.json ':ignore')",
+                "Allowance `go` plan top-3 choices per tier",
             ],
             [
-                "[plans/go-plus.json](plans/go-plus.json ':ignore')",
-                "`go-plus` plan top-3 choices per tier with explanations",
+                "[allowance/plans/go-plus.json](allowance/plans/go-plus.json ':ignore')",
+                "Allowance `go-plus` plan top-3 choices per tier",
             ],
             [
-                "[plans/go-teams.json](plans/go-teams.json ':ignore')",
-                "`go-teams` plan top-3 choices per tier with explanations",
+                "[allowance/plans/go-teams.json](allowance/plans/go-teams.json ':ignore')",
+                "Allowance `go-teams` plan top-3 choices per tier",
             ],
             [
-                "[table.txt](table.txt ':ignore')",
-                "Human-readable table output from `scripts/run-optimizer.sh`",
+                "[allowance/table.txt](allowance/table.txt ':ignore')",
+                "Allowance human-readable ASCII table output",
             ],
         ]
+    )
     artifact_rows.extend(
         [
             [
@@ -225,16 +196,13 @@ def render_data_markdown(
             "",
             "- **Issue**: {{ISSUES_URL}}",
         ]
-        if dual_mode:
-            if pareto_ok:
-                quick_links.append(
-                    f"- **Pareto ranked catalog**: {_site_file(site_base, 'pareto/rank.json')}"
-                )
+        if pareto_ok:
             quick_links.append(
-                f"- **Allowance ranked catalog**: {_site_file(site_base, 'allowance/rank.json')}"
+                f"- **Pareto ranked catalog**: {_site_file(site_base, 'pareto/rank.json')}"
             )
-        else:
-            quick_links.append(f"- **Raw ranked catalog**: {_site_file(site_base, 'rank.json')}")
+        quick_links.append(
+            f"- **Allowance ranked catalog**: {_site_file(site_base, 'allowance/rank.json')}"
+        )
         quick_links.extend(
             [
                 f"- **Raw normalized snapshot**: {_site_file(site_base, 'snapshot.json')}",
