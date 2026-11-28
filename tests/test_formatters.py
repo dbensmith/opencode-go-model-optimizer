@@ -34,13 +34,11 @@ from opencode_go_model_optimizer.formatters.select import (
 )
 from opencode_go_model_optimizer.formatters.table import _append_column, render_table
 from opencode_go_model_optimizer.ingest.models import (
-    ModelLimit,
-    NormalizedModel,
     PriceMultiplier,
     Privacy,
     RequestEstimate,
-    TokenCost,
 )
+from tests.factories import make_model
 
 
 def test_format_select_json():
@@ -81,10 +79,8 @@ def test_format_select_json():
 
 
 def test_tier_display_names():
-    named = NormalizedModel(
-        id="alpha", provider_id="opencode-go", name="Alpha Max", status="active"
-    )
-    unnamed = NormalizedModel(id="beta", provider_id="opencode-go")
+    named = make_model("alpha", name="Alpha Max")
+    unnamed = make_model("beta")
     models = [named, unnamed]
 
     tiers = {
@@ -212,28 +208,19 @@ def test_formatters_with_fallbacks():
 
 
 def test_format_select_table_with_missing_and_varied_models():
-    m1 = NormalizedModel(
-        id="model-inf",
-        provider_id="opencode-go",
+    m1 = make_model(
+        "model-inf",
         name="Model Inf",
         monthly_allowance=float("inf"),
-        is_zero_cost=True,
-        limit=ModelLimit(context=1000000),
+        context=1000000,
     )
-    m2 = NormalizedModel(
-        id="model-dollar",
-        provider_id="opencode-go",
+    m2 = make_model(
+        "model-dollar",
         name="Model Dollar",
         monthly_allowance=60.0,
-        cost=TokenCost(output=0.50),
-        limit=ModelLimit(context=0),
+        output=0.50,
     )
-    m3 = NormalizedModel(
-        id="model-none",
-        provider_id="opencode-go",
-        monthly_allowance=None,
-        cost=TokenCost(output=1.00),
-    )
+    m3 = make_model("model-none", output=1.00)
     models = [m1, m2, m3]
 
     tiers = {
@@ -256,33 +243,19 @@ def test_format_select_table_with_missing_and_varied_models():
 
 
 def test_format_rank_table_pareto():
-    m1 = NormalizedModel(
-        id="pareto-m1",
+    m1 = make_model(
+        "pareto-m1",
         rank=1,
         tier="heavy",
         bpe=0.952,
         aa_iq=75.5,
         composite_burn_pct=2.5,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         release_date="2026-10-01",
     )
-    m2 = NormalizedModel(
-        id="pareto-m2",
-        rank=None,
-        tier=None,
-        bpe=None,
-        aa_iq=None,
-        composite_burn_pct=None,
-        monthly_allowance=float("inf"),
-        is_zero_cost=True,
-        release_date="",
-    )
-    m3 = NormalizedModel(
-        id="pareto-m3",
-        monthly_allowance=None,
-        cost=TokenCost(output=0.0),
-    )
+    m2 = make_model("pareto-m2", monthly_allowance=float("inf"))
+    m3 = make_model("pareto-m3", output=0.0)
     table = format_rank_table([m1, m2, m3], mode="pareto")
     assert "Tier" in table
     assert "heavy" in table
@@ -298,26 +271,16 @@ def test_format_rank_table_pareto():
 
 
 def test_format_rank_table_allowance():
-    m1 = NormalizedModel(
-        id="allow-m1",
+    m1 = make_model(
+        "allow-m1",
         rank=1,
         tier="balanced",
         monthly_allowance=50.0,
-        cost=TokenCost(output=1.5),
+        output=1.5,
         release_date="2026-08-01",
-        limit=ModelLimit(context=500000),
-        status="active",
+        context=500000,
     )
-    m2 = NormalizedModel(
-        id="allow-m2",
-        rank=None,
-        tier=None,
-        monthly_allowance=float("inf"),
-        is_zero_cost=True,
-        release_date="",
-        limit=ModelLimit(context=0),
-        status="deprecated",
-    )
+    m2 = make_model("allow-m2", monthly_allowance=float("inf"), status="deprecated")
     table = format_rank_table([m1, m2], mode="allowance")
     assert "Tier" in table
     assert "balanced" in table
@@ -329,7 +292,7 @@ def test_format_rank_table_allowance():
 
 
 def test_format_rank_json():
-    m = NormalizedModel(id="json-m", monthly_allowance=40.0)
+    m = make_model("json-m", monthly_allowance=40.0)
     data_str = format_rank_json([m])
     data = json.loads(data_str)
     assert isinstance(data, list)
@@ -357,13 +320,14 @@ def test_render_table_column_mismatch():
 
 
 def test_explain_tiers_and_table():
-    m1 = NormalizedModel(
-        id="mod-1",
-        provider_id="opencode-go",
+    m1 = make_model(
+        "mod-1",
         name="Mod One",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.1),
-        limit=ModelLimit(context=200000),
+        input=1.0,
+        output=2.0,
+        cache_read=0.1,
+        context=200000,
         aa_iq=55.0,
         aa_coding=60.0,
         speed_tps=80.0,
@@ -371,12 +335,7 @@ def test_explain_tiers_and_table():
         is_pareto=True,
         composite_burn_pct=4.2,
     )
-    m2 = NormalizedModel(
-        id="mod-2",
-        provider_id="opencode-go",
-        monthly_allowance=float("inf"),
-        is_zero_cost=True,
-    )
+    m2 = make_model("mod-2", monthly_allowance=float("inf"))
     models = [m1, m2]
     tiers = {
         "heavy": "opencode-go/mod-1",
@@ -492,9 +451,9 @@ def test_format_diff_table_infinite_allowance():
 def test_format_rank_table_requests_and_privacy_columns():
     from opencode_go_model_optimizer.ingest.models import Privacy, RequestEstimate
 
-    m1 = NormalizedModel(id="m1", rank=1, privacy=Privacy(zdr=True))
+    m1 = make_model("m1", rank=1, privacy=Privacy(zdr=True))
     m1.request_estimate = RequestEstimate(per_5h=100.0, per_week=500.0, per_month=2000.0)
-    m2 = NormalizedModel(id="m2", rank=2, privacy=None)
+    m2 = make_model("m2", rank=2)
     table = format_rank_table([m1, m2])
     assert "Req/month" in table
     assert "Privacy" in table
@@ -509,8 +468,8 @@ def test_explain_tiers_next_change_none():
     from opencode_go_model_optimizer.ingest.models import PriceMultiplier
 
     past_mult = PriceMultiplier(factor=1.5, when={"date": {"lt": "2020-01-01"}})
-    m = NormalizedModel(
-        id="m1",
+    m = make_model(
+        "m1",
         tier="heavy",
         multipliers=[past_mult],
     )
@@ -559,25 +518,25 @@ def test_append_column_and_render_table():
 
 def test_format_select_table_explain_multiplier_and_missing_padding():
     future_mult = PriceMultiplier(factor=2.0, when={"date": {"gte": "2026-12-01"}})
-    m1 = NormalizedModel(
-        id="mod-mult",
-        provider_id="opencode-go",
+    m1 = make_model(
+        "mod-mult",
         name="Mod Mult",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=128000),
+        input=1.0,
+        output=2.0,
+        context=128000,
         aa_iq=80.0,
         bpe=1.2,
         composite_burn_pct=12.5,
         multipliers=[future_mult],
     )
     m1.price_multiplier = 1.0
-    m2 = NormalizedModel(
-        id="mod-plain",
-        provider_id="opencode-go",
+    m2 = make_model(
+        "mod-plain",
         name="Mod Plain",
         monthly_allowance=30.0,
-        cost=TokenCost(input=0.5, output=1.0),
+        input=0.5,
+        output=1.0,
     )
     tiers = {
         "heavy": "opencode-go/mod-mult",
@@ -600,23 +559,23 @@ def test_format_select_table_explain_multiplier_and_missing_padding():
 
 
 def test_format_rank_table_optional_columns_and_empty():
-    m1 = NormalizedModel(
-        id="rank-1",
+    m1 = make_model(
+        "rank-1",
         rank=1,
         tier="heavy",
         bpe=1.1,
         aa_iq=85.0,
         composite_burn_pct=15.0,
         monthly_allowance=60.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         release_date="2026-10-01",
-        limit=ModelLimit(context=200000),
+        context=200000,
         privacy=Privacy(zdr=True, trains_on_data=False),
     )
     m1.request_estimate = RequestEstimate(per_5h=50.0, per_week=200.0, per_month=900.0)
     m1.price_multiplier = 1.5
-    m2 = NormalizedModel(
-        id="rank-2",
+    m2 = make_model(
+        "rank-2",
         rank=2,
         status="preview",
         privacy=Privacy(

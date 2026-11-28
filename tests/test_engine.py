@@ -42,6 +42,7 @@ from opencode_go_model_optimizer.ingest.models import (
 )
 from opencode_go_model_optimizer.ingest.snapshot import apply_plan
 from tests.conftest import CATALOGUE_HTTP_DATA
+from tests.factories import make_model
 
 
 def _criteria(kw):
@@ -123,9 +124,10 @@ def test_zero_cost_model_with_allowance_is_not_free():
 
 
 def test_preferred_zero_cost_catalogue_anomaly_is_not_selected():
-    anomaly = NormalizedModel(
-        id="anom",
-        cost=TokenCost(input=0.0, output=0.0),
+    anomaly = make_model(
+        "anom",
+        input=0.0,
+        output=0.0,
         plan_allowances={"go": 15.0},
         monthly_allowance=15.0,
     )
@@ -140,52 +142,58 @@ def test_preferred_zero_cost_catalogue_anomaly_is_not_selected():
 
 def test_deterministic_tie_breaking():
     # Models with identical allowance and output cost
-    m1 = NormalizedModel(
-        id="model-b",
+    m1 = make_model(
+        "model-b",
         name="Model B",
         release_date="2026-09-10",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=500000),
+        input=1.0,
+        output=2.0,
+        context=500000,
     )
-    m2 = NormalizedModel(
-        id="model-a",
+    m2 = make_model(
+        "model-a",
         name="Model A",
         release_date="2026-09-10",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=1000000),  # Larger context should win
+        input=1.0,
+        output=2.0,
+        context=1000000,  # Larger context should win
     )
-    m3 = NormalizedModel(
-        id="model-c",
+    m3 = make_model(
+        "model-c",
         name="Model C",
         release_date="2026-09-09",  # Older release date should lose
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=1000000),
+        input=1.0,
+        output=2.0,
+        context=1000000,
     )
     ranked = rank_paid_models([m1, m2, m3])
     assert [m.id for m in ranked] == ["model-a", "model-b", "model-c"]
 
     # When release date and context are also identical, id ASC wins
-    m4 = NormalizedModel(
-        id="model-z",
+    m4 = make_model(
+        "model-z",
         name="Model Z",
         release_date="2026-09-10",
         monthly_allowance=60.0,
-        cost=TokenCost(input=1.0, output=2.0),
-        limit=ModelLimit(context=500000),
+        input=1.0,
+        output=2.0,
+        context=500000,
     )
     ranked_alphabetical = rank_paid_models([m4, m1])
     assert [m.id for m in ranked_alphabetical] == ["model-b", "model-z"]
 
 
 def test_turn_cost_and_burn():
-    m = NormalizedModel(
-        id="test-model",
+    m = make_model(
+        "test-model",
         name="Test Model",
         monthly_allowance=80.0,
-        cost=TokenCost(input=0.30, output=1.20, cache_read=0.006),
+        input=0.30,
+        output=1.20,
+        cache_read=0.006,
     )
     # std turn: 750 * 0.30 + 60,000 * 0.006 + 250 * 1.20 = 225 + 360 + 300 = 885 / 1e6 = 0.000885
     turn_cost = compute_turn_cost(m)
@@ -199,12 +207,12 @@ def test_turn_cost_and_burn():
 
 def test_fisher_jenks_clustering():
     models = [
-        NormalizedModel(id="m1", aa_iq=55.0),
-        NormalizedModel(id="m2", aa_iq=53.0),
-        NormalizedModel(id="m3", aa_iq=46.0),
-        NormalizedModel(id="m4", aa_iq=45.0),
-        NormalizedModel(id="m5", aa_iq=25.0),
-        NormalizedModel(id="m6", aa_iq=19.0),
+        make_model("m1", aa_iq=55.0),
+        make_model("m2", aa_iq=53.0),
+        make_model("m3", aa_iq=46.0),
+        make_model("m4", aa_iq=45.0),
+        make_model("m5", aa_iq=25.0),
+        make_model("m6", aa_iq=19.0),
     ]
     c1, c2, c3 = fisher_jenks_3_clusters(models)
     assert [m.id for m in c1] == ["m1", "m2"]
@@ -277,9 +285,9 @@ def test_rank_catalog():
 def test_tie_break_key():
     from opencode_go_model_optimizer.engine.allowance import _desc_str_key
 
-    m1 = NormalizedModel(id="mod1", release_date="2026-05-01", limit=ModelLimit(context=128000))
+    m1 = make_model("mod1", release_date="2026-05-01", context=128000)
     assert tie_break_key(m1) == (_desc_str_key("2026-05-01"), -128000, "mod1")
-    m2 = NormalizedModel(id="mod2", release_date="", limit=ModelLimit(context=64000))
+    m2 = make_model("mod2", release_date="", context=64000)
     assert tie_break_key(m2) == (_desc_str_key(""), -64000, "mod2")
     assert _desc_str_key("2026-05-01") < _desc_str_key("2026-04-30")
 
@@ -291,25 +299,21 @@ def test_compute_turn_cost_zero_cost():
 
 def test_compute_quota_burn_pct_guards():
     # zero-cost model
-    m_zero = NormalizedModel(id="zero", is_zero_cost=True)
+    m_zero = make_model("zero")
     assert compute_quota_burn_pct(m_zero) == 0.0
 
     # infinite allowance
-    m_inf = NormalizedModel(id="inf", monthly_allowance=float("inf"), cost=TokenCost(output=1.0))
+    m_inf = make_model("inf", monthly_allowance=float("inf"), output=1.0)
     assert compute_quota_burn_pct(m_inf) == 0.0
 
     # turn_cost <= 0.0 (all token costs 0.0 and not marked zero_cost)
-    m_free_tokens = NormalizedModel(
-        id="free-tokens",
-        monthly_allowance=50.0,
-        cost=TokenCost(input=0.0, output=0.0, cache_read=0.0),
+    m_free_tokens = make_model(
+        "free-tokens", monthly_allowance=50.0, input=0.0, output=0.0, cache_read=0.0
     )
     assert compute_quota_burn_pct(m_free_tokens) == 0.0
 
     # turns_per_mo <= 0.0 (negative allowance)
-    m_neg = NormalizedModel(
-        id="neg", monthly_allowance=-10.0, cost=TokenCost(input=1.0, output=1.0)
-    )
+    m_neg = make_model("neg", monthly_allowance=-10.0, input=1.0, output=1.0)
     assert compute_quota_burn_pct(m_neg) == 100000.0
 
     # default allowance (None -> 15.0)
@@ -321,16 +325,15 @@ def test_compute_quota_burn_pct_guards():
 
 
 def test_quota_burn_zero_allowance():
-    m_zero_allowance = NormalizedModel(
-        id="zero-allowance", monthly_allowance=0.0, cost=TokenCost(input=1.0, output=1.0)
-    )
+    m_zero_allowance = make_model("zero-allowance", monthly_allowance=0.0, input=1.0, output=1.0)
     assert compute_quota_burn_pct(m_zero_allowance) == 100000.0
 
 
 def test_compute_burn_pct_uses_request_estimate():
-    m = NormalizedModel(
-        id="estimated",
-        cost=TokenCost(input=1.0, output=1.0),
+    m = make_model(
+        "estimated",
+        input=1.0,
+        output=1.0,
         monthly_allowance=15.0,
         request_estimates={"go": RequestEstimate(per_5h=1000, per_week=2500, per_month=5000)},
     )
@@ -343,27 +346,25 @@ def test_compute_burn_pct_uses_request_estimate():
 
 
 def test_compute_burn_pct_without_estimate_falls_back_to_tokens():
-    m = NormalizedModel(
-        id="no-estimate", cost=TokenCost(input=1.0, output=1.0), monthly_allowance=15.0
-    )
+    m = make_model("no-estimate", input=1.0, output=1.0, monthly_allowance=15.0)
     assert compute_burn_pct(m, basis="estimate") == compute_quota_burn_pct(m)
 
 
 def test_effective_quality():
     # Both IQ and coding index present: 0.7 * iq + 0.3 * coding
-    m_both = NormalizedModel(id="m1", aa_iq=80.0, aa_coding=90.0)
+    m_both = make_model("m1", aa_iq=80.0, aa_coding=90.0)
     assert abs(effective_quality(m_both) - (0.7 * 80.0 + 0.3 * 90.0)) < 1e-9
 
     # Only IQ present
-    m_iq = NormalizedModel(id="m2", aa_iq=75.0)
+    m_iq = make_model("m2", aa_iq=75.0)
     assert effective_quality(m_iq) == 75.0
 
     # Only coding present
-    m_coding = NormalizedModel(id="m3", aa_coding=85.0)
+    m_coding = make_model("m3", aa_coding=85.0)
     assert effective_quality(m_coding) == 85.0
 
     # Neither present
-    m_none = NormalizedModel(id="m4")
+    m_none = make_model("m4")
     assert effective_quality(m_none) == 0.0
 
 
@@ -378,19 +379,19 @@ def test_fisher_jenks_edge_cases_and_unconstrained_fallback():
     assert fisher_jenks_3_clusters([]) == ([], [], [])
 
     # 1 item
-    m1 = NormalizedModel(id="m1", aa_iq=50.0)
+    m1 = make_model("m1", aa_iq=50.0)
     assert fisher_jenks_3_clusters([m1]) == ([m1], [], [])
 
     # 2 items
-    m2 = NormalizedModel(id="m2", aa_iq=40.0)
+    m2 = make_model("m2", aa_iq=40.0)
     assert fisher_jenks_3_clusters([m1, m2]) == ([m1], [m2], [])
 
     # 3 items
-    m3 = NormalizedModel(id="m3", aa_iq=30.0)
+    m3 = make_model("m3", aa_iq=30.0)
     assert fisher_jenks_3_clusters([m1, m2, m3]) == ([m1], [m2], [m3])
 
     # 4 items with identical values triggers unconstrained fallback
-    m_same = [NormalizedModel(id=f"m_same_{i}", aa_iq=50.0) for i in range(4)]
+    m_same = [make_model(f"m_same_{i}", aa_iq=50.0) for i in range(4)]
     c1, c2, c3 = fisher_jenks_3_clusters(m_same)
     assert len(c1) + len(c2) + len(c3) == 4
     assert len(c1) > 0 and len(c2) > 0 and len(c3) > 0
@@ -399,10 +400,10 @@ def test_fisher_jenks_edge_cases_and_unconstrained_fallback():
 def test_evaluate_pareto_edge_cases():
     # No benchmarked models: all preview, deprecated, zero-cost, or without aa_iq
     unbenchmarked = [
-        NormalizedModel(id="m-preview", is_preview=True, aa_iq=80.0),
-        NormalizedModel(id="m-contributor", is_contributor=True, aa_iq=80.0),
-        NormalizedModel(id="m-zero", is_zero_cost=True, aa_iq=80.0),
-        NormalizedModel(id="m-deprecated", status="deprecated", aa_iq=80.0),
+        make_model("m-preview", is_preview=True, aa_iq=80.0),
+        make_model("m-contributor", is_contributor=True, aa_iq=80.0),
+        make_model("m-zero", aa_iq=80.0),
+        make_model("m-deprecated", status="deprecated", aa_iq=80.0),
         NormalizedModel(id="m-no-iq", aa_iq=None),
     ]
     res = evaluate_pareto(unbenchmarked)
@@ -419,15 +420,9 @@ def test_evaluate_pareto_edge_cases():
         cost=TokenCost(input=0.0, output=0.0, cache_read=0.0),
     )
     mA.is_zero_cost = False
-    mB = NormalizedModel(
-        id="mB", aa_iq=50.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
-    mC = NormalizedModel(
-        id="mC", aa_iq=0.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
-    m_coding = NormalizedModel(
-        id="m_coding", aa_coding=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
+    mB = make_model("mB", aa_iq=50.0, monthly_allowance=50.0, input=1.0, output=2.0)
+    mC = make_model("mC", aa_iq=0.0, monthly_allowance=50.0, input=1.0, output=2.0)
+    m_coding = make_model("m_coding", aa_coding=70.0, monthly_allowance=50.0, input=1.0, output=2.0)
     models = [mA, mB, mC, m_coding]
     rA, _, rC, r_coding = evaluate_pareto(models)
     assert rA.composite_burn_pct == 0.0
@@ -436,12 +431,8 @@ def test_evaluate_pareto_edge_cases():
     assert r_coding.bpe is not None
 
     # Test extreme burn (inf/nan) and nan guards for burn_eff and qual_eff
-    mD = NormalizedModel(
-        id="mD", aa_iq=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
-    mE = NormalizedModel(
-        id="mE", aa_iq=80.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
+    mD = make_model("mD", aa_iq=70.0, monthly_allowance=50.0, input=1.0, output=2.0)
+    mE = make_model("mE", aa_iq=80.0, monthly_allowance=50.0, input=1.0, output=2.0)
     with patch(
         "opencode_go_model_optimizer.engine.pareto.compute_quota_burn_pct",
         side_effect=[float("inf"), float("nan")],
@@ -451,9 +442,7 @@ def test_evaluate_pareto_edge_cases():
         assert rE.bpe == 0.0
 
     # Test math.isnan(burn_eff) and math.isnan(qual_eff) fallback to 0.0
-    mF = NormalizedModel(
-        id="mF", aa_iq=70.0, monthly_allowance=50.0, cost=TokenCost(input=1.0, output=2.0)
-    )
+    mF = make_model("mF", aa_iq=70.0, monthly_allowance=50.0, input=1.0, output=2.0)
     mF.composite_burn_pct = 1.0
     # If peers have nan burn or nan iq
     with patch("math.isnan", side_effect=lambda val: True):
@@ -471,25 +460,13 @@ def test_allocate_tiers_pareto_comprehensive():
     assert tiers_pref["heavy"] == "opencode-go/beta-flash"
 
     # 2. At least 3 frontier models triggering cutoff calculation:
-    m1 = NormalizedModel(
-        id="f-heavy", aa_iq=90.0, monthly_allowance=100.0, cost=TokenCost(output=10.0)
-    )
-    m2 = NormalizedModel(
-        id="f-bal", aa_iq=60.0, monthly_allowance=100.0, cost=TokenCost(output=5.0)
-    )
-    m3 = NormalizedModel(
-        id="f-light", aa_iq=30.0, monthly_allowance=100.0, cost=TokenCost(output=2.0)
-    )
-    m4 = NormalizedModel(
-        id="sub-heavy", aa_iq=85.0, monthly_allowance=100.0, cost=TokenCost(output=20.0)
-    )
-    m5 = NormalizedModel(
-        id="sub-bal", aa_iq=55.0, monthly_allowance=100.0, cost=TokenCost(output=15.0)
-    )
-    m6 = NormalizedModel(
-        id="sub-light", aa_iq=25.0, monthly_allowance=100.0, cost=TokenCost(output=5.0)
-    )
-    m_free = NormalizedModel(id="free-1", is_zero_cost=True)
+    m1 = make_model("f-heavy", aa_iq=90.0, monthly_allowance=100.0, output=10.0)
+    m2 = make_model("f-bal", aa_iq=60.0, monthly_allowance=100.0, output=5.0)
+    m3 = make_model("f-light", aa_iq=30.0, monthly_allowance=100.0, output=2.0)
+    m4 = make_model("sub-heavy", aa_iq=85.0, monthly_allowance=100.0, output=20.0)
+    m5 = make_model("sub-bal", aa_iq=55.0, monthly_allowance=100.0, output=15.0)
+    m6 = make_model("sub-light", aa_iq=25.0, monthly_allowance=100.0, output=5.0)
+    m_free = make_model("free-1")
     catalog = [m1, m2, m3, m4, m5, m6, m_free]
 
     tiers_cutoffs = _tiers_pareto(catalog)
@@ -522,12 +499,7 @@ def test_allocate_tiers_pareto_comprehensive():
 
 def test_allocate_tiers_allowance_edge_cases():
     # Only 1 paid model, 0 free models
-    m_paid = NormalizedModel(
-        id="paid-only",
-        name="Paid Only",
-        monthly_allowance=50.0,
-        cost=TokenCost(output=1.0),
-    )
+    m_paid = make_model("paid-only", name="Paid Only", monthly_allowance=50.0, output=1.0)
     tiers = _tiers([m_paid])
     assert tiers["heavy"] == "opencode-go/paid-only"
     assert tiers["balanced"] == ""
@@ -535,7 +507,7 @@ def test_allocate_tiers_allowance_edge_cases():
     assert tiers["free"] == ""
 
     # Free model already used in preferred_tiers
-    m_free = NormalizedModel(id="free-only", is_zero_cost=True)
+    m_free = make_model("free-only")
     tiers_free_used = _tiers(
         [m_free, m_paid],
         preferred_tiers={"heavy": "opencode-go/free-only"},
@@ -551,8 +523,8 @@ def test_allocate_tiers_allowance_edge_cases():
     assert tiers_no_paid["light"] == ""
 
     # Test pick_best returning cluster_ranked[0] when all models already in used_model_ids (line 73)
-    m_p1 = NormalizedModel(id="p1", monthly_allowance=50.0, cost=TokenCost(output=10.0))
-    m_p2 = NormalizedModel(id="p2", monthly_allowance=40.0, cost=TokenCost(output=5.0))
+    m_p1 = make_model("p1", monthly_allowance=50.0, output=10.0)
+    m_p2 = make_model("p2", monthly_allowance=40.0, output=5.0)
     with patch(
         "opencode_go_model_optimizer.engine.tiers.fisher_jenks_3_clusters",
         return_value=([m_p1], [m_p1], [m_p2]),
@@ -564,64 +536,64 @@ def test_allocate_tiers_allowance_edge_cases():
 
 def test_allocate_tiers_pareto_pick_best_sorting():
     # 1. Pareto-optimal model beats non-Pareto even with lower BPE
-    m_pareto = NormalizedModel(
-        id="m_pareto",
+    m_pareto = make_model(
+        "m_pareto",
         aa_iq=90.0,
         effective_quality=90.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         is_pareto=True,
         bpe=0.5,
     )
-    m_non_pareto = NormalizedModel(
-        id="m_non_pareto",
+    m_non_pareto = make_model(
+        "m_non_pareto",
         aa_iq=90.0,
         effective_quality=90.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         is_pareto=False,
         bpe=0.9,
     )
     # 2. Lower burn beats higher burn when both Pareto and BPE tied
-    m_lower_burn = NormalizedModel(
-        id="m_lower_burn",
+    m_lower_burn = make_model(
+        "m_lower_burn",
         aa_iq=60.0,
         effective_quality=60.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=5.0),
+        output=5.0,
         is_pareto=True,
         bpe=0.8,
         composite_burn_pct=2.0,
     )
-    m_higher_burn = NormalizedModel(
-        id="m_higher_burn",
+    m_higher_burn = make_model(
+        "m_higher_burn",
         aa_iq=60.0,
         effective_quality=60.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=5.0),
+        output=5.0,
         is_pareto=True,
         bpe=0.8,
         composite_burn_pct=10.0,
     )
     # 3. Higher speed_tps beats lower speed when burn tied
-    m_faster = NormalizedModel(
-        id="m_faster",
+    m_faster = make_model(
+        "m_faster",
         aa_iq=30.0,
         effective_quality=30.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         is_pareto=True,
         bpe=0.7,
         composite_burn_pct=1.0,
         speed_tps=100.0,
         release_date="2026-09-01",
     )
-    m_slower = NormalizedModel(
-        id="m_slower",
+    m_slower = make_model(
+        "m_slower",
         aa_iq=30.0,
         effective_quality=30.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         is_pareto=True,
         bpe=0.7,
         composite_burn_pct=1.0,
@@ -629,31 +601,31 @@ def test_allocate_tiers_pareto_pick_best_sorting():
         release_date="2026-09-01",
     )
     # 4. Newer release date beats older release date when speed tied
-    m_newer = NormalizedModel(
-        id="m_newer",
+    m_newer = make_model(
+        "m_newer",
         aa_iq=30.0,
         effective_quality=30.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         is_pareto=True,
         bpe=0.7,
         composite_burn_pct=1.0,
         speed_tps=50.0,
         release_date="2026-10-01",
     )
-    m_older = NormalizedModel(
-        id="m_older",
+    m_older = make_model(
+        "m_older",
         aa_iq=30.0,
         effective_quality=30.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
+        output=2.0,
         is_pareto=True,
         bpe=0.7,
         composite_burn_pct=1.0,
         speed_tps=50.0,
         release_date="2026-09-01",
     )
-    m_free = NormalizedModel(id="free-m", is_zero_cost=True)
+    m_free = make_model("free-m")
 
     with (
         patch(
@@ -693,11 +665,9 @@ def test_allocate_tiers_pareto_pick_best_sorting():
 
 def test_allocate_tiers_pareto_competitive_fallback():
     # If competitive pool has < 3 models, fallback to benchmarked pool
-    m1 = NormalizedModel(id="m1", aa_iq=90.0, monthly_allowance=100.0, cost=TokenCost(output=10.0))
-    m2 = NormalizedModel(id="m2", aa_iq=80.0, monthly_allowance=100.0, cost=TokenCost(output=5.0))
-    m_low = NormalizedModel(
-        id="m_low", aa_iq=20.0, monthly_allowance=100.0, cost=TokenCost(output=20.0)
-    )
+    m1 = make_model("m1", aa_iq=90.0, monthly_allowance=100.0, output=10.0)
+    m2 = make_model("m2", aa_iq=80.0, monthly_allowance=100.0, output=5.0)
+    m_low = make_model("m_low", aa_iq=20.0, monthly_allowance=100.0, output=20.0)
     catalog = [m1, m2, m_low]
     tiers = _tiers_pareto(catalog)
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
@@ -825,10 +795,12 @@ def test_min_context_filtering():
 def test_workload_profiles():
     assert set(WORKLOAD_PROFILES.keys()) == {"general", "coding", "reasoning", "fast"}
 
-    m = NormalizedModel(
-        id="test-mod",
+    m = make_model(
+        "test-mod",
         monthly_allowance=30.0,
-        cost=TokenCost(input=1.0, output=4.0, cache_read=0.2),
+        input=1.0,
+        output=4.0,
+        cache_read=0.2,
         aa_iq=50.0,
         aa_coding=40.0,
         speed_tps=120.0,
@@ -867,14 +839,14 @@ def test_workload_profiles():
     assert abs(q_fast - expected_fast) < 1e-6
 
     # Fast profile capped at 2.0x TPS
-    m_hyper = NormalizedModel(id="hyper", aa_iq=50.0, aa_coding=40.0, speed_tps=300.0)
+    m_hyper = make_model("hyper", aa_iq=50.0, aa_coding=40.0, speed_tps=300.0)
     q_hyper = effective_quality(m_hyper, profile="fast")
     assert abs(q_hyper - (base_fast * (0.85 + 0.15 * 2.0))) < 1e-6
 
     # Fast profile without TPS or zero TPS
-    m_no_tps = NormalizedModel(id="no-tps", aa_iq=50.0, aa_coding=40.0)
+    m_no_tps = make_model("no-tps", aa_iq=50.0, aa_coding=40.0)
     assert effective_quality(m_no_tps, profile="fast") == base_fast
-    m_zero_tps = NormalizedModel(id="zero-tps", aa_iq=50.0, aa_coding=40.0, speed_tps=0.0)
+    m_zero_tps = make_model("zero-tps", aa_iq=50.0, aa_coding=40.0, speed_tps=0.0)
     assert effective_quality(m_zero_tps, profile="fast") == base_fast
 
     # Evaluate pareto and allocate tiers with profiles
@@ -899,29 +871,24 @@ def test_workload_profiles():
 
 def test_fisher_jenks_tie_breaking_deterministic():
     # 4 models with identical quality / val_fn
-    m_base = NormalizedModel(
-        id="mod-a",
-        aa_iq=50.0,
-        release_date="2026-09-01",
-        limit=ModelLimit(context=500000),
-    )
-    m_newer = NormalizedModel(
-        id="mod-b",
+    m_base = make_model("mod-a", aa_iq=50.0, release_date="2026-09-01", context=500000)
+    m_newer = make_model(
+        "mod-b",
         aa_iq=50.0,
         release_date="2026-09-02",  # Newer release date -> 1st
-        limit=ModelLimit(context=100000),
+        context=100000,
     )
-    m_larger_ctx = NormalizedModel(
-        id="mod-c",
+    m_larger_ctx = make_model(
+        "mod-c",
         aa_iq=50.0,
         release_date="2026-09-01",
-        limit=ModelLimit(context=1000000),  # Larger context -> 2nd
+        context=1000000,  # Larger context -> 2nd
     )
-    m_tied_id = NormalizedModel(
-        id="mod-z",
+    m_tied_id = make_model(
+        "mod-z",
         aa_iq=50.0,
         release_date="2026-09-01",
-        limit=ModelLimit(context=500000),  # Same as mod-a, but id 'mod-z' > 'mod-a' -> 4th
+        context=500000,  # Same as mod-a, but id 'mod-z' > 'mod-a' -> 4th
     )
 
     c1, c2, c3 = fisher_jenks_3_clusters([m_base, m_tied_id, m_larger_ctx, m_newer])
@@ -931,46 +898,44 @@ def test_fisher_jenks_tie_breaking_deterministic():
 
 def test_pick_best_tie_breaking_deterministic():
     # Models tied on pareto, bpe, burn, speed -> break ties via tie_break_key
-    m1 = NormalizedModel(
-        id="model-ctx-low",
+    m1 = make_model(
+        "model-ctx-low",
         aa_iq=90.0,
         effective_quality=90.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         is_pareto=True,
         bpe=0.8,
         composite_burn_pct=5.0,
         speed_tps=50.0,
         release_date="2026-09-01",
-        limit=ModelLimit(context=128000),
+        context=128000,
     )
-    m2 = NormalizedModel(
-        id="model-ctx-high",
+    m2 = make_model(
+        "model-ctx-high",
         aa_iq=90.0,
         effective_quality=90.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         is_pareto=True,
         bpe=0.8,
         composite_burn_pct=5.0,
         speed_tps=50.0,
         release_date="2026-09-01",
-        limit=ModelLimit(context=256000),  # Higher context should win
+        context=256000,  # Higher context should win
     )
-    m3 = NormalizedModel(
-        id="model-ctx-high-b",
+    m3 = make_model(
+        "model-ctx-high-b",
         aa_iq=90.0,
         effective_quality=90.0,
         monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         is_pareto=True,
         bpe=0.8,
         composite_burn_pct=5.0,
         speed_tps=50.0,
         release_date="2026-09-01",
-        limit=ModelLimit(
-            context=256000
-        ),  # Same context as m2, but 'model-ctx-high' < 'model-ctx-high-b'
+        context=256000,  # Same context as m2, but 'model-ctx-high' < 'model-ctx-high-b'
     )
     m_no_burn = NormalizedModel(
         id="model-no-burn",
@@ -985,7 +950,7 @@ def test_pick_best_tie_breaking_deterministic():
         release_date="2026-09-01",
         limit=ModelLimit(context=500000),
     )
-    m_free = NormalizedModel(id="free-tier-mod", is_zero_cost=True)
+    m_free = make_model("free-tier-mod")
 
     with (
         patch(
@@ -1010,28 +975,28 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
         bpe=0.5,
         composite_burn_pct=None,
     )
-    m_burn_valid = NormalizedModel(
-        id="mod-burn-valid",
+    m_burn_valid = make_model(
+        "mod-burn-valid",
         aa_iq=80.0,
         effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
     )
-    m_tied_burn_a = NormalizedModel(
-        id="mod-tied-a",
+    m_tied_burn_a = make_model(
+        "mod-tied-a",
         aa_iq=80.0,
         effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
-        limit=ModelLimit(context=500000),
+        context=500000,
     )
-    m_tied_burn_b = NormalizedModel(
-        id="mod-tied-b",
+    m_tied_burn_b = make_model(
+        "mod-tied-b",
         aa_iq=80.0,
         effective_quality=80.0,
         bpe=0.5,
         composite_burn_pct=10.0,
-        limit=ModelLimit(context=1000000),  # Larger context beats mod-tied-a
+        context=1000000,  # Larger context beats mod-tied-a
     )
 
     models = [m_burn_none, m_burn_valid, m_tied_burn_a, m_tied_burn_b]
@@ -1048,10 +1013,10 @@ def test_rank_catalog_pareto_deterministic_tie_breaking():
 
 
 def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
-    m1 = NormalizedModel(
-        id="mod-1",
+    m1 = make_model(
+        "mod-1",
         aa_iq=90.0,
-        cost=TokenCost(output=10.0),
+        output=10.0,
         monthly_allowance=100.0,
         bpe=0.99,
         is_pareto=True,
@@ -1067,10 +1032,10 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
         is_pareto=True,
         effective_quality=88.0,
     )
-    m3_skipped = NormalizedModel(
-        id="mod-3",
+    m3_skipped = make_model(
+        "mod-3",
         aa_iq=95.0,
-        cost=TokenCost(output=1.0),
+        output=1.0,
         monthly_allowance=100.0,
         bpe=0.95,
         is_pareto=True,
@@ -1101,18 +1066,8 @@ def test_evaluate_pareto_clears_stale_metrics_and_respects_skips():
 
 def test_evaluate_pareto_skipped_model_does_not_dominate():
     # m_dom has higher quality and lower burn: if included, it would dominate m_sub
-    m_dom = NormalizedModel(
-        id="dominant-model",
-        aa_iq=95.0,
-        monthly_allowance=100.0,
-        cost=TokenCost(output=1.0),
-    )
-    m_sub = NormalizedModel(
-        id="sub-model",
-        aa_iq=80.0,
-        monthly_allowance=100.0,
-        cost=TokenCost(output=10.0),
-    )
+    m_dom = make_model("dominant-model", aa_iq=95.0, monthly_allowance=100.0, output=1.0)
+    m_sub = make_model("sub-model", aa_iq=80.0, monthly_allowance=100.0, output=10.0)
 
     # Without skip: m_sub BPE is penalized by m_dom
     bpe_with_dom = evaluate_pareto([m_dom, m_sub])[1].bpe
@@ -1129,26 +1084,10 @@ def test_evaluate_pareto_skipped_model_does_not_dominate():
 def test_allocate_tiers_pareto_reuses_frontier_when_smaller_than_tiers():
     # Only 1 benchmarked paid model, 2 other active paid models without benchmarks, and 1 free model.
     # Pareto tiers may share a model rather than dropping to an unbenchmarked/dominated one.
-    m_heavy = NormalizedModel(
-        id="m-heavy",
-        aa_iq=90.0,
-        monthly_allowance=100.0,
-        cost=TokenCost(output=50.0),
-    )
-    m_paid_other1 = NormalizedModel(
-        id="m-paid-other1",
-        monthly_allowance=80.0,
-        cost=TokenCost(output=20.0),
-    )
-    m_paid_other2 = NormalizedModel(
-        id="m-paid-other2",
-        monthly_allowance=60.0,
-        cost=TokenCost(output=10.0),
-    )
-    m_free = NormalizedModel(
-        id="m-free",
-        is_zero_cost=True,
-    )
+    m_heavy = make_model("m-heavy", aa_iq=90.0, monthly_allowance=100.0, output=50.0)
+    m_paid_other1 = make_model("m-paid-other1", monthly_allowance=80.0, output=20.0)
+    m_paid_other2 = make_model("m-paid-other2", monthly_allowance=60.0, output=10.0)
+    m_free = make_model("m-free")
 
     tiers = _tiers_pareto([m_heavy, m_paid_other1, m_paid_other2, m_free])
     assert set(tiers.keys()) == {"heavy", "balanced", "light", "free"}
@@ -1162,15 +1101,15 @@ def test_pareto_light_tier_ignores_dominated_models():
     # Regression: a non-Pareto model must not win a tier just because the better Pareto
     # model was already claimed by a neighbouring tier. Tiers may share a model instead.
     def model(mid, iq, *, is_pareto, bpe, burn, output):
-        return NormalizedModel(
-            id=mid,
+        return make_model(
+            mid,
             aa_iq=iq,
             effective_quality=iq,
             is_pareto=is_pareto,
             bpe=bpe,
             composite_burn_pct=burn,
             monthly_allowance=100.0,
-            cost=TokenCost(output=output),
+            output=output,
         )
 
     m_heavy = model("m-heavy", 90.0, is_pareto=True, bpe=1.0, burn=50.0, output=10.0)
@@ -1178,7 +1117,7 @@ def test_pareto_light_tier_ignores_dominated_models():
     m_light = model("m-light", 59.0, is_pareto=True, bpe=1.0, burn=1.0, output=1.0)
     # Dominated by m_light on both quality and burn, and not on the Pareto frontier.
     m_dominated = model("m-dominated", 20.0, is_pareto=False, bpe=0.2, burn=2.0, output=0.5)
-    m_free = NormalizedModel(id="m-free", is_zero_cost=True)
+    m_free = make_model("m-free")
 
     with patch(
         "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
@@ -1198,22 +1137,22 @@ def test_pareto_heavy_picks_value_winner_within_top_quality_band():
     # Heavy is not simply max IQ: among frontier models within 10% of the best quality,
     # the best quality-per-burn wins. Balanced uses the 60% floor and its own value ranking.
     def model(mid, iq, burn):
-        return NormalizedModel(
-            id=mid,
+        return make_model(
+            mid,
             aa_iq=iq,
             effective_quality=iq,
             is_pareto=True,
             bpe=1.0,
             composite_burn_pct=burn,
             monthly_allowance=100.0,
-            cost=TokenCost(output=10.0),
+            output=10.0,
         )
 
     m_max = model("m-max", 100.0, 100.0)
     m_heavy_value = model("m-heavy-value", 92.0, 30.0)
     m_mid = model("m-mid", 70.0, 5.0)
     m_light = model("m-light", 40.0, 1.0)
-    m_free = NormalizedModel(id="m-free", is_zero_cost=True)
+    m_free = make_model("m-free")
 
     with patch(
         "opencode_go_model_optimizer.engine.tiers.evaluate_pareto",
@@ -1232,12 +1171,7 @@ def test_desc_str_key_sorts_strings_descending():
 
 
 def test_evaluate_pareto_nan_burn_handling():
-    m_nan = NormalizedModel(
-        id="mod-nan",
-        aa_iq=85.0,
-        cost=TokenCost(output=10.0),
-        monthly_allowance=100.0,
-    )
+    m_nan = make_model("mod-nan", aa_iq=85.0, output=10.0, monthly_allowance=100.0)
     with patch(
         "opencode_go_model_optimizer.engine.pareto.compute_quota_burn_pct",
         return_value=float("nan"),
@@ -1284,28 +1218,28 @@ def test_rank_catalog_single_evaluate_pareto_call():
 
 
 def test_output_token_and_cost_filtering():
-    m_low_out = NormalizedModel(
-        id="mod-low-out",
+    m_low_out = make_model(
+        "mod-low-out",
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
-        limit=ModelLimit(output=4000),
+        output=2.0,
+        max_output=4000,
         aa_iq=80.0,
     )
-    m_high_cost = NormalizedModel(
-        id="mod-high-cost",
+    m_high_cost = make_model(
+        "mod-high-cost",
         monthly_allowance=100.0,
-        cost=TokenCost(output=25.0),
-        limit=ModelLimit(output=16000),
+        output=25.0,
+        max_output=16000,
         aa_iq=85.0,
     )
-    m_compliant = NormalizedModel(
-        id="mod-compliant",
+    m_compliant = make_model(
+        "mod-compliant",
         monthly_allowance=100.0,
-        cost=TokenCost(output=3.0),
-        limit=ModelLimit(output=16000),
+        output=3.0,
+        max_output=16000,
         aa_iq=75.0,
     )
-    m_free = NormalizedModel(id="mod-free", is_zero_cost=True, limit=ModelLimit(output=16000))
+    m_free = make_model("mod-free", max_output=16000)
 
     models = [m_low_out, m_high_cost, m_compliant, m_free]
 
@@ -1355,9 +1289,9 @@ def test_allocate_tier_fallbacks_pareto_mode():
 
     # When benchmarked pool is empty in pareto mode
     unbenchmarked = [
-        NormalizedModel(id="p1", monthly_allowance=50.0, cost=TokenCost(output=1.0)),
-        NormalizedModel(id="p2", monthly_allowance=40.0, cost=TokenCost(output=1.0)),
-        NormalizedModel(id="f1", is_zero_cost=True),
+        make_model("p1", monthly_allowance=50.0, output=1.0),
+        make_model("p2", monthly_allowance=40.0, output=1.0),
+        make_model("f1"),
     ]
     fb_empty = _fallbacks(unbenchmarked, top_n=2, mode="pareto")
     assert "opencode-go/f1" in fb_empty["free"]
@@ -1372,36 +1306,35 @@ def test_allocate_tier_fallbacks_allowance_mode():
         assert len(fallbacks[tier]) <= 3
 
     # Empty paid models in allowance mode
-    free_only = [NormalizedModel(id="f1", is_zero_cost=True)]
+    free_only = [make_model("f1")]
     fb_free = _fallbacks(free_only, top_n=2, mode="allowance")
     assert fb_free["heavy"] == []
     assert fb_free["free"] == ["opencode-go/f1"]
 
 
 def test_allocate_tier_fallbacks_filters():
-    m1 = NormalizedModel(
-        id="mod-1",
+    m1 = make_model(
+        "mod-1",
         monthly_allowance=100.0,
-        cost=TokenCost(output=2.0),
-        limit=ModelLimit(context=100000, output=16000),
+        output=2.0,
+        context=100000,
+        max_output=16000,
     )
-    m2 = NormalizedModel(
-        id="mod-2",
+    m2 = make_model(
+        "mod-2",
         monthly_allowance=80.0,
-        cost=TokenCost(output=30.0),  # High cost
-        limit=ModelLimit(context=50000, output=16000),
+        output=30.0,  # High cost
+        context=50000,
+        max_output=16000,
     )
-    m3 = NormalizedModel(
-        id="mod-3",
+    m3 = make_model(
+        "mod-3",
         monthly_allowance=60.0,
-        cost=TokenCost(output=3.0),
-        limit=ModelLimit(context=100000, output=2000),  # Low output
+        output=3.0,
+        context=100000,
+        max_output=2000,  # Low output
     )
-    m_free = NormalizedModel(
-        id="mod-f",
-        is_zero_cost=True,
-        limit=ModelLimit(context=100000, output=16000),
-    )
+    m_free = make_model("mod-f", context=100000, max_output=16000)
 
     models = [m1, m2, m3, m_free]
     fb = _fallbacks(
@@ -1418,15 +1351,12 @@ def test_allocate_tier_fallbacks_filters():
 
 
 def test_allocate_tier_fallbacks_top_n_truncation():
-    free_models = [
-        NormalizedModel(id=f"free-{i}", is_zero_cost=True, release_date=f"2026-09-0{i}")
-        for i in range(1, 6)
-    ]
+    free_models = [make_model(f"free-{i}", release_date=f"2026-09-0{i}") for i in range(1, 6)]
     paid_models = [
-        NormalizedModel(
-            id=f"paid-{i}",
+        make_model(
+            f"paid-{i}",
             monthly_allowance=100.0,
-            cost=TokenCost(output=10.0),
+            output=10.0,
             release_date=f"2026-09-0{i}",
             aa_iq=90.0,
         )
@@ -1444,10 +1374,12 @@ def test_allocate_tier_fallbacks_top_n_truncation():
 
 
 def test_custom_token_mix_and_quality_weights():
-    m = NormalizedModel(
-        id="custom-mix",
+    m = make_model(
+        "custom-mix",
         monthly_allowance=100.0,
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.01),
+        input=1.0,
+        output=2.0,
+        cache_read=0.01,
         aa_iq=60.0,
         aa_coding=40.0,
         speed_tps=100.0,
@@ -1467,17 +1399,19 @@ def test_custom_token_mix_and_quality_weights():
 
 def _burn_models() -> list[NormalizedModel]:
     return [
-        NormalizedModel(
-            id="low-burn",
+        make_model(
+            "low-burn",
             monthly_allowance=100.0,
-            cost=TokenCost(input=0.1, output=0.1),
+            input=0.1,
+            output=0.1,
             aa_iq=50.0,
             aa_coding=50.0,
         ),
-        NormalizedModel(
-            id="high-burn",
+        make_model(
+            "high-burn",
             monthly_allowance=10.0,
-            cost=TokenCost(input=1.0, output=1.0),
+            input=1.0,
+            output=1.0,
             aa_iq=60.0,
             aa_coding=60.0,
         ),
@@ -1533,10 +1467,10 @@ def test_tier_selection_clusters_and_allocate_efficiency():
     assert ts.clusters == {}
 
     # 2. select_tiers returns clusters populated
-    m1 = NormalizedModel(id="p1", cost=TokenCost(output=10.0), monthly_allowance=100.0)
-    m2 = NormalizedModel(id="p2", cost=TokenCost(output=5.0), monthly_allowance=50.0)
-    m3 = NormalizedModel(id="p3", cost=TokenCost(output=1.0), monthly_allowance=20.0)
-    m_free = NormalizedModel(id="free1", is_zero_cost=True)
+    m1 = make_model("p1", output=10.0, monthly_allowance=100.0)
+    m2 = make_model("p2", output=5.0, monthly_allowance=50.0)
+    m3 = make_model("p3", output=1.0, monthly_allowance=20.0)
+    m_free = make_model("free1")
     pool = [m1, m2, m3, m_free]
     sel = select_tiers(pool, SelectionCriteria(mode="allowance"))
     assert "heavy" in sel.clusters
@@ -1603,15 +1537,15 @@ def test_pareto_cluster_and_rank_tie_breaking_preserved():
         speed_tps: float,
         release_date: str,
     ) -> NormalizedModel:
-        return NormalizedModel(
-            id=mid,
+        return make_model(
+            mid,
             aa_iq=iq,
             effective_quality=iq,
             is_pareto=True,
             bpe=bpe,
             composite_burn_pct=burn,
             monthly_allowance=100.0,
-            cost=TokenCost(output=5.0),
+            output=5.0,
             speed_tps=speed_tps,
             release_date=release_date,
         )

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.factories import make_model
+
 _SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "render_optimizer_issue.py"
 _SPEC = importlib.util.spec_from_file_location("render_optimizer_issue", _SCRIPT_PATH)
 assert _SPEC and _SPEC.loader
@@ -437,12 +439,10 @@ def test_render_optimizer_output_comment(tmp_path: Path) -> None:
 def test_render_optimizer_output_comment_explain_table(tmp_path: Path) -> None:
     """The real `select --format table --explain` output renders as markdown."""
     from opencode_go_model_optimizer.formatters import format_select_table
-    from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
     models = [
-        NormalizedModel(
-            id="model-a",
-            provider_id="opencode-go",
+        make_model(
+            "model-a",
             name="Model A",
             monthly_allowance=30.0,
             cost={"output": 10.0},
@@ -452,12 +452,9 @@ def test_render_optimizer_output_comment_explain_table(tmp_path: Path) -> None:
             composite_burn_pct=47.17,
             price_multiplier=1.0,
         ),
-        NormalizedModel(
-            id="model-free",
-            provider_id="opencode-go",
+        make_model(
+            "model-free",
             name="Model Free",
-            monthly_allowance=None,
-            is_zero_cost=True,
             limit={"context": 262144},
         ),
     ]
@@ -532,10 +529,9 @@ def test_render_optimizer_output_comment_cli_backticks_and_unavailable(tmp_path:
 
 def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
     from opencode_go_model_optimizer.cli import format_rank_json
-    from opencode_go_model_optimizer.ingest.models import NormalizedModel
 
-    m1 = NormalizedModel(
-        id="model-a",
+    m1 = make_model(
+        "model-a",
         full_id="opencode-go/model-a",
         tier="heavy",
         bpe=1.0,
@@ -551,8 +547,8 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         is_pareto=True,
         rank=1,
     )
-    m2 = NormalizedModel(
-        id="model-b",
+    m2 = make_model(
+        "model-b",
         full_id="opencode-go/model-b",
         tier="balanced",
         bpe=0.9,
@@ -562,7 +558,6 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         composite_burn_pct=20.0,
         monthly_allowance=15.0,
         cost={"output": 0.0},
-        is_zero_cost=True,
         limit={"context": 131072},
         release_date="2026-10-15",
         privacy={"zdr": False, "trains_on_data": True},

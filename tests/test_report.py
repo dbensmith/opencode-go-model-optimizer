@@ -12,7 +12,7 @@ from opencode_go_model_optimizer.engine.criteria import SelectionCriteria
 from opencode_go_model_optimizer.formatters.markdown import format_allowance_value
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.docs import parse_privacy
-from opencode_go_model_optimizer.ingest.models import NormalizedModel, Privacy, TokenCost
+from opencode_go_model_optimizer.ingest.models import Privacy, TokenCost
 from opencode_go_model_optimizer.ingest.snapshot import create_snapshot, load_cached_snapshot
 from opencode_go_model_optimizer.report import (
     _strip_aa,
@@ -30,6 +30,7 @@ from opencode_go_model_optimizer.report_markdown import (
 )
 from tests.conftest import CATALOGUE_HTTP_DATA as OC
 from tests.conftest import MDX_TEXT as MDX
+from tests.factories import make_model
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 SOURCES = {
@@ -108,51 +109,49 @@ def test_excluded_models_have_reasons(snapshot):
 def test_exclusion_reasons_unpriced_and_unlimited():
     c = SelectionCriteria()
     paid = TokenCost(output=1)
-    assert "no monthly allowance" in exclusion_reasons(NormalizedModel(id="a", cost=paid), c)[0]
-    zero = NormalizedModel(id="a", cost=paid, monthly_allowance=0.0)
+    assert "no monthly allowance" in exclusion_reasons(make_model("a", cost=paid), c)[0]
+    zero = make_model("a", cost=paid, monthly_allowance=0.0)
     assert "zero" in exclusion_reasons(zero, c)[0]
-    assert exclusion_reasons(NormalizedModel(id="free"), c) == []  # zero-cost: free pool
-    unlimited = NormalizedModel(id="a", cost=TokenCost(output=1), monthly_allowance=math.inf)
+    assert exclusion_reasons(make_model("free"), c) == []  # zero-cost: free pool
+    unlimited = make_model("a", output=1, monthly_allowance=math.inf)
     assert "unlimited" in exclusion_reasons(unlimited, c)[0]
-    ok = NormalizedModel(id="a", cost=TokenCost(output=1), monthly_allowance=5.0)
+    ok = make_model("a", output=1, monthly_allowance=5.0)
     assert exclusion_reasons(ok, c) == []
-    trains = NormalizedModel(
-        id="t",
+    trains = make_model(
+        "t",
         privacy=Privacy(trains_on_data=True),
-        cost=TokenCost(output=1),
+        output=1,
         monthly_allowance=5.0,
     )
     assert "paid model trains" in exclusion_reasons(trains, SelectionCriteria())[0]
     assert exclusion_reasons(trains, SelectionCriteria(allow_paid_training=True)) == []
-    consent = NormalizedModel(
-        id="consent",
+    consent = make_model(
+        "consent",
         is_contributor=True,
         privacy=Privacy(trains_on_data=True),
-        cost=TokenCost(output=1),
+        output=1,
         monthly_allowance=5.0,
     )
     # Contributor status no longer adds a separate consent gate.
     assert exclusion_reasons(consent, SelectionCriteria(allow_paid_training=True)) == []
-    contrib_paid = NormalizedModel(
-        id="cp", is_contributor=True, cost=TokenCost(output=1), monthly_allowance=10.0
-    )
+    contrib_paid = make_model("cp", is_contributor=True, output=1, monthly_allowance=10.0)
     assert exclusion_reasons(contrib_paid, c) == []
-    global_model = NormalizedModel(
-        id="g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
+    global_model = make_model(
+        "g", privacy=Privacy(requires_global_region=True), monthly_allowance=5.0
     )
     assert "Global workspace region" in exclusion_reasons(global_model, SelectionCriteria())[0]
     assert exclusion_reasons(global_model, SelectionCriteria(allow_global_region=True)) == []
-    contrib = NormalizedModel(
-        id="c1",
+    contrib = make_model(
+        "c1",
         is_contributor=True,
-        cost=TokenCost(output=0.0),
+        output=0.0,
         monthly_allowance=10.0,
     )
     assert exclusion_reasons(contrib, c) == []
-    no_priv = NormalizedModel(
-        id="np",
+    no_priv = make_model(
+        "np",
         privacy=None,
-        cost=TokenCost(output=1.0),
+        output=1.0,
         monthly_allowance=10.0,
     )
     assert exclusion_reasons(no_priv, SelectionCriteria(require_zdr=True)) == [
@@ -162,23 +161,23 @@ def test_exclusion_reasons_unpriced_and_unlimited():
 
 def test_exclusion_reasons_zero_priced_with_allowance():
     c = SelectionCriteria()
-    odd = NormalizedModel(id="odd", plan_allowances={"go": 15.0})
+    odd = make_model("odd", plan_allowances={"go": 15.0})
     assert odd.is_zero_cost is True
     assert exclusion_reasons(odd, c) == [
         "zero-priced but publishes a monthly allowance (incomplete catalogue data)"
     ]
     assert _bucket_exclusion_reason(exclusion_reasons(odd, c)[0]) == "Incomplete Catalogue Data"
     # Zero-cost without an allowance is still the normal free pool.
-    assert exclusion_reasons(NormalizedModel(id="free"), c) == []
-    unlimited = NormalizedModel(id="unlimited", plan_allowances={"go": math.inf})
+    assert exclusion_reasons(make_model("free"), c) == []
+    unlimited = make_model("unlimited", plan_allowances={"go": math.inf})
     assert exclusion_reasons(unlimited, c) == []
 
 
 def test_report_excludes_model_without_target_plan_allowance():
     paid = TokenCost(input=1.0, output=2.0)
-    go_only = NormalizedModel(id="go-only", cost=paid, plan_allowances={"go": 15.0})
-    both = NormalizedModel(
-        id="both",
+    go_only = make_model("go-only", cost=paid, plan_allowances={"go": 15.0})
+    both = make_model(
+        "both",
         cost=paid,
         plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": 100.0},
     )
@@ -193,7 +192,7 @@ def test_report_excludes_model_without_target_plan_allowance():
 
 
 def test_report_does_not_exclude_zero_cost_unlimited_allowance():
-    model = NormalizedModel(id="unlimited-free", plan_allowances={"go": math.inf})
+    model = make_model("unlimited-free", plan_allowances={"go": math.inf})
     report = build_report(snapshot=create_snapshot([model], plan="go"), now=NOW)
 
     for section in report["plans"].values():
@@ -201,7 +200,7 @@ def test_report_does_not_exclude_zero_cost_unlimited_allowance():
 
 
 def test_empty_tier_becomes_warning():
-    snap = create_snapshot([NormalizedModel(id="only", cost=TokenCost(output=1))])
+    snap = create_snapshot([make_model("only", output=1)])
     report = build_report(snapshot=snap, now=NOW)
     assert any("no model available for tier heavy" in w for w in report["warnings"])
     assert report["plans"]["go"]["explanations"]["heavy"]["why"].startswith("no eligible")
@@ -332,7 +331,7 @@ def test_stale_cache_loader_accepts_any_age(snapshot, tmp_path):
 def test_candidate_row_none_allowance():
     from opencode_go_model_optimizer.report import _candidate_row
 
-    m = NormalizedModel(id="test", monthly_allowance=None)
+    m = make_model("test", monthly_allowance=None)
     row = _candidate_row(m)
     assert row["monthly_allowance"] is None
 

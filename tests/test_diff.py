@@ -2,12 +2,11 @@
 
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.ingest.models import (
-    ModelLimit,
     NormalizedModel,
     Snapshot,
     SnapshotMetadata,
-    TokenCost,
 )
+from tests.factories import make_model
 
 
 def _snapshot(fetched_at: str, models: list[NormalizedModel]) -> Snapshot:
@@ -22,23 +21,25 @@ def _snapshot(fetched_at: str, models: list[NormalizedModel]) -> Snapshot:
 
 def _old_models() -> list[NormalizedModel]:
     return [
-        NormalizedModel(
-            id="changing-model",
+        make_model(
+            "changing-model",
             name="Changing Model",
             status="active",
             release_date="2026-01-01",
             monthly_allowance=15.0,
-            cost=TokenCost(input=1.0, output=2.0),
-            limit=ModelLimit(context=200000),
+            input=1.0,
+            output=2.0,
+            context=200000,
         ),
-        NormalizedModel(
-            id="removed-model",
+        make_model(
+            "removed-model",
             name="Removed Model",
             monthly_allowance=60.0,
-            cost=TokenCost(input=0.5, output=1.0),
+            input=0.5,
+            output=1.0,
         ),
-        NormalizedModel(
-            id="unlimited-model",
+        make_model(
+            "unlimited-model",
             name="Unlimited Model",
             monthly_allowance=float("inf"),
             is_zero_cost=True,
@@ -48,23 +49,25 @@ def _old_models() -> list[NormalizedModel]:
 
 def _new_models() -> list[NormalizedModel]:
     return [
-        NormalizedModel(
-            id="changing-model",
+        make_model(
+            "changing-model",
             name="Changing Model",
             status="deprecated",
             release_date="2026-01-01",
             monthly_allowance=30.0,
-            cost=TokenCost(input=1.5, output=3.0),
-            limit=ModelLimit(context=200000),
+            input=1.5,
+            output=3.0,
+            context=200000,
         ),
-        NormalizedModel(
-            id="added-model",
+        make_model(
+            "added-model",
             name="Added Model",
             monthly_allowance=100.0,
-            cost=TokenCost(input=0.2, output=0.4),
+            input=0.2,
+            output=0.4,
         ),
-        NormalizedModel(
-            id="unlimited-model",
+        make_model(
+            "unlimited-model",
             name="Unlimited Model",
             monthly_allowance=float("inf"),
             is_zero_cost=True,
@@ -142,12 +145,8 @@ def test_diff_snapshots_auto_mode_with_benchmarks():
 def test_capability_changes_detected_and_rendered():
     from opencode_go_model_optimizer.formatters import format_diff_table
 
-    old = NormalizedModel(
-        id="cap", limit=ModelLimit(context=100, output=10), aa_iq=50.0, speed_tps=100.0
-    )
-    new = NormalizedModel(
-        id="cap", limit=ModelLimit(context=200, output=10), aa_iq=55.0, aa_coding=40.0
-    )
+    old = make_model("cap", context=100, max_output=10, aa_iq=50.0, speed_tps=100.0)
+    new = make_model("cap", context=200, max_output=10, aa_iq=55.0, aa_coding=40.0)
     diff = diff_snapshots(_snapshot("a", [old]), _snapshot("b", [new]))
 
     assert diff.capability_changes == {

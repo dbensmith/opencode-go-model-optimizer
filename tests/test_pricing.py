@@ -19,13 +19,12 @@ from opencode_go_model_optimizer.engine.pricing import (
 from opencode_go_model_optimizer.engine.tiers import select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
-    ModelLimit,
     NormalizedModel,
     PriceMultiplier,
     Snapshot,
-    TokenCost,
 )
 from tests.conftest import CATALOGUE_HTTP_DATA
+from tests.factories import make_model
 
 PEAK = {
     "utc_days": {"in": ["mon", "tue", "wed", "thu", "fri"]},
@@ -42,10 +41,13 @@ def dt(s: str) -> datetime:
 
 
 def model(mid="m", out=10.0, whens=(), **kw) -> NormalizedModel:
-    return NormalizedModel(
-        id=mid,
-        cost=TokenCost(input=out / 4, output=out, cache_read=out / 40),
-        limit=ModelLimit(context=200000, output=8000),
+    return make_model(
+        mid,
+        input=out / 4,
+        output=out,
+        cache_read=out / 40,
+        context=200000,
+        max_output=8000,
         monthly_allowance=15.0,
         multipliers=[PriceMultiplier(factor=f, when=w) for f, w in whens],
         **kw,
@@ -361,7 +363,7 @@ def test_pricing_cache_and_eval_helpers():
     # 2. _valid_multipliers and _eval_multipliers
     valid_mult = PriceMultiplier(factor=2.0, when={"utc_hours": {"gte": "01:00"}})
     invalid_mult = PriceMultiplier(factor=-1.0, when={})
-    m = NormalizedModel(id="test", multipliers=[valid_mult, invalid_mult])
+    m = make_model("test", multipliers=[valid_mult, invalid_mult])
     vm = _valid_multipliers(m)
     assert len(vm) == 1
     assert vm[0] is valid_mult
@@ -372,7 +374,7 @@ def test_pricing_cache_and_eval_helpers():
     assert _eval_multipliers(vm, when_no_match) == 1.0
 
     # 3. Model without valid multipliers yields single segment in O(1)
-    m_no_mult = NormalizedModel(id="plain")
+    m_no_mult = make_model("plain")
     start = datetime(2026, 11, 10, 0, 0, tzinfo=UTC)
     end = datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
     segs = list(_segments(m_no_mult, start, end))

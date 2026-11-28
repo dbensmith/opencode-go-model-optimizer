@@ -56,6 +56,7 @@ from opencode_go_model_optimizer.ingest.snapshot import (
     save_snapshot,
 )
 from tests.conftest import FIXTURES_DIR, TEST_CONSOLE_PROFILES
+from tests.factories import make_model
 
 
 def test_norm_name():
@@ -468,7 +469,7 @@ def test_merge_catalogue_metadata_and_benchmarks():
 
 def test_fetch_and_build_with_aa_key():
     # Test fetch_and_build_snapshot with AA_API_KEY env set
-    dummy_model = NormalizedModel(id="snap-m", name="Snap Model", plan_allowances={"go": 50.0})
+    dummy_model = make_model("snap-m", name="Snap Model", plan_allowances={"go": 50.0})
 
     with (
         patch.dict(os.environ, {"AA_API_KEY": "dummy-key"}),
@@ -527,7 +528,7 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
         schema_version=1,
         fetched_at="2026-01-01T00:00:00Z",
         plan="go",
-        models=[NormalizedModel(id="cached-m")],
+        models=[make_model("cached-m")],
         metadata=SnapshotMetadata(),
     )
     with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
@@ -559,8 +560,8 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
 
 def test_same_plan_cache_load_applies_request_estimate(tmp_path):
     estimate = RequestEstimate(per_5h=100.0, per_week=250.0, per_month=500.0)
-    model = NormalizedModel(
-        id="cached-m",
+    model = make_model(
+        "cached-m",
         plan_allowances={"go": 15.0},
         request_estimates={"go": estimate},
     )
@@ -576,7 +577,7 @@ def test_same_plan_cache_load_applies_request_estimate(tmp_path):
 def test_fetch_and_build_snapshot_custom_client():
     # Test fetch_and_build_snapshot with user-provided client (should not close user client)
     custom_client = httpx.Client()
-    dummy_model = NormalizedModel(id="custom-m", plan_allowances={"go": 15.0})
+    dummy_model = make_model("custom-m", plan_allowances={"go": 15.0})
     with (
         patch(
             "opencode_go_model_optimizer.ingest.snapshot.fetch_catalogue",
@@ -629,19 +630,19 @@ def test_plan_allowances_and_apply_plan():
     apply_plan([m], "unknown-plan")
     assert m.monthly_allowance is None
 
-    go_only = NormalizedModel(id="go-only", monthly_allowance=15.0, plan_allowances={"go": 15.0})
+    go_only = make_model("go-only", monthly_allowance=15.0, plan_allowances={"go": 15.0})
     apply_plan([go_only], "go-plus")
     assert go_only.monthly_allowance is None
 
     # Legacy snapshots without per-plan allowances keep their existing allowance.
-    legacy = NormalizedModel(id="legacy", monthly_allowance=12.0)
+    legacy = make_model("legacy", monthly_allowance=12.0)
     apply_plan([legacy], "go-plus")
     assert legacy.monthly_allowance == 12.0
 
 
 def test_apply_plan_matches_plan_names_exactly():
-    m = NormalizedModel(
-        id="mod-plan",
+    m = make_model(
+        "mod-plan",
         plan_allowances={"go": 15.0, "go-plus": 60.0, "custom-tier": 120.0},
     )
 
@@ -659,10 +660,8 @@ def test_fetch_and_build_snapshot_benchmark_matching_by_id_and_name():
         "m_coding": {"iq": None, "coding": 85.0, "tps": 110.0},
         "prettymodelv1": {"iq": 92.0, "coding": None, "tps": None},
     }
-    target_mod1 = NormalizedModel(id="m_coding", name="Target 1", plan_allowances={"go": 15.0})
-    target_mod2 = NormalizedModel(
-        id="unmatched-id", name="Pretty Model v1", plan_allowances={"go": 15.0}
-    )
+    target_mod1 = make_model("m_coding", name="Target 1", plan_allowances={"go": 15.0})
+    target_mod2 = make_model("unmatched-id", name="Pretty Model v1", plan_allowances={"go": 15.0})
 
     with (
         patch(
@@ -703,8 +702,8 @@ def test_norm_name_lru_cache():
 def test_cross_plan_cache_sharing(tmp_path):
     with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
         # Save a fresh cache for plan="go" with plan_allowances for "go-plus" and "go-teams"
-        model = NormalizedModel(
-            id="multi-plan-mod",
+        model = make_model(
+            "multi-plan-mod",
             monthly_allowance=15.0,
             plan_allowances={"go": 15.0, "go-plus": 60.0, "go-teams": float("inf")},
         )
@@ -814,10 +813,11 @@ def test_merge_catalogue_metadata_models_dev_backfill():
     assert blank.limit.context == 512000
     assert blank.limit.output == 128000
 
-    existing = NormalizedModel(
-        id="existing-model",
+    existing = make_model(
+        "existing-model",
         release_date="2025-01-01",
-        limit=ModelLimit(context=1000, output=2000),
+        context=1000,
+        max_output=2000,
     )
     merge_catalogue_metadata(
         [existing],
@@ -1027,21 +1027,16 @@ def test_fetch_aa_benchmarks_effort_dedup_and_alias_matching():
     bench = fetch_aa_benchmarks("k", client=client)
 
     models = [
-        NormalizedModel(
-            id="model-a",
+        make_model(
+            "model-a",
             name="Acme Model A 1017",
             canonical_id="acme/model-a-1017",
         ),
-        NormalizedModel(id="model-b", name="Model B", canonical_id="acme/model-b"),
-        NormalizedModel(id="model-c", name="Model C", canonical_id="acme/model-c"),
-        NormalizedModel(id="model-d", name="Model D", canonical_id="acme/model-d"),
-        NormalizedModel(id="model-e", name="Model E", canonical_id="vendor/model-e"),
-        NormalizedModel(
-            id="model-f",
-            name="Model F",
-            canonical_id="maker/model-f-1.0-501b",
-            is_zero_cost=True,
-        ),
+        make_model("model-b", name="Model B", canonical_id="acme/model-b"),
+        make_model("model-c", name="Model C", canonical_id="acme/model-c"),
+        make_model("model-d", name="Model D", canonical_id="acme/model-d"),
+        make_model("model-e", name="Model E", canonical_id="vendor/model-e"),
+        make_model("model-f", name="Model F", canonical_id="maker/model-f-1.0-501b"),
     ]
     merged = merge_catalogue_metadata(
         models,
@@ -1077,8 +1072,8 @@ def test_aa_exact_release_beats_generic_id():
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": items}))
     )
     bench = fetch_aa_benchmarks("k", client=client)
-    model = NormalizedModel(
-        id="model-a",
+    model = make_model(
+        "model-a",
         name="Acme Model A 1017",
         canonical_id="acme/model-a-1017",
     )
@@ -1132,13 +1127,13 @@ def test_lookup_named_row_matches_id_or_name():
         norm_name("beta-flash"): {"retention_days": 30},
     }
 
-    by_name = NormalizedModel(id="custom-id", name="Alpha Max")
+    by_name = make_model("custom-id", name="Alpha Max")
     assert _lookup_named_row(by_name, by_norm)[1]["retention_days"] == 0
 
-    by_id = NormalizedModel(id="beta-flash", name="Drifted Display Name")
+    by_id = make_model("beta-flash", name="Drifted Display Name")
     assert _lookup_named_row(by_id, by_norm)[1]["retention_days"] == 30
 
-    assert _lookup_named_row(NormalizedModel(id="missing", name="Missing"), by_norm) is None
+    assert _lookup_named_row(make_model("missing", name="Missing"), by_norm) is None
 
 
 def test_default_file_mode_and_atomic_write(tmp_path):
@@ -1251,7 +1246,7 @@ def test_default_file_mode_proc_status_fallback(monkeypatch):
 def test_merge_privacy_warnings_none():
     from opencode_go_model_optimizer.ingest.snapshot import merge_privacy
 
-    m = NormalizedModel(id="test-model", name="Test Model")
+    m = make_model("test-model", name="Test Model")
     privacy_dict = {"Test Model": {"trains_on_data": False, "zdr": True}}
     merge_privacy([m], privacy_dict, warnings=None)
     assert m.privacy is not None
@@ -1261,13 +1256,13 @@ def test_merge_privacy_warnings_none():
 def test_create_snapshot_warns_when_docs_privacy_table_is_empty():
     paid = TokenCost(input=1.0, output=2.0)
     models = [
-        NormalizedModel(
-            id="m-priv",
+        make_model(
+            "m-priv",
             cost=paid,
             plan_allowances={"go": 15.0},
             privacy=Privacy(trains_on_data=False, zdr=True),
         ),
-        NormalizedModel(id="m-nopriv", cost=paid, plan_allowances={"go": 15.0}),
+        make_model("m-nopriv", cost=paid, plan_allowances={"go": 15.0}),
     ]
 
     snap = create_snapshot(models, plan="go", privacy={})
@@ -1277,7 +1272,7 @@ def test_create_snapshot_warns_when_docs_privacy_table_is_empty():
 
 
 def test_zero_cost_unlimited_allowance_is_not_a_catalogue_anomaly():
-    model = NormalizedModel(id="unlimited-free", plan_allowances={"go": float("inf")})
+    model = make_model("unlimited-free", plan_allowances={"go": float("inf")})
 
     snap = create_snapshot([model], plan="go")
     estimates = estimate_requests("unlimited-free", model.cost, model.plan_allowances, None, None)
@@ -1300,7 +1295,7 @@ def test_create_snapshot_unsupported_multiplier_warning():
     from opencode_go_model_optimizer.ingest.models import PriceMultiplier
 
     bad_mult = PriceMultiplier(factor=1.5, when={"date": {"gte": "not-a-date"}})
-    m = NormalizedModel(id="test/model", multipliers=[bad_mult], plan_allowances={"go": 15.0})
+    m = make_model("test/model", multipliers=[bad_mult], plan_allowances={"go": 15.0})
     snap = create_snapshot([m])
     assert any("ignoring unsupported price multiplier" in w for w in snap.warnings)
 
@@ -1574,9 +1569,10 @@ def test_fetch_console_profiles_reports_failure():
 def test_apply_request_estimates_without_console_or_go_requests_is_empty():
     from opencode_go_model_optimizer.ingest.catalogue import apply_request_estimates
 
-    model = NormalizedModel(
-        id="m",
-        cost=TokenCost(input=1.0, output=1.0),
+    model = make_model(
+        "m",
+        input=1.0,
+        output=1.0,
         plan_allowances={"go": 15.0},
     )
     apply_request_estimates([model], None)
@@ -1584,9 +1580,11 @@ def test_apply_request_estimates_without_console_or_go_requests_is_empty():
 
 
 def test_fetch_and_build_applies_scraped_console_profiles():
-    model = NormalizedModel(
-        id="test-model",
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+    model = make_model(
+        "test-model",
+        input=1.0,
+        output=2.0,
+        cache_read=0.5,
         plan_allowances={"go": 15.0},
     )
     with (
@@ -1602,9 +1600,11 @@ def test_fetch_and_build_applies_scraped_console_profiles():
 
 
 def test_fetch_and_build_warns_when_console_profiles_are_unavailable():
-    model = NormalizedModel(
-        id="test-model",
-        cost=TokenCost(input=1.0, output=2.0, cache_read=0.5),
+    model = make_model(
+        "test-model",
+        input=1.0,
+        output=2.0,
+        cache_read=0.5,
         plan_allowances={"go": 15.0},
     )
     with (
@@ -1631,7 +1631,7 @@ def test_artificial_analysis_module_exports_and_lookup():
     assert ingest.fetch_aa_benchmarks is artificial_analysis.fetch_aa_benchmarks
     assert ingest.lookup_aa_benchmark is artificial_analysis.lookup_aa_benchmark
 
-    model = NormalizedModel(id="glm-5", name="GLM-5")
+    model = make_model("glm-5", name="GLM-5")
     benchmarks = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
     assert artificial_analysis.lookup_aa_benchmark(model, benchmarks) == benchmarks["glm5"]
     assert artificial_analysis.lookup_aa_benchmark(model, {}) is None
