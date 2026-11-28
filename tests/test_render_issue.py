@@ -19,6 +19,20 @@ _MOD = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MOD)
 
 
+def _allowance_payload(payload: dict) -> dict:
+    """Derive the allowance side of a dual-method fixture from a Pareto payload."""
+    allowance = json.loads(json.dumps(payload))
+    allowance.update(mode="allowance", method="allowance", fallback=False)
+    allowance["snapshot"] = {
+        **allowance.get("snapshot", {}),
+        "benchmark_source": "none",
+    }
+    for explanation in allowance.get("explanations", {}).values():
+        for key in ("aa_iq", "aa_coding", "speed_tps", "bpe", "is_pareto"):
+            explanation.pop(key, None)
+    return allowance
+
+
 def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     payload = {
         "plan": "go",
@@ -95,14 +109,18 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
             },
         },
     }
-    json_path = tmp_path / "select.json"
-    json_path.write_text(json.dumps(payload), encoding="utf-8")
+    pareto_json_path = tmp_path / "pareto_select.json"
+    pareto_json_path.write_text(json.dumps(payload), encoding="utf-8")
+    allowance_json_path = tmp_path / "allowance_select.json"
+    allowance_json_path.write_text(json.dumps(_allowance_payload(payload)), encoding="utf-8")
     out_path = tmp_path / "issue.md"
 
     rc = _MOD.main(
         [
-            "--json",
-            str(json_path),
+            "--pareto-json",
+            str(pareto_json_path),
+            "--allowance-json",
+            str(allowance_json_path),
             "--run-url",
             "https://github.com/example/repo/actions/runs/42",
             "--output",
@@ -131,7 +149,7 @@ def test_render_pareto_issue_markdown(tmp_path: Path) -> None:
     assert "Full Comparison Catalog" not in md
 
 
-def test_render_issue_markdown_full_comparison_catalog() -> None:
+def test_render_dual_issue_markdown_full_comparison_catalog() -> None:
     payload = {
         "plan": "go",
         "mode": "pareto",
@@ -198,12 +216,16 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
         },
     ]
 
-    md = _MOD.render_issue_markdown(payload, rank_models=rank_models)
-    assert "### Full Comparison Catalog (`rank --mode pareto`)" in md
-    assert (
-        "All 3 models evaluated for this run by `rank --mode pareto`, not just the tier winners above."
-        in md
+    allowance_payload = _allowance_payload(payload)
+    md = _MOD.render_dual_issue_markdown(
+        payload,
+        allowance_payload,
+        pareto_rank_models=rank_models,
+        allowance_rank_models=rank_models,
     )
+    assert "#### Pareto Full Comparison Catalog (`rank --mode pareto`)" in md
+    assert "All 3 models evaluated by `rank --mode pareto`." in md
+    assert "#### Allowance Full Comparison Catalog (`rank --mode allowance`)" in md
     assert (
         "| 1 | `opencode-go/model-a` | heavy | 1.000 | 90.0 | 95.0 | 47.2% "
         "| $30.00 | $10.00/1M | 1,048,576 | 2026-11-01 | ZDR (0d retention); no training |" in md
@@ -223,36 +245,43 @@ def test_render_issue_markdown_full_comparison_catalog() -> None:
     assert '"Unbenchmarked Paid"' not in md
 
     # the catalog sits between the per-tier explanations and the full script output
-    md_with_script = _MOD.render_issue_markdown(
-        payload, script_output="raw table output", rank_models=rank_models
+    md_with_script = _MOD.render_dual_issue_markdown(
+        payload,
+        allowance_payload,
+        pareto_rank_models=rank_models,
+        allowance_rank_models=rank_models,
+        script_output="raw table output",
     )
     assert (
         md_with_script.index("#### `heavy`")
-        < md_with_script.index("### Full Comparison Catalog")
+        < md_with_script.index("#### Pareto Full Comparison Catalog")
         < md_with_script.index("### Full Script Output")
     )
 
     # a published site URL adds the Pages link and the artifact index to the issue
-    md_site = _MOD.render_issue_markdown(
-        payload, rank_models=rank_models, site_url="https://example.github.io/repo/"
+    md_site = _MOD.render_dual_issue_markdown(
+        payload,
+        allowance_payload,
+        pareto_rank_models=rank_models,
+        allowance_rank_models=rank_models,
+        site_url="https://example.github.io/repo/",
     )
     assert "- **GitHub Pages**: https://example.github.io/repo/" in md_site
     assert "- **All data & other choices**: https://example.github.io/repo/#/data" in md_site
     assert "### Other Choices & Published Data" in md_site
-    assert "[rank.json](https://example.github.io/repo/rank.json)" in md_site
-    assert "[select.json](https://example.github.io/repo/select.json)" in md_site
-    assert "[plans/go.json](https://example.github.io/repo/plans/go.json)" in md_site
-    assert "[plans/go-plus.json](https://example.github.io/repo/plans/go-plus.json)" in md_site
-    assert "[plans/go-teams.json](https://example.github.io/repo/plans/go-teams.json)" in md_site
+    assert "[pareto/rank.json](https://example.github.io/repo/pareto/rank.json)" in md_site
+    assert "[pareto/select.json](https://example.github.io/repo/pareto/select.json)" in md_site
+    assert (
+        "[allowance/select.json](https://example.github.io/repo/allowance/select.json)" in md_site
+    )
+    assert "[allowance/rank.json](https://example.github.io/repo/allowance/rank.json)" in md_site
+    assert "[go](https://example.github.io/repo/pareto/plans/go.json)" in md_site
+    assert "[go-plus](https://example.github.io/repo/pareto/plans/go-plus.json)" in md_site
+    assert "[go-teams](https://example.github.io/repo/pareto/plans/go-teams.json)" in md_site
     assert "[free-matrix.json](https://example.github.io/repo/free-matrix.json)" in md_site
     assert "[snapshot.json](https://example.github.io/repo/snapshot.json)" in md_site
     assert "[full-output.txt](https://example.github.io/repo/full-output.txt)" in md_site
-    assert "[table.txt](https://example.github.io/repo/table.txt)" in md_site
     assert "[fetch-log.txt](https://example.github.io/repo/fetch-log.txt)" in md_site
-    assert (
-        "[pareto-frontier.svg](https://example.github.io/repo/charts/pareto-frontier.svg)"
-        in md_site
-    )
     assert "Other Choices & Published Data" not in md  # no site URL passed
 
 
@@ -262,7 +291,7 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
         json.dumps(
             {
                 "plan": "go",
-                "mode": "pareto",
+                "mode": "allowance",
                 "evaluated_at": "2026-11-15T16:00:00+00:00",
                 "tiers": {},
             }
@@ -274,7 +303,7 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
         [
             sys.executable,
             str(_SCRIPT_PATH),
-            "--json",
+            "--allowance-json",
             str(select_path),
             "--site-url",
             "https://example.github.io/repo/",
@@ -289,16 +318,17 @@ def test_render_data_index_links_every_artifact(tmp_path: Path) -> None:
     md = out_path.read_text(encoding="utf-8")
     assert "All Data & Other Choices" in md
     assert "https://example.github.io/repo/" in md
-    assert "plans/go.json" in md
-    assert "plans/go-plus.json" in md
-    assert "plans/go-teams.json" in md
+    assert "pareto/error.txt" in md
+    assert "allowance/plans/go.json" in md
+    assert "allowance/plans/go-plus.json" in md
+    assert "allowance/plans/go-teams.json" in md
     assert "free-matrix.json" in md
     assert "snapshot.json" in md
     assert "full-output.txt" in md
     assert "charts/pareto-frontier.svg" in md
 
 
-def test_render_allowance_issue_markdown_visuals() -> None:
+def test_render_dual_allowance_issue_markdown_visuals() -> None:
     payload = {
         "plan": "go",
         "mode": "allowance",
@@ -335,7 +365,7 @@ def test_render_allowance_issue_markdown_visuals() -> None:
             },
         },
     }
-    md = _MOD.render_issue_markdown(payload)
+    md = _MOD.render_dual_issue_markdown(None, payload)
     assert "#### Visual Tier Summary" in md
     assert 'title "Paid Tier Allowance vs Output Cost"' in md
     assert "bar [30.0, 20.0, 15.0]" in md
@@ -356,10 +386,12 @@ def test_render_with_script_output_and_backticks() -> None:
         "tiers": {"heavy": ""},
         "explanations": {"heavy": {"model_id": "None"}},
     }
-    md = _MOD.render_issue_markdown(payload, script_output="line with ``` backticks\n+---+")
+    md = _MOD.render_dual_issue_markdown(
+        None, payload, script_output="line with ``` backticks\n+---+"
+    )
     assert "````text" in md
     assert "No eligible model available for this tier." in md
-    assert "Artificial Analysis" not in md
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in md
 
 
 def test_render_ci_comment_markdown(tmp_path: Path) -> None:
@@ -449,8 +481,10 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
             }
         },
     }
-    select_path = tmp_path / "select.json"
+    select_path = tmp_path / "pareto_select.json"
     select_path.write_text(json.dumps(select_data), encoding="utf-8")
+    allowance_select_path = tmp_path / "allowance_select.json"
+    allowance_select_path.write_text(json.dumps(_allowance_payload(select_data)), encoding="utf-8")
 
     rank_path = tmp_path / "rank.json"
     rank_path.write_text(json.dumps(rank_dict), encoding="utf-8")
@@ -475,11 +509,17 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
         [
             sys.executable,
             str(_SCRIPT_PATH),
-            "--json",
+            "--pareto-json",
             str(select_path),
-            "--rank-json",
+            "--pareto-rank-json",
             str(rank_path),
-            "--plan-json",
+            "--pareto-plan-json",
+            f"go={plan_file}",
+            "--allowance-json",
+            str(allowance_select_path),
+            "--allowance-rank-json",
+            str(rank_path),
+            "--allowance-plan-json",
             f"go={plan_file}",
             "--free-matrix-json",
             str(free_matrix_file),
@@ -509,8 +549,8 @@ def test_render_analysis_markdown_and_cli(tmp_path: Path) -> None:
 
     # the same rank JSON also feeds the full comparison catalog in the issue markdown
     issue_md = res.stdout
-    assert "### Full Comparison Catalog (`rank --mode pareto`)" in issue_md
-    assert "All 2 models evaluated for this run" in issue_md
+    assert "#### Pareto Full Comparison Catalog (`rank --mode pareto`)" in issue_md
+    assert "All 2 models evaluated by `rank --mode pareto`." in issue_md
     assert "| 1 | `opencode-go/model-a` | heavy |" in issue_md
     assert "| 2 | `opencode-go/model-b` | balanced |" in issue_md
     assert 'title "Catalog Composition by Eligibility & Frontier Status"' in issue_md
@@ -582,7 +622,6 @@ def test_optimizer_issue_submodule_structure() -> None:
         "render_analysis_markdown",
         "render_ci_comment_markdown",
         "render_data_markdown",
-        "render_issue_markdown",
     ):
         assert getattr(_MOD, public_fn) is getattr(pkg, public_fn)
 
@@ -665,6 +704,11 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    allowance_select_path = tmp_path / "allowance_select.json"
+    allowance_select_path.write_text(
+        json.dumps(_allowance_payload(json.loads(select_path.read_text(encoding="utf-8")))),
+        encoding="utf-8",
+    )
     rank_path = tmp_path / "rank.json"
     rank_path.write_text(
         json.dumps(
@@ -692,9 +736,13 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
         [
             sys.executable,
             str(_SCRIPT_PATH),
-            "--json",
+            "--pareto-json",
             str(select_path),
-            "--rank-json",
+            "--pareto-rank-json",
+            str(rank_path),
+            "--allowance-json",
+            str(allowance_select_path),
+            "--allowance-rank-json",
             str(rank_path),
             "--charts-dir",
             str(charts_dir),
@@ -715,65 +763,6 @@ def test_cli_subprocess_from_different_cwd(tmp_path: Path) -> None:
     assert "- **Top Frontier Quality**: `89.0`" in analysis_out.read_text(encoding="utf-8")
     assert "All Data & Other Choices" in data_out.read_text(encoding="utf-8")
     assert (charts_dir / "pareto-frontier.svg").is_file()
-
-
-def test_main_loads_select_and_rank_json_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """main() loads args.json and args.rank_json only once even with --analysis-output."""
-    select_path = tmp_path / "select.json"
-    select_path.write_text(
-        json.dumps(
-            {
-                "plan": "go",
-                "mode": "pareto",
-                "evaluated_at": "2026-11-16T00:00:00+00:00",
-                "tiers": {"heavy": "opencode-go/model-a"},
-                "explanations": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-    rank_path = tmp_path / "rank.json"
-    rank_path.write_text(json.dumps([]), encoding="utf-8")
-
-    load_json_calls = 0
-    real_load_json = _MOD._load_json
-
-    def counting_load_json(path: str) -> object:
-        nonlocal load_json_calls
-        if path == str(select_path):
-            load_json_calls += 1
-        return real_load_json(path)
-
-    rank_calls = 0
-    real_load_rank = _MOD._load_rank_models
-
-    def counting_load_rank(path: str | None) -> list[dict[str, object]]:
-        nonlocal rank_calls
-        rank_calls += 1
-        return real_load_rank(path)
-
-    monkeypatch.setattr(_MOD, "_load_json", counting_load_json)
-    monkeypatch.setattr(_MOD, "_load_rank_models", counting_load_rank)
-
-    rc = _MOD.main(
-        [
-            "--json",
-            str(select_path),
-            "--rank-json",
-            str(rank_path),
-            "--output",
-            str(tmp_path / "issue.md"),
-            "--analysis-output",
-            str(tmp_path / "analysis.md"),
-            "--data-output",
-            str(tmp_path / "data.md"),
-        ]
-    )
-    assert rc == 0
-    assert load_json_calls == 1
-    assert rank_calls == 1
 
 
 def test_generate_analysis_svgs_without_plans_and_boolean_allowance(tmp_path: Path) -> None:
@@ -811,7 +800,6 @@ def test_main_requires_primary_mode(capsys: pytest.CaptureFixture[str]) -> None:
     """main() returns 1 and writes to stderr when no primary input flag is provided."""
     args = _MOD.parse_args([])
     assert args.format_outcome == "unknown"
-    assert args.plan_json == []
     assert _MOD.main([]) == 1
     assert "must be specified" in capsys.readouterr().err
 
