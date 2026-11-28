@@ -57,9 +57,6 @@
           ? 'https://github.com/' + host.replace(/\.github\.io$/, '') + '/' + parts[0]
           : '';
       }
-      var issuesUrl = repoUrl
-        ? repoUrl + '/issues?q=is%3Aissue+is%3Aopen+label%3Aoptimizer-results'
-        : '#';
       window.$docsify = {
         name: 'OpenCode Go Optimizer',
         repo: repoUrl,
@@ -86,9 +83,7 @@
         plugins: [
           function (hook) {
             hook.beforeEach(function (md) {
-              return md
-                .replace(/\{\{REPO_URL\}\}/g, repoUrl || '#')
-                .replace(/\{\{ISSUES_URL\}\}/g, issuesUrl);
+              return md.replace(/\{\{REPO_URL\}\}/g, repoUrl || '#');
             });
             hook.doneEach(function () {
               var targets = document.querySelectorAll('pre[data-lang="mermaid"], pre code.lang-mermaid, code.lang-mermaid');

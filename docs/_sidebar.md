@@ -1,4 +1,5 @@
 - [Latest Optimizer Selections](README.md)
+- [Consumer JSON Endpoint](select.json ':ignore')
 - [Live Pareto Analysis & Plans](analysis.md)
 - [All Data & Other Choices](data.md)
 - [Documentation & CLI Usage](usage.md)
@@ -18,5 +19,4 @@
   - [Free-tier matrix](free-matrix.json ':ignore')
   - [Normalized Snapshot](snapshot.json ':ignore')
   - [Full Output](full-output.txt ':ignore')
-  - [GitHub Issue]({{ISSUES_URL}})
   - [GitHub Repository]({{REPO_URL}})

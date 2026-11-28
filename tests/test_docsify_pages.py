@@ -18,11 +18,13 @@ def test_docsify_files_exist() -> None:
 
     index_content = (docs_dir / "index.html").read_text(encoding="utf-8")
     sidebar_content = (docs_dir / "_sidebar.md").read_text(encoding="utf-8")
+    data_content = (docs_dir / "data.md").read_text(encoding="utf-8")
     assert "window.$docsify" in index_content
     assert "name: 'OpenCode Go Optimizer'" in index_content
     assert "{{REPO_URL}}" in index_content
     assert "{{REPO_URL}}" in sidebar_content
-    assert "{{ISSUES_URL}}" in sidebar_content
+    assert "{{ISSUES_URL}}" not in index_content + sidebar_content + data_content
+    assert "select.json" in sidebar_content
     assert "loadSidebar: true" in index_content
     assert "auto2top: true" in index_content
     assert "maxLevel: 4" in index_content
@@ -151,6 +153,17 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "uses: ./.github/workflows/ci.yml" in pr_ci_text
     assert "uses: ./.github/workflows/ci.yml" in workflow_text
     assert "needs: test" in workflow_text
+    assert "live-tests:" in workflow_text
+    assert (
+        "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+        in workflow_text
+    )
+    assert 'OCGO_LIVE: "1"' in workflow_text
+    assert "uv run pytest tests/live -m live" in workflow_text
+    assert "cat out/live-tests.txt" in workflow_text
+    live_block = workflow_text.split("live-tests:", 1)[1].split("optimize:", 1)[0]
+    assert "continue-on-error: true" in live_block
+    assert 'sync-args: "--no-dev"' not in live_block
     # Reusable workflows fail at startup when the caller does not grant every
     # permission the called workflow declares. ci.yml declares this for its
     # PR-comment step, which is skipped for push/schedule runs.
@@ -169,8 +182,8 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "aa-benchmarks-v2-" in pr_ci_text
     assert "aa-ratelimit-v1-" in pr_ci_text
     assert 'OPENCODE_GO_AA_CACHE_TTL: "86400"' in pr_ci_text
-    assert "--mode pareto" in pr_ci_text
-    assert "--mode allowance" in pr_ci_text
+    assert "for method in pareto allowance; do" in pr_ci_text
+    assert '--mode "$method"' in pr_ci_text
     assert "--allow-fallback" not in pr_ci_text
     assert "--format json --explain --allow-global-region --allow-free-training" in pr_ci_text
     assert "continue-on-error: true" in pr_ci_text
@@ -197,7 +210,7 @@ def test_workflow_has_pages_and_pr_comment() -> None:
         line for line in workflow_text.splitlines() if not line.lstrip().startswith("#")
     )
     assert "id-token: write" not in workflow_without_comments
-    assert "issues: write" in workflow_text
+    assert "issues: write" not in workflow_text
     assert "contents: read" in workflow_text
 
     assert "github-pages" not in workflow_text
@@ -222,7 +235,25 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "refresh_aa:" in workflow_text
     assert '"79200"' in workflow_text
     assert '"86400"' in workflow_text
-    assert "--allow-fallback" not in workflow_text
+    assert "--mode auto --allow-fallback" in workflow_text
+    assert "> out/site/select.json 2> out/select.err || canonical_status=$?" in workflow_text
+    assert 'echo "canonical_status=$canonical_status" >> "$GITHUB_OUTPUT"' in workflow_text
+    assert "steps.optimizer.outputs.canonical_status != '0'" in workflow_text
+    canonical_block = workflow_text.split("canonical_status=0", 1)[1].split("run_method()", 1)[0]
+    for flag in (
+        '--plan "$OPTIMIZER_PLAN"',
+        "--mode auto",
+        "--allow-fallback",
+        "--snapshot out/snapshot.json",
+        "--format json",
+        "--explain",
+        "--top-n 3",
+        "--allow-global-region",
+        "--allow-free-training",
+    ):
+        assert flag in canonical_block
+    method_block = workflow_text.split("run_method() {", 1)[1].split("run_method pareto", 1)[0]
+    assert "--allow-fallback" not in method_block
     assert "out/snapshot.json" in workflow_text
     assert "out/site/snapshot.json" in workflow_text
     assert "cp -a out/pareto out/site/pareto" in workflow_text
@@ -234,11 +265,11 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert workflow_text.index("Configure GitHub Pages") < workflow_text.index(
         "Run optimizer (Pareto & Allowance, no fallback)"
     )
+    assert "Create or update GitHub issue" not in workflow_text
+    assert 'cat out/issue.md >> "$GITHUB_STEP_SUMMARY"' in workflow_text
+    assert "cp out/issue.md out/site/README.md" in workflow_text
     assert workflow_text.index("Upload Docsify site artifact") < workflow_text.index(
-        "Create or update GitHub issue"
-    )
-    assert workflow_text.index("Create or update GitHub issue") < workflow_text.index(
-        "Fail if Pareto or Allowance calculation failed"
+        "Fail if an optimizer calculation failed"
     )
 
     assert "actions/configure-pages@v6" in workflow_text
@@ -275,10 +306,11 @@ def test_workflow_has_pages_and_pr_comment() -> None:
     assert "--charts-dir out/charts" in workflow_text
     assert "out/site/charts" in workflow_text
 
-    # Check DRY staging commands and sed replacement
+    # Check DRY staging commands and repository-only placeholder replacement.
     assert "out/site" in workflow_text
     assert "sed -i" in workflow_text
     assert "{{REPO_URL}}" in workflow_text
+    assert "{{ISSUES_URL}}" not in workflow_text
 
 
 def test_docsify_analysis_page_and_sidebar() -> None:
@@ -293,6 +325,7 @@ def test_docsify_analysis_page_and_sidebar() -> None:
     sidebar_text = sidebar_md.read_text(encoding="utf-8")
     assert "analysis.md" in sidebar_text
     assert "data.md" in sidebar_text
+    assert "select.json" in sidebar_text
     assert "pareto/select.json" in sidebar_text
     assert "pareto/rank.json" in sidebar_text
     assert "pareto/plans/go.json" in sidebar_text
@@ -339,7 +372,7 @@ def test_composite_action_and_hardening() -> None:
     # PR-comment step; reusable workflows fail at startup without that grant.
     optimizer_text = optimizer_path.read_text(encoding="utf-8")
     assert "pull-requests: write" in optimizer_text
-    assert "issues: write" in optimizer_text
+    assert "issues: write" not in optimizer_text
 
     pr_ci_text = (_ROOT / ".github" / "workflows" / "pr-ci.yml").read_text(encoding="utf-8")
     assert "pull-requests: write" in pr_ci_text
