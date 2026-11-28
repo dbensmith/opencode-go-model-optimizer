@@ -23,9 +23,9 @@ Usage:
 
 Exits 0 when every rendered row matches and at least ``--min-rows`` rows were compared;
 1 otherwise. Requires the dev dependency group (``uv sync``) and a Playwright Chromium
-build (``uv run playwright install chromium``). On minimal Linux hosts the script can
-bootstrap missing browser shared libraries (e.g. libasound) into a user cache directory
-without root.
+build (``uv run playwright install --with-deps chromium``). On Linux, missing host
+libraries trigger one automatic dependency-install attempt through Playwright; failures
+report the exact command to run manually.
 """
 
 from __future__ import annotations
@@ -33,9 +33,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import re
-import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -62,15 +61,6 @@ CONSOLE_LIMITS_URL = f"{CONSOLE_PAGE_URL}#limits"
 SETTLE_POLLS = 3  # consecutive identical reads required before values count as settled
 POLL_INTERVAL = 0.75
 
-# Headless Chromium links some libraries that minimal Linux images lack. Mapped ones can
-# be fetched rootless via `apt-get download` + `dpkg-deb -x` into a user cache dir.
-_LIB_DEB_PACKAGES = {
-    "libasound.so.2": ("libasound2t64", "libasound2"),
-}
-# Deliberately home-based, not XDG_CACHE_HOME: pytest (and similar sandboxes) override
-# XDG_CACHE_HOME per run, which would scatter the extracted libraries across temp dirs.
-_LIB_CACHE = Path.home() / ".cache" / "opencode-go-model-optimizer" / "browser-libs"
-
 
 class VerifyError(Exception):
     """Fatal verification error with actionable guidance."""
@@ -79,89 +69,6 @@ class VerifyError(Exception):
 def _fail(msg: str) -> int:
     print(f"ERROR: {msg}", file=sys.stderr)
     return 1
-
-
-# --- Rootless bootstrap for missing browser shared libraries ---------------------
-
-
-def _missing_shared_libs(executable: str) -> list[str]:
-    """Shared libraries the browser binary cannot resolve, via ldd (best-effort)."""
-    if platform.system() != "Linux" or not shutil.which("ldd"):
-        return []
-    proc = subprocess.run(["ldd", executable], capture_output=True, text=True, check=False)
-    return sorted({m.group(1) for m in re.finditer(r"(\S+) => not found", proc.stdout)})
-
-
-def _unresolved_shared_libs(missing: Sequence[str], lib_dirs: Sequence[str]) -> list[str]:
-    """Return missing sonames that are not present in any of the library directories."""
-    return [
-        lib
-        for lib in missing
-        if not any((Path(directory) / lib).is_file() for directory in lib_dirs)
-    ]
-
-
-def _bootstrap_lib_dirs(executable: str) -> list[str]:
-    """Return LD_LIBRARY_PATH dirs that resolve the browser's missing shared libraries.
-
-    Reuses previously extracted libraries from the cache; otherwise downloads the
-    mapped Debian packages rootlessly. Raises VerifyError when a library is unmapped or
-    nothing could be fetched — system-wide install stays the documented fallback.
-    """
-    missing = _missing_shared_libs(executable)
-    if not missing:
-        return []
-    cached = [str(d) for d in _LIB_CACHE.glob("*/usr/lib/*-linux-gnu") if d.is_dir()]
-    if cached and not _unresolved_shared_libs(missing, cached):
-        return cached
-
-    unresolved = _unresolved_shared_libs(missing, cached)
-    unmapped = [lib for lib in unresolved if lib not in _LIB_DEB_PACKAGES]
-    if unmapped:
-        raise VerifyError(
-            "browser binary is missing system libraries this tool cannot fetch rootlessly "
-            f"({', '.join(unmapped)}); install them system-wide "
-            "(e.g. `playwright install-deps chromium`) and retry"
-        )
-    if not (shutil.which("apt-get") and shutil.which("dpkg-deb")):
-        raise VerifyError(
-            f"missing browser system libraries ({', '.join(unresolved)}) and no rootless "
-            "apt/dpkg available; install them system-wide "
-            "(e.g. `playwright install-deps chromium`)"
-        )
-    _LIB_CACHE.mkdir(parents=True, exist_ok=True)
-    lib_dirs = list(cached)
-    for lib in unresolved:
-        for pkg in _LIB_DEB_PACKAGES[lib]:
-            try:
-                subprocess.run(
-                    ["apt-get", "download", pkg],
-                    cwd=_LIB_CACHE,
-                    capture_output=True,
-                    check=True,
-                    text=True,
-                )
-                debs = sorted(_LIB_CACHE.glob(f"{pkg}_*.deb"))
-                if not debs:
-                    continue
-                target = _LIB_CACHE / pkg
-                subprocess.run(
-                    ["dpkg-deb", "-x", str(debs[-1]), str(target)],
-                    capture_output=True,
-                    check=True,
-                )
-                lib_dirs.extend(str(d) for d in target.glob("usr/lib/*-linux-gnu") if d.is_dir())
-                break
-            except subprocess.SubprocessError:
-                continue  # try the next candidate package name
-    still_unresolved = _unresolved_shared_libs(missing, lib_dirs)
-    if still_unresolved:
-        raise VerifyError(
-            f"could not fetch the missing browser libraries ({', '.join(still_unresolved)}) "
-            "rootlessly; install them system-wide (e.g. `playwright install-deps chromium`)"
-        )
-    print(f"bootstrapped browser libraries rootlessly into {_LIB_CACHE}", file=sys.stderr)
-    return lib_dirs
 
 
 # --- Browser side ---------------------------------------------------------------
@@ -317,6 +224,17 @@ def _cross_check(finals: list[dict[str, Any]], displayed: list[dict[str, Any]]) 
         )
 
 
+def _browser_registry_pins() -> dict[str, str]:
+    """Point Playwright at the user's browser cache when pytest overrides XDG_CACHE_HOME."""
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return {}
+    xdg = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
+    real = Path.home() / ".cache" / "ms-playwright"
+    if not xdg.is_dir() and real.is_dir():
+        return {"PLAYWRIGHT_BROWSERS_PATH": str(real)}
+    return {}
+
+
 def _start_playwright():
     """Start the Playwright driver with the browser registry pinned via process env.
 
@@ -326,12 +244,7 @@ def _start_playwright():
     """
     from playwright.sync_api import sync_playwright
 
-    pins: dict[str, str] = {}
-    if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
-        xdg = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ms-playwright"
-        real = Path.home() / ".cache" / "ms-playwright"
-        if not xdg.is_dir() and real.is_dir():
-            pins["PLAYWRIGHT_BROWSERS_PATH"] = str(real)
+    pins = _browser_registry_pins()
     saved = {k: os.environ.get(k) for k in pins}
     os.environ.update(pins)
     try:
@@ -344,15 +257,19 @@ def _start_playwright():
                 os.environ[key] = value
 
 
-def _browser_env(lib_dirs: Sequence[str]) -> dict[str, str] | None:
-    """Build the browser launch environment without empty library-path entries."""
-    if not lib_dirs:
-        return None
-    library_path = [*lib_dirs, *os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)]
-    return {
-        **os.environ,
-        "LD_LIBRARY_PATH": ":".join(path for path in library_path if path),
-    }
+def _install_browser_dependencies() -> None:
+    """Install Chromium and its OS dependencies once through Playwright's package manager."""
+    command = [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"]
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            env={**os.environ, **_browser_registry_pins()},
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise VerifyError(
+            f"could not install Chromium system dependencies; run `{shlex.join(command)}` and retry"
+        ) from exc
 
 
 def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
@@ -365,21 +282,28 @@ def _rendered_rows(timeout: float, fast: bool = False) -> list[dict[str, Any]]:
     p = _start_playwright()
     try:
         try:
-            executable = p.chromium.executable_path
-            lib_dirs = _bootstrap_lib_dirs(executable)
-            env = _browser_env(lib_dirs)
             browser = p.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-dev-shm-usage"],
-                env=env,
             )
         except PlaywrightError as exc:
             message = str(exc)
             if "doesn't exist" in message or "Executable doesn't exist" in message:
                 raise VerifyError(
-                    "no Playwright Chromium build found; run `uv run playwright install chromium`"
+                    "no Playwright Chromium build found; run "
+                    "`uv run playwright install --with-deps chromium`"
                 ) from exc
-            raise
+            missing_dependencies = "Host system is missing dependencies" in message or (
+                "error while loading shared libraries" in message
+            )
+            if sys.platform == "linux" and missing_dependencies:
+                _install_browser_dependencies()
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+            else:
+                raise
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 2400})
             page.goto(CONSOLE_LIMITS_URL, timeout=timeout * 1000, wait_until="networkidle")

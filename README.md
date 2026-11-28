@@ -544,7 +544,7 @@ The console request-profile scrape is verified separately against the **hydrated
 uv run python scripts/verify_console_hydration.py   # or: OCGO_BROWSER=1 uv run pytest tests/live -m browser
 ```
 
-It needs the dev dependency group (`uv sync` installs Playwright) and a one-time Chromium download (`uv run playwright install chromium`). On minimal Linux hosts the script bootstraps missing browser libraries (e.g. libasound) into `~/.cache/opencode-go-model-optimizer/browser-libs` without root; unmapped libraries must be installed system-wide (`playwright install-deps chromium`).
+It needs the dev dependency group (`uv sync` installs Playwright) and a one-time Chromium download with its system dependencies (`uv run playwright install --with-deps chromium`). On Linux, if Chromium cannot launch because host libraries such as libasound are missing, the verifier automatically runs the equivalent command through the active Python interpreter once; Playwright uses the system package manager (`apt-get` and `sudo` on Ubuntu/WSL). If that installation fails, the verifier reports the exact command to run manually. The old rootless `~/.cache/opencode-go-model-optimizer/browser-libs` cache is no longer used and can be deleted.
 
 ---
 
