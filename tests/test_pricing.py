@@ -19,11 +19,9 @@ from opencode_go_model_optimizer.engine.pricing import (
 from opencode_go_model_optimizer.engine.tiers import select_tiers
 from opencode_go_model_optimizer.ingest.catalogue import parse_catalogue_http
 from opencode_go_model_optimizer.ingest.models import (
-    ModelLimit,
     NormalizedModel,
     PriceMultiplier,
     Snapshot,
-    TokenCost,
 )
 from tests.conftest import CATALOGUE_HTTP_DATA
 from tests.factories import make_model
@@ -45,8 +43,11 @@ def dt(s: str) -> datetime:
 def model(mid="m", out=10.0, whens=(), **kw) -> NormalizedModel:
     return make_model(
         mid,
-        cost=TokenCost(input=out / 4, output=out, cache_read=out / 40),
-        limit=ModelLimit(context=200000, output=8000),
+        input=out / 4,
+        output=out,
+        cache_read=out / 40,
+        context=200000,
+        max_output=8000,
         monthly_allowance=15.0,
         multipliers=[PriceMultiplier(factor=f, when=w) for f, w in whens],
         **kw,

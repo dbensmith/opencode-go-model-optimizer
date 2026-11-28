@@ -15,7 +15,6 @@ from opencode_go_model_optimizer.ingest.docs import parse_privacy
 from opencode_go_model_optimizer.ingest.models import (
     Privacy,
     Snapshot,
-    TokenCost,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
     create_snapshot,
@@ -100,7 +99,8 @@ def _m(mid, privacy=None, out=0.0, allowance=None, release_date=""):
     return make_model(
         mid,
         name=mid,
-        cost=TokenCost(input=out, output=out),
+        input=out,
+        output=out,
         monthly_allowance=allowance,
         privacy=privacy,
         release_date=release_date,
@@ -136,7 +136,8 @@ def test_passes_privacy_training_controls():
     consent_train = make_model(
         "consent",
         is_contributor=True,
-        cost=TokenCost(input=1.0, output=1.0),
+        input=1.0,
+        output=1.0,
         monthly_allowance=15.0,
         privacy=Privacy(trains_on_data=True),
     )
