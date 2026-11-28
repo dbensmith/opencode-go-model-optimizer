@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
@@ -26,82 +25,15 @@ from opencode_go_model_optimizer.formatters.markdown import (
 
 from .charts import generate_analysis_svgs
 from .common import (
+    _has_benchmarks,
     _model_burn_pct,
     _model_quality,
     _normalize_site_url,
-    _render_ranked_catalog_rows,
+    _render_full_catalog_section,
     _render_report_header,
-    _short_id,
+    _short_model_id,
     _tier_pick_id,
 )
-
-
-def _quadrant_points(
-    rank_models: list[dict[str, Any]],
-) -> list[tuple[str, float, float]]:
-    def collect(include_zero_cost: bool, require_burn: bool) -> list[tuple[str, float, float]]:
-        pts: list[tuple[str, float, float]] = []
-        for m in rank_models:
-            if not include_zero_cost and m.get("is_zero_cost"):
-                continue
-            if m.get("aa_iq") is None and m.get("aa_coding") is None:
-                continue
-            burn = _model_burn_pct(m)
-            if require_burn and burn is None:
-                continue
-            quality = _model_quality(m)
-            clean_id = _short_id(m)
-            safe_label = re.sub(r"[^a-zA-Z0-9-]", "-", clean_id).strip("-") or f"m-{len(pts) + 1}"
-            pts.append((safe_label, burn if burn is not None else 0.0, quality))
-        return pts
-
-    return collect(include_zero_cost=False, require_burn=True) or collect(
-        include_zero_cost=True, require_burn=False
-    )
-
-
-def _render_quadrant_chart(rank_models: list[dict[str, Any]]) -> list[str]:
-    benchmarked_models = _quadrant_points(rank_models)
-    seen_labels: dict[str, int] = {}
-    deduped_models: list[tuple[str, float, float]] = []
-    for lbl, b, q in benchmarked_models[:12]:
-        if lbl in seen_labels:
-            seen_labels[lbl] += 1
-            lbl = f"{lbl}-{seen_labels[lbl]}"
-        else:
-            seen_labels[lbl] = 1
-        deduped_models.append((lbl, b, q))
-
-    if not deduped_models:
-        return []
-
-    max_burn = max(b for _, b, _ in deduped_models) or 100.0
-    max_quality = max(q for _, _, q in deduped_models) or 100.0
-    if max_burn <= 0:
-        max_burn = 100.0
-    if max_quality <= 0:
-        max_quality = 100.0
-
-    lines = [
-        "",
-        "```mermaid",
-        "quadrantChart",
-        '    title "Capability vs Quota Efficiency"',
-        '    x-axis "Higher Burn" --> "Higher Quota Efficiency"',
-        '    y-axis "Lower Capability" --> "Higher Capability"',
-        '    quadrant-1 "Sweet Spot (High Quality, Low Burn)"',
-        '    quadrant-2 "Heavy Compute (High Quality, High Burn)"',
-        '    quadrant-3 "Dominated / High Cost"',
-        '    quadrant-4 "Lightweight / Low Burn"',
-    ]
-    for lbl, b, q in deduped_models:
-        norm_x = 1.0 - (b / max_burn)
-        norm_y = q / max_quality
-        clamped_x = max(0.05, min(0.95, round(norm_x, 2)))
-        clamped_y = max(0.05, min(0.95, round(norm_y, 2)))
-        lines.append(f"    {lbl}: [{clamped_x:.2f}, {clamped_y:.2f}]")
-    lines.append("```")
-    return lines
 
 
 def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
@@ -113,7 +45,7 @@ def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
         ]
         for row in free_matrix
     ]
-    mids = [(r.get("model_id") or "None").removeprefix("opencode-go/") for r in free_matrix]
+    mids = [_short_model_id(r.get("model_id") or "None") for r in free_matrix]
     nodes = [(f"S{i}", r.get("label") or f"Setting {i + 1}") for i, r in enumerate(free_matrix)]
     edges = [(f"S{i}", sanitize_mermaid_id(mid, "M_"), mid) for i, mid in enumerate(mids)]
     return [
@@ -167,9 +99,9 @@ def _render_multi_plan_section(
                 ]
             )
 
-            tier_label = f"{tier}: {pick.removeprefix('opencode-go/')}"
+            tier_label = f"{tier}: {_short_model_id(pick)}"
             if fallback_ids:
-                tier_label += f" (fb: {fallback_ids[0].removeprefix('opencode-go/')})"
+                tier_label += f" (fb: {_short_model_id(fallback_ids[0])})"
             edges.append((p_node, sanitize_mermaid_id(f"{p_name}_{tier}", "T_"), tier_label))
 
             if is_number(burn):
@@ -212,7 +144,7 @@ def _collect_pareto_models(
 ) -> tuple[list[dict[str, Any]], bool]:
     pareto_models = [m for m in rank_models if m.get("is_pareto")]
     pareto_models.sort(key=_model_quality, reverse=True)
-    has_aa = any(m.get("aa_iq") is not None or m.get("aa_coding") is not None for m in rank_models)
+    has_aa = any(_has_benchmarks(m) for m in rank_models)
     return pareto_models, has_aa
 
 
@@ -243,29 +175,6 @@ def _pareto_rows(
             ]
         )
     return rows
-
-
-def _render_pareto_charts(
-    pareto_models: list[dict[str, Any]],
-    rank_models: list[dict[str, Any]],
-) -> list[str]:
-    if not pareto_models:
-        return []
-    top = pareto_models[:12]
-    x_ids = [_short_id(m).replace('"', "") for m in top]
-    q_vals = [round(_model_quality(m), 1) for m in top]
-    b_vals = [round(_model_burn_pct(m) or 0.0, 1) for m in top]
-    return [
-        "",
-        *render_mermaid_xychart(
-            "Pareto Frontier: Effective Quality vs Quota Burn %",
-            x_ids,
-            y_axis='"Quality / Burn %"',
-            bars=[q_vals],
-            lines_series=[b_vals],
-        ),
-        *_render_quadrant_chart(rank_models),
-    ]
 
 
 def render_analysis_markdown(
@@ -302,25 +211,15 @@ def render_analysis_markdown(
     balanced_cutoff = BALANCED_QUALITY_RATIO * top_quality
 
     generated_svgs: list[str] = []
-    if charts_dir and not pareto_failed:
+    if charts_dir and (not pareto_failed or allowance_plan_payloads):
         generated_svgs = generate_analysis_svgs(
             charts_dir=Path(charts_dir),
-            pareto_models=pareto_models,
-            rank_models=rank_models,
-            plan_payloads=plan_payloads,
-            top_quality=top_quality,
-            heavy_cutoff=heavy_cutoff,
-            balanced_cutoff=balanced_cutoff,
-        )
-    elif charts_dir and allowance_plan_payloads:
-        generated_svgs = generate_analysis_svgs(
-            charts_dir=Path(charts_dir),
-            pareto_models=[],
-            rank_models=allowance_rank_models or [],
-            plan_payloads=allowance_plan_payloads,
-            top_quality=0.0,
-            heavy_cutoff=0.0,
-            balanced_cutoff=0.0,
+            pareto_models=pareto_models if not pareto_failed else [],
+            rank_models=rank_models if not pareto_failed else allowance_rank_models or [],
+            plan_payloads=plan_payloads if not pareto_failed else allowance_plan_payloads,
+            top_quality=top_quality if not pareto_failed else 0.0,
+            heavy_cutoff=heavy_cutoff if not pareto_failed else 0.0,
+            balanced_cutoff=balanced_cutoff if not pareto_failed else 0.0,
         )
 
     if pareto_failed:
@@ -359,8 +258,6 @@ def render_analysis_markdown(
             ]
         )
 
-        lines.extend(_render_pareto_charts(pareto_models, rank_models))
-
         if "pareto-frontier.svg" in generated_svgs:
             lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
 
@@ -386,13 +283,15 @@ def render_analysis_markdown(
                 "",
                 "---",
                 "",
-                "### 4. Full Ranked Catalog (`rank --mode pareto`)",
-                "",
-                *_render_ranked_catalog_rows(rank_models),
+                *_render_full_catalog_section(
+                    "### 4. Full Ranked Catalog (`rank --mode pareto`)",
+                    rank_models,
+                    chart="catalog-ranking.svg"
+                    if "catalog-ranking.svg" in generated_svgs
+                    else None,
+                ),
             ]
         )
-        if "catalog-ranking.svg" in generated_svgs:
-            lines.extend(["", "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)"])
 
     if allowance_rank_models:
         lines.extend(
@@ -400,9 +299,10 @@ def render_analysis_markdown(
                 "",
                 "---",
                 "",
-                "### Allowance Method: Full Ranked Catalog (`rank --mode allowance`)",
-                "",
-                *_render_ranked_catalog_rows(allowance_rank_models),
+                *_render_full_catalog_section(
+                    "### Allowance Method: Full Ranked Catalog (`rank --mode allowance`)",
+                    allowance_rank_models,
+                ),
             ]
         )
 

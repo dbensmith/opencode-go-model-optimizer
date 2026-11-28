@@ -10,7 +10,26 @@ from opencode_go_model_optimizer.formatters.markdown import (
     render_markdown_table,
 )
 
-from .common import _render_select_json_table
+from .common import _read_optional_text, _render_select_json_table
+
+_CI_STEPS = (
+    (
+        "format",
+        "Check code formatting (`ruff format --check`)",
+        "Format",
+        "ruff format",
+        "ruff format --check",
+    ),
+    ("lint", "Lint with ruff (`ruff check`)", "Lint", "ruff check", "ruff check"),
+    (
+        "pytest",
+        "Run test suite with coverage (`pytest`)",
+        "Pytest",
+        "pytest",
+        "pytest --cov",
+    ),
+    ("build", "Verify package build (`uv build`)", "Build", "uv build", "uv build"),
+)
 
 
 def _ci_status_class(outcome: str) -> str:
@@ -31,10 +50,7 @@ def render_ci_comment_markdown(
     """Render CI comment markdown using out/ci/ log files and outcomes."""
     ci_path = Path(ci_dir)
     outcomes = outcomes or {}
-    format_outcome = outcomes.get("format") or "unknown"
-    lint_outcome = outcomes.get("lint") or "unknown"
-    pytest_outcome = outcomes.get("pytest") or "unknown"
-    build_outcome = outcomes.get("build") or "unknown"
+    outcomes = {key: outcomes.get(key) or "unknown" for key, *_ in _CI_STEPS}
 
     marker = (
         f"<!-- ci-job-results-comment:commit={sha} -->"
@@ -53,58 +69,44 @@ def render_ci_comment_markdown(
     if run_url or sha:
         lines.append("")
 
+    nodes = " --> ".join(
+        f'{node}["{command}: {outcomes[key]}"]' for key, _, node, command, _ in _CI_STEPS
+    )
+    classes = "\n".join(
+        f"    class {node} {_ci_status_class(outcomes[key])};" for key, _, node, _, _ in _CI_STEPS
+    )
     lines.extend(
         [
             *render_markdown_table(
                 ["Step", "Status"],
-                [
-                    ["Check code formatting (`ruff format --check`)", f"`{format_outcome}`"],
-                    ["Lint with ruff (`ruff check`)", f"`{lint_outcome}`"],
-                    ["Run test suite with coverage (`pytest`)", f"`{pytest_outcome}`"],
-                    ["Verify package build (`uv build`)", f"`{build_outcome}`"],
-                ],
+                [[label, f"`{outcomes[key]}`"] for key, label, _, _, _ in _CI_STEPS],
             ),
             "",
             "```mermaid",
             "flowchart LR",
-            f'    Format["ruff format: {format_outcome}"] --> Lint["ruff check: {lint_outcome}"] --> Pytest["pytest: {pytest_outcome}"] --> Build["uv build: {build_outcome}"]',
+            f"    {nodes}",
             "    classDef success fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46;",
             "    classDef failure fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b;",
             "    classDef other fill:#f3f4f6,stroke:#9ca3af,stroke-width:2px,color:#374151;",
-            f"    class Format {_ci_status_class(format_outcome)};",
-            f"    class Lint {_ci_status_class(lint_outcome)};",
-            f"    class Pytest {_ci_status_class(pytest_outcome)};",
-            f"    class Build {_ci_status_class(build_outcome)};",
+            classes,
             "```",
             "",
         ]
     )
 
-    steps_map = [
-        ("format", "ruff format --check", format_outcome),
-        ("lint", "ruff check", lint_outcome),
-        ("pytest", "pytest --cov", pytest_outcome),
-        ("build", "uv build", build_outcome),
-    ]
-    for key, label, outcome in steps_map:
+    for key, _, _, _, label in _CI_STEPS:
         log_file = ci_path / f"{key}.txt"
         if log_file.is_file():
             text = log_file.read_text(encoding="utf-8", errors="replace")
             details = render_details_block(
                 f"<code>{label}</code> output",
                 text,
-                open_by_default=(outcome != "success"),
+                open_by_default=(outcomes[key] != "success"),
             )
             if details:
                 lines.extend([*details, ""])
 
     return "\n".join(lines).strip() + "\n"
-
-
-def _read_optional_text(path: str | Path | None) -> str:
-    if not path or not (file_path := Path(path)).is_file():
-        return ""
-    return file_path.read_text(encoding="utf-8", errors="replace")
 
 
 def _render_dual_method_body(
