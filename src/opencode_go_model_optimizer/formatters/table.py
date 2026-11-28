@@ -84,6 +84,18 @@ def _append_column(
         row.append(value)
 
 
+def format_method_banner(mode: str, *, fell_back: bool = False) -> str:
+    """Return a prominent header announcing the calculation method used."""
+    if fell_back:
+        return (
+            "Calculation method: ALLOWANCE "
+            "[FALLBACK from PARETO — Artificial Analysis benchmarks unavailable]"
+        )
+    if mode == "pareto":
+        return "Calculation method: PARETO (Artificial Analysis benchmarks + quota burn)"
+    return "Calculation method: ALLOWANCE (plan allowance & pricing heuristic; no benchmarks)"
+
+
 def render_table(headers: list[str], rows: list[list[str]]) -> str:
     """Render plain ASCII table with borders."""
     num_cols = len(headers)

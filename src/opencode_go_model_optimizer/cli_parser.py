@@ -108,6 +108,15 @@ def _build_parent_parsers() -> tuple[
         default="go",
         help="OpenCode plan tier (default: go)",
     )
+    plan.add_argument(
+        "--aa-cache-ttl",
+        type=int,
+        default=None,
+        help=(
+            "Cache TTL in seconds for Artificial Analysis benchmarks "
+            "(default: 0, or OPENCODE_GO_AA_CACHE_TTL)"
+        ),
+    )
 
     # Shared by select, rank, and diff.
     ranking = argparse.ArgumentParser(add_help=False)
@@ -116,6 +125,14 @@ def _build_parent_parsers() -> tuple[
         choices=["auto", "pareto", "allowance"],
         default="auto",
         help="Ranking mode (default: auto)",
+    )
+    ranking.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help=(
+            "Allow falling back from pareto mode to allowance mode when Artificial Analysis "
+            "benchmarks are unavailable (disabled by default)"
+        ),
     )
     ranking.add_argument(
         "--profile",

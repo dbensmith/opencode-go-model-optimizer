@@ -9,6 +9,7 @@ from opencode_go_model_optimizer.formatters.table import (
     _model_value_cells,
     _privacy_cell,
     _requests_cell,
+    format_method_banner,
     render_table,
 )
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -18,6 +19,8 @@ from opencode_go_model_optimizer.numbers import json_count, json_multiplier
 def format_rank_table(
     ranked_models: list[NormalizedModel],
     mode: str = "allowance",
+    *,
+    fell_back: bool = False,
 ) -> str:
     """Format full catalog ranking as an ASCII table."""
     is_pareto = mode == "pareto"
@@ -63,7 +66,8 @@ def format_rank_table(
         if any(has_value(m) for m in ranked_models):
             _append_column(headers, rows, header, (format_cell(m) for m in ranked_models))
 
-    return render_table(headers, rows)
+    banner = format_method_banner(mode, fell_back=fell_back)
+    return f"{banner}\n{render_table(headers, rows)}"
 
 
 def format_rank_json(ranked_models: list[NormalizedModel]) -> str:

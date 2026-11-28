@@ -623,8 +623,8 @@ def test_handle_rank_modes_and_formats(tmp_path, capsys):
     assert "Rank" in out
     assert "Model ID" in out
 
-    # --format table with pareto mode
-    rc = main(
+    # --format table with pareto mode fails without benchmarks unless --allow-fallback is passed
+    rc_no_bm = main(
         [
             "rank",
             "--format",
@@ -635,10 +635,33 @@ def test_handle_rank_modes_and_formats(tmp_path, capsys):
             str(snap_path),
         ]
     )
+    assert rc_no_bm == 1
+    assert "--allow-fallback" in capsys.readouterr().err
+
+    # --format table with pareto mode and benchmarked snapshot succeeds
+    bench_snap = load_snapshot(snap_path)
+    for idx, m in enumerate(bench_snap.models):
+        m.aa_iq = 60.0 - idx
+    bench_path = tmp_path / "bench_snap.json"
+    save_snapshot(bench_snap, bench_path)
+
+    rc = main(
+        [
+            "rank",
+            "--format",
+            "table",
+            "--mode",
+            "pareto",
+            "--snapshot",
+            str(bench_path),
+        ]
+    )
     assert rc == 0
-    out = capsys.readouterr().out
-    assert "BPE" in out
-    assert "IQ" in out
+    cap_pareto = capsys.readouterr()
+    assert "Calculation method: PARETO" in cap_pareto.out
+    assert "METHOD=PARETO" in cap_pareto.err
+    assert "BPE" in cap_pareto.out
+    assert "IQ" in cap_pareto.out
 
     # --format json with pareto mode
     rc = main(
@@ -649,7 +672,7 @@ def test_handle_rank_modes_and_formats(tmp_path, capsys):
             "--mode",
             "pareto",
             "--snapshot",
-            str(snap_path),
+            str(bench_path),
         ]
     )
     assert rc == 0
@@ -907,9 +930,10 @@ def test_cli_diff_table_json_and_exit_codes(tmp_path, capsys):
 
     rc_table = main(["diff", "--old", str(old_path), "--new", str(new_path)])
     assert rc_table == 0
-    table_out = capsys.readouterr().out
-    assert "Snapshot diff (plan: go)" in table_out
-    assert "Status changes:" in table_out
+    cap_diff = capsys.readouterr()
+    assert "Snapshot diff (plan: go, method: ALLOWANCE)" in cap_diff.out
+    assert "METHOD=ALLOWANCE" in cap_diff.err
+    assert "Status changes:" in cap_diff.out
 
     rc_json = main(["diff", "--old", str(old_path), "--new", str(new_path), "--format", "json"])
     assert rc_json == 0
@@ -1255,7 +1279,20 @@ def test_select_json_snapshot_provenance(tmp_path, capsys):
     snap_path = create_temp_snapshot(tmp_path)
     assert main(["select", "--snapshot", str(snap_path), "--format", "json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert list(data)[:6] == ["plan", "tiers", "names", "evaluated_at", "mode", "snapshot"]
+    assert list(data)[:9] == [
+        "plan",
+        "tiers",
+        "names",
+        "evaluated_at",
+        "mode",
+        "method",
+        "fallback",
+        "requested_mode",
+        "snapshot",
+    ]
+    assert data["method"] == "allowance"
+    assert data["fallback"] is False
+    assert data["requested_mode"] == "auto"
     assert data["snapshot"]["source"] == "file"
     assert data["snapshot"]["fetched_at"] == load_snapshot(snap_path).fetched_at
 
@@ -1293,3 +1330,120 @@ def test_parse_at_utc_normalization_and_validation():
 
     with pytest.raises(SystemExit):
         parse_args(["select", "--at", "not-a-timestamp"])
+
+
+def test_cli_pareto_fallback_is_opt_in_and_loudly_announced(tmp_path, capsys):
+    snap_path = create_temp_snapshot(tmp_path)
+
+    # Default --mode pareto without benchmarks fails loudly instead of silently falling back.
+    assert main(["select", "--snapshot", str(snap_path), "--mode", "pareto"]) == 1
+    err = capsys.readouterr().err
+    assert "BenchmarksUnavailableError" in err
+    assert "--allow-fallback" in err
+
+    # With --allow-fallback, JSON reports the actual method ('allowance') and fallback=True,
+    # and stderr loudly announces the fallback.
+    assert (
+        main(
+            [
+                "select",
+                "--snapshot",
+                str(snap_path),
+                "--mode",
+                "pareto",
+                "--allow-fallback",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    cap_json = capsys.readouterr()
+    payload = json.loads(cap_json.out)
+    assert payload["mode"] == "allowance"
+    assert payload["method"] == "allowance"
+    assert payload["fallback"] is True
+    assert payload["requested_mode"] == "pareto"
+    assert payload["settings"]["mode"] == "allowance"
+    assert payload["settings"]["allow_fallback"] is True
+    assert "WARNING: FALLBACK ACTIVE" in cap_json.err
+    assert "METHOD=ALLOWANCE" in cap_json.err
+
+    # Table output loudly displays the fallback banner.
+    assert (
+        main(
+            [
+                "select",
+                "--snapshot",
+                str(snap_path),
+                "--mode",
+                "pareto",
+                "--allow-fallback",
+                "--format",
+                "table",
+            ]
+        )
+        == 0
+    )
+    cap_tbl = capsys.readouterr()
+    assert "Calculation method: ALLOWANCE [FALLBACK from PARETO" in cap_tbl.out
+    assert "WARNING: FALLBACK ACTIVE" in cap_tbl.err
+
+
+def test_cli_auto_mode_fails_on_aa_error_unless_allow_fallback(tmp_path, capsys):
+    snap = load_snapshot(create_temp_snapshot(tmp_path))
+    snap.metadata.benchmark_error = "Artificial Analysis returned HTTP 429"
+    snap_path = tmp_path / "aa_err.json"
+    save_snapshot(snap, snap_path)
+
+    # Auto mode must not silently fall back when AA was requested and failed.
+    assert main(["select", "--snapshot", str(snap_path), "--mode", "auto"]) == 1
+    err = capsys.readouterr().err
+    assert "HTTP 429" in err
+    assert "--allow-fallback" in err
+
+    # With --allow-fallback, auto mode falls back loudly and embeds the AA error in stderr/JSON.
+    assert (
+        main(
+            [
+                "select",
+                "--snapshot",
+                str(snap_path),
+                "--mode",
+                "auto",
+                "--allow-fallback",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    cap = capsys.readouterr()
+    data = json.loads(cap.out)
+    assert data["mode"] == "allowance"
+    assert data["fallback"] is True
+    assert data["snapshot"]["benchmark_error"] == "Artificial Analysis returned HTTP 429"
+    assert "WARNING: FALLBACK ACTIVE" in cap.err
+    assert "HTTP 429" in cap.err
+
+
+def test_cli_allowance_skips_aa_and_passes_aa_cache_ttl(tmp_path, monkeypatch, capsys):
+    snap = load_snapshot(create_temp_snapshot(tmp_path))
+    seen: list[dict[str, object]] = []
+
+    def fake_fetch(**kwargs):
+        seen.append(kwargs)
+        return snap
+
+    monkeypatch.setattr("opencode_go_model_optimizer.cli.fetch_and_build_snapshot", fake_fetch)
+    monkeypatch.setenv("OPENCODE_GO_AA_CACHE_TTL", "28800")
+
+    assert main(["select", "--mode", "allowance", "--format", "compact"]) == 0
+    cap = capsys.readouterr()
+    assert "METHOD=ALLOWANCE" in cap.err
+    assert seen[-1].get("use_aa") is False
+    assert seen[-1].get("aa_cache_ttl") == 28800
+
+    assert main(["fetch", "--aa-cache-ttl", "600", "--out", str(tmp_path / "out.json")]) == 0
+    capsys.readouterr()
+    assert seen[-1].get("aa_cache_ttl") == 600

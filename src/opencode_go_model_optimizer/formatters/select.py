@@ -18,6 +18,7 @@ from opencode_go_model_optimizer.formatters.table import (
     _model_map,
     _model_value_cells,
     _next_change,
+    format_method_banner,
     render_table,
 )
 from opencode_go_model_optimizer.ingest.models import NormalizedModel
@@ -35,6 +36,9 @@ def format_select_json(
     snapshot_info: dict[str, Any] | None = None,
     settings: dict[str, Any] | None = None,
     names: dict[str, str] | None = None,
+    *,
+    requested_mode: str | None = None,
+    fell_back: bool = False,
 ) -> str:
     """Format tier selection as standard JSON.
 
@@ -46,6 +50,10 @@ def format_select_json(
         payload["names"] = {tier: names.get(tier, "") for tier in tiers}
     payload["evaluated_at"] = ts
     payload["mode"] = mode
+    payload["method"] = mode
+    payload["fallback"] = bool(fell_back)
+    if requested_mode is not None:
+        payload["requested_mode"] = requested_mode
     if snapshot_info is not None:
         payload["snapshot"] = snapshot_info
     if settings is not None:
@@ -63,6 +71,7 @@ def settings_payload(criteria: SelectionCriteria) -> dict[str, Any]:
     """Serialize the effective selection criteria for provenance in outputs."""
     return {
         "mode": criteria.mode,
+        "allow_fallback": criteria.allow_fallback,
         "top_n": criteria.top_n,
         "profile": criteria.profile,
         "price_basis": criteria.price_basis,
@@ -195,18 +204,32 @@ def format_select_env(
     tiers: dict[str, str],
     fallbacks: dict[str, list[str]] | None = None,
     names: dict[str, str] | None = None,
+    *,
+    mode: str | None = None,
+    fell_back: bool = False,
 ) -> str:
     """Format tier selection as shell environment variable assignments."""
-    return _format_tier_lines(tiers, fallbacks, names, _env_line)
+    out = _format_tier_lines(tiers, fallbacks, names, _env_line)
+    if mode is not None:
+        fb = "true" if fell_back else "false"
+        out += f'\nOPENCODE_MODEL_METHOD="{mode}"\nOPENCODE_MODEL_FALLBACK="{fb}"'
+    return out
 
 
 def format_select_github_output(
     tiers: dict[str, str],
     fallbacks: dict[str, list[str]] | None = None,
     names: dict[str, str] | None = None,
+    *,
+    mode: str | None = None,
+    fell_back: bool = False,
 ) -> str:
     """Format tier selection as GitHub Actions key=value output lines."""
-    return _format_tier_lines(tiers, fallbacks, names, _github_output_line)
+    out = _format_tier_lines(tiers, fallbacks, names, _github_output_line)
+    if mode is not None:
+        fb = "true" if fell_back else "false"
+        out += f"\nmethod={mode}\nfallback={fb}"
+    return out
 
 
 def format_select_table(
@@ -215,8 +238,13 @@ def format_select_table(
     plan: str = "go",
     explain: bool = False,
     criteria: SelectionCriteria | None = None,
+    *,
+    mode: str | None = None,
+    fell_back: bool = False,
 ) -> str:
     """Format tier selection as a human-readable ASCII table."""
+    actual_mode = mode or (criteria.mode if criteria is not None else "allowance")
+    banner = format_method_banner(actual_mode, fell_back=fell_back)
     profile, token_mix, basis = _burn_basis(criteria)
     model_map = _model_map(models)
 
@@ -270,4 +298,4 @@ def format_select_table(
                 row.append(format_multiplier(m.price_multiplier, _next_change(m, criteria)))
         rows.append(row)
 
-    return render_table(headers, rows)
+    return f"{banner}\n{render_table(headers, rows)}"

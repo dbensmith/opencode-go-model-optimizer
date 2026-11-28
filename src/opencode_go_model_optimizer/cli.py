@@ -5,6 +5,7 @@ import math
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -26,8 +27,9 @@ from opencode_go_model_optimizer.cli_parser import (
 from opencode_go_model_optimizer.engine.criteria import SelectionCriteria, passes_privacy
 from opencode_go_model_optimizer.engine.diff import diff_snapshots
 from opencode_go_model_optimizer.engine.tiers import (
+    BenchmarksUnavailableError,
     TierSelection,
-    rank_catalog,
+    rank_catalog_with_method,
     resolve_mode,
     select_tiers,
 )
@@ -63,25 +65,36 @@ from opencode_go_model_optimizer.ingest.snapshot import (
 from opencode_go_model_optimizer.report import build_report, write_report
 
 
-def _env_cache_ttl() -> int:
-    """Read OPENCODE_GO_CACHE_TTL, returning 0 (with a warning) on invalid values."""
-    raw = os.environ.get("OPENCODE_GO_CACHE_TTL", "0")
+def _env_non_negative_int(env_var: str) -> int:
+    """Read a non-negative integer env var, returning 0 (with a warning) on invalid values."""
+    raw = os.environ.get(env_var, "0")
     try:
         value = int(raw)
     except ValueError:
         value = -1
     if value < 0:
         print(
-            f"{_PROG}: warning: invalid OPENCODE_GO_CACHE_TTL={raw!r}; using 0",
+            f"{_PROG}: warning: invalid {env_var}={raw!r}; using 0",
             file=sys.stderr,
         )
         return 0
     return value
 
 
+def _env_cache_ttl() -> int:
+    """Read OPENCODE_GO_CACHE_TTL, returning 0 (with a warning) on invalid values."""
+    return _env_non_negative_int("OPENCODE_GO_CACHE_TTL")
+
+
 def _cache_ttl(args: argparse.Namespace) -> int:
     """Return --cache-ttl, falling back to OPENCODE_GO_CACHE_TTL when the flag was omitted."""
     return _env_cache_ttl() if args.cache_ttl is None else args.cache_ttl
+
+
+def _aa_cache_ttl(args: argparse.Namespace) -> int:
+    """Return --aa-cache-ttl, falling back to OPENCODE_GO_AA_CACHE_TTL when omitted."""
+    val = getattr(args, "aa_cache_ttl", None)
+    return _env_non_negative_int("OPENCODE_GO_AA_CACHE_TTL") if val is None else val
 
 
 class LoadedSnapshot(NamedTuple):
@@ -117,6 +130,8 @@ def _load_or_fetch_snapshot(
     snapshot_path: str | None = None,
     plan: str = "go",
     cache_ttl: int = 0,
+    aa_cache_ttl: int = 0,
+    use_aa: bool = True,
 ) -> LoadedSnapshot:
     """Retrieve a snapshot from a file if provided, otherwise fetch/cache live."""
     if snapshot_path:
@@ -126,7 +141,12 @@ def _load_or_fetch_snapshot(
         return LoadedSnapshot(cached, "cache")
 
     try:
-        snap = fetch_and_build_snapshot(plan=plan)
+        fetch_kwargs: dict[str, object] = {"plan": plan}
+        if not use_aa:
+            fetch_kwargs["use_aa"] = False
+        if aa_cache_ttl > 0:
+            fetch_kwargs["aa_cache_ttl"] = aa_cache_ttl
+        snap = fetch_and_build_snapshot(**fetch_kwargs)  # type: ignore[arg-type]
     except (httpx.HTTPError, OSError, ValueError) as exc:
         stale = load_cached_snapshot(plan=plan, ttl_seconds=math.inf)
         if stale is None:
@@ -180,6 +200,7 @@ def _criteria_from_args(args: argparse.Namespace, mode: str) -> SelectionCriteri
     """Build selection criteria from parsed select/rank arguments and the resolved mode."""
     return SelectionCriteria(
         mode=mode,
+        allow_fallback=getattr(args, "allow_fallback", False),
         top_n=getattr(args, "top_n", None) or 1,
         preferred_tiers=_parse_preferred_tiers(getattr(args, "prefer", None)),
         skip_models=frozenset(args.skip),
@@ -225,6 +246,49 @@ def _warn_unmatched_preferred(
             )
 
 
+def _announce_method(
+    *,
+    method: str,
+    requested_mode: str,
+    fell_back: bool,
+    benchmark_source: str = "none",
+    benchmark_error: str | None = None,
+) -> None:
+    """Loudly announce on stderr which calculation method actually produced the output."""
+    if fell_back:
+        detail = f" ({benchmark_error})" if benchmark_error else ""
+        print(
+            f"{_PROG}: WARNING: FALLBACK ACTIVE — requested mode '{requested_mode}', "
+            f"calculated with METHOD={method.upper()} "
+            f"(Artificial Analysis benchmarks unavailable{detail})",
+            file=sys.stderr,
+        )
+    elif method == "pareto":
+        print(
+            f"{_PROG}: calculated with METHOD=PARETO "
+            f"(Artificial Analysis benchmarks; source={benchmark_source})",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"{_PROG}: calculated with METHOD=ALLOWANCE "
+            "(plan allowance & pricing heuristic; no benchmarks)",
+            file=sys.stderr,
+        )
+
+
+def _enrich_benchmark_error(
+    exc: BenchmarksUnavailableError, benchmark_error: str | None
+) -> BenchmarksUnavailableError:
+    if not benchmark_error or benchmark_error in str(exc):
+        return exc
+    return BenchmarksUnavailableError(
+        "Pareto mode requires Artificial Analysis benchmarks, but no eligible paid models "
+        f"have benchmark data ({benchmark_error}); pass --allow-fallback to fall back to "
+        "allowance mode, or use --mode allowance"
+    )
+
+
 def _format_select_output(
     fmt: str,
     loaded: LoadedSnapshot,
@@ -233,12 +297,22 @@ def _format_select_output(
     plan: str,
     mode: str,
     explain: bool,
+    *,
+    requested_mode: str | None = None,
+    fell_back: bool = False,
 ) -> str:
     """Format tier selection results according to --format."""
     tiers = selection.primary
     fallbacks = selection.candidates if criteria.top_n > 1 else None
     names = tier_display_names(tiers, selection.models)
     snap = loaded.snapshot
+    snapshot_info: dict[str, object] = {
+        "source": loaded.source,
+        "fetched_at": snap.fetched_at,
+        "benchmark_source": snap.metadata.benchmark_source,
+    }
+    if snap.metadata.benchmark_error:
+        snapshot_info["benchmark_error"] = snap.metadata.benchmark_error
 
     formatters: dict[str, Callable[[], str]] = {
         "json": lambda: format_select_json(
@@ -249,19 +323,25 @@ def _format_select_output(
             profile=criteria.profile,
             fallbacks=fallbacks,
             names=names,
-            snapshot_info={
-                "source": loaded.source,
-                "fetched_at": snap.fetched_at,
-                "benchmark_source": snap.metadata.benchmark_source,
-            },
+            snapshot_info=snapshot_info,
             settings=settings_payload(criteria),
+            requested_mode=requested_mode,
+            fell_back=fell_back,
         ),
         "table": lambda: format_select_table(
-            tiers, selection.models, plan=plan, explain=explain, criteria=criteria
+            tiers,
+            selection.models,
+            plan=plan,
+            explain=explain,
+            criteria=criteria,
+            mode=mode,
+            fell_back=fell_back,
         ),
-        "env": lambda: format_select_env(tiers, fallbacks=fallbacks, names=names),
+        "env": lambda: format_select_env(
+            tiers, fallbacks=fallbacks, names=names, mode=mode, fell_back=fell_back
+        ),
         "github-output": lambda: format_select_github_output(
-            tiers, fallbacks=fallbacks, names=names
+            tiers, fallbacks=fallbacks, names=names, mode=mode, fell_back=fell_back
         ),
         "compact": lambda: format_select_compact(tiers, names=names),
     }
@@ -272,30 +352,55 @@ def _prepare_selection_context(
     args: argparse.Namespace,
 ) -> tuple[LoadedSnapshot, list[NormalizedModel], str, str, SelectionCriteria]:
     """Load snapshot, apply effective plan, resolve mode, and build SelectionCriteria."""
-    loaded = _load_or_fetch_snapshot(args.snapshot, plan=args.plan, cache_ttl=_cache_ttl(args))
+    loaded = _load_or_fetch_snapshot(
+        args.snapshot,
+        plan=args.plan,
+        cache_ttl=_cache_ttl(args),
+        aa_cache_ttl=_aa_cache_ttl(args),
+        use_aa=(args.mode != "allowance"),
+    )
     snap = loaded.snapshot
     plan = effective_plan(snap.plan, args.plan, snap.models)
     models = apply_plan(snap.models, plan)
-    mode = resolve_mode(args.mode, models)
+    if args.mode == "auto" and snap.metadata.benchmark_error:
+        mode = "pareto"
+    else:
+        mode = resolve_mode(args.mode, models)
     return loaded, models, plan, mode, _criteria_from_args(args, mode)
 
 
 def handle_select(args: argparse.Namespace) -> int:
     """Handle the 'select' command."""
-    loaded, models, plan, mode, criteria = _prepare_selection_context(args)
-    selection = select_tiers(models, criteria)
-    _warn_unmatched_preferred(models, selection, criteria)
+    loaded, models, plan, _, criteria = _prepare_selection_context(args)
+    snap = loaded.snapshot
+    try:
+        selection = select_tiers(models, criteria)
+    except BenchmarksUnavailableError as exc:
+        raise _enrich_benchmark_error(exc, snap.metadata.benchmark_error) from exc
+    actual_method = selection.method
+    fell_back = selection.fell_back
+    effective_criteria = replace(criteria, mode=actual_method)
+    _warn_unmatched_preferred(models, selection, effective_criteria)
 
     out = _format_select_output(
         args.format,
         loaded=loaded,
         selection=selection,
-        criteria=criteria,
+        criteria=effective_criteria,
         plan=plan,
-        mode=mode,
+        mode=actual_method,
         explain=args.explain,
+        requested_mode=args.mode,
+        fell_back=fell_back,
     )
     _write_output(out, args.output)
+    _announce_method(
+        method=actual_method,
+        requested_mode=args.mode,
+        fell_back=fell_back,
+        benchmark_source=snap.metadata.benchmark_source,
+        benchmark_error=snap.metadata.benchmark_error,
+    )
 
     empty = [t for t in _TIERS if not selection.primary.get(t)]
     if args.strict and empty:
@@ -309,12 +414,25 @@ def handle_select(args: argparse.Namespace) -> int:
 
 def handle_rank(args: argparse.Namespace) -> int:
     """Handle the 'rank' command."""
-    _, models, _, mode, criteria = _prepare_selection_context(args)
-    ranked = rank_catalog(models, criteria)
+    loaded, models, _, _, criteria = _prepare_selection_context(args)
+    snap = loaded.snapshot
+    try:
+        ranked, actual_method, fell_back = rank_catalog_with_method(models, criteria)
+    except BenchmarksUnavailableError as exc:
+        raise _enrich_benchmark_error(exc, snap.metadata.benchmark_error) from exc
     out = (
-        format_rank_json(ranked) if args.format == "json" else format_rank_table(ranked, mode=mode)
+        format_rank_json(ranked)
+        if args.format == "json"
+        else format_rank_table(ranked, mode=actual_method, fell_back=fell_back)
     )
     _write_output(out, args.output)
+    _announce_method(
+        method=actual_method,
+        requested_mode=args.mode,
+        fell_back=fell_back,
+        benchmark_source=snap.metadata.benchmark_source,
+        benchmark_error=snap.metadata.benchmark_error,
+    )
     return 0
 
 
@@ -323,24 +441,44 @@ def handle_diff(args: argparse.Namespace) -> int:
     target_plan = args.plan
     old_snap = load_snapshot(args.old)
     new_snap = _load_or_fetch_snapshot(
-        args.new, plan=target_plan, cache_ttl=_cache_ttl(args)
-    ).snapshot
-    diff = diff_snapshots(
-        old_snap,
-        new_snap,
-        mode=args.mode,
+        args.new,
         plan=target_plan,
-        profile=args.profile,
-    )
+        cache_ttl=_cache_ttl(args),
+        aa_cache_ttl=_aa_cache_ttl(args),
+        use_aa=(args.mode != "allowance"),
+    ).snapshot
+    diff_mode = "pareto" if args.mode == "auto" and new_snap.metadata.benchmark_error else args.mode
+    try:
+        diff = diff_snapshots(
+            old_snap,
+            new_snap,
+            mode=diff_mode,
+            plan=target_plan,
+            profile=args.profile,
+            allow_fallback=args.allow_fallback,
+        )
+    except BenchmarksUnavailableError as exc:
+        raise _enrich_benchmark_error(exc, new_snap.metadata.benchmark_error) from exc
     out = format_diff_json(diff) if args.format == "json" else format_diff_table(diff)
     _write_output(out, args.output)
+    _announce_method(
+        method=diff.mode,
+        requested_mode=args.mode,
+        fell_back=diff.fallback,
+        benchmark_source=new_snap.metadata.benchmark_source,
+        benchmark_error=new_snap.metadata.benchmark_error,
+    )
     return 2 if args.fail_on_change and diff.has_changes() else 0
 
 
 def handle_fetch(args: argparse.Namespace) -> int:
     """Handle the 'fetch' command."""
     target_plan = args.plan
-    snap = fetch_and_build_snapshot(plan=target_plan)
+    aa_ttl = _aa_cache_ttl(args)
+    snap = fetch_and_build_snapshot(
+        plan=target_plan,
+        **({"aa_cache_ttl": aa_ttl} if aa_ttl > 0 else {}),  # type: ignore[arg-type]
+    )
     _print_snapshot_warnings(snap)
     save_snapshot(snap, args.out)
     print(

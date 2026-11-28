@@ -1,14 +1,15 @@
 name: PR CI
 
 # Pull request checks only: runs the shared test/lint/build suite (reusable
-# ci.yml) and posts the results as a PR comment, then runs the optimizer on
-# the PR code and posts its actual output as a second PR comment so a reviewer
-# sees the tier selections this PR would produce. Repository secrets are
-# available to same-repo PRs, so the AA key is loaded from 1Password and the
-# optimizer runs with live benchmarks; fork PRs receive no secrets, skip
-# 1Password and fall back to allowance ranking. Only the issue upsert and the
-# Pages deploy can never run on a PR; they live in run-optimizer.yml, which
-# triggers only on push/schedule/workflow_dispatch.
+# ci.yml) and posts the results as a PR comment, then runs both optimizer
+# calculation methods (Pareto and Allowance, without fallback) on the PR code
+# and posts both outputs as a second PR comment so a reviewer sees both methods
+# and sees immediately when Artificial Analysis fails. Repository secrets are
+# available to same-repo PRs, so the AA key is loaded from 1Password and cached
+# across 8-hour UTC slots to stay well within AA's 100 req/day free limit; fork
+# PRs receive no secrets, skip 1Password, and mark Pareto unavailable without
+# falling back. Only the issue upsert and the Pages deploy never run on a PR;
+# they live in run-optimizer.yml, which triggers on push/schedule/dispatch.
 
 on:
   pull_request:
@@ -44,6 +45,12 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-env
 
+      - name: Compute 8-hour AA cache slot
+        id: aa_slot
+        run: |
+          slot="$(date -u +%Y-%m-%d)-s$(($(date -u +%-H) / 8))"
+          echo "slot=$slot" >> "$GITHUB_OUTPUT"
+
       - name: Detect 1Password configuration
         id: opgate
         env:
@@ -54,7 +61,7 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::1Password configuration is unavailable to this run (fork PR?); the optimizer will run without Artificial Analysis benchmarks."
+            echo "::notice::1Password configuration is unavailable to this run (fork PR?); Pareto method will be unavailable without fallback."
           fi
 
       # Set OP_SERVICE_ACCOUNT_TOKEN in repository secrets and AA_SECRET_REF
@@ -69,22 +76,95 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           AA_API_KEY: ${{ secrets.AA_SECRET_REF || vars.AA_SECRET_REF }}
 
-      # Same command and CI privacy flags as the scheduled run in
-      # run-optimizer.yml, so the comment shows the selections this PR would
-      # publish. Without the AA key the engine falls back to allowance ranking.
-      - name: Run optimizer
-        id: optimizer
+      - name: Restore Artificial Analysis cache
+        id: aa_cache
+        if: steps.opgate.outputs.available == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
+          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+          restore-keys: |
+            aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-
+
+      - name: Fetch snapshot
+        id: fetch
         continue-on-error: true
+        env:
+          OPENCODE_GO_AA_CACHE_TTL: "28800"
         run: |
           mkdir -p out
           status=0
-          uv run opencode-go-model-optimizer select --plan go --mode pareto \
-            --format table --explain --allow-global-region --allow-free-training \
-            > out/optimizer.txt 2> out/optimizer.err || status=$?
+          uv run opencode-go-model-optimizer fetch --plan go --out out/snapshot.json 2> out/fetch.log || status=$?
+          cat out/fetch.log >&2 || true
+          bench_src="none"
+          if [[ -s out/snapshot.json ]]; then
+            bench_src="$(uv run python -c "import json; d = json.load(open('out/snapshot.json')); print(d.get('metadata', {}).get('benchmark_source', 'none'))" 2>/dev/null || echo none)"
+          fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
-          cat out/optimizer.txt
-          cat out/optimizer.err >&2
+          echo "benchmark_source=$bench_src" >> "$GITHUB_OUTPUT"
           exit "$status"
+
+      - name: Check AA cache file
+        id: aa_file
+        if: steps.opgate.outputs.available == 'true' && steps.aa_cache.outputs.cache-matched-key == ''
+        run: |
+          if [[ -s ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save Artificial Analysis cache
+        if: steps.opgate.outputs.available == 'true' && steps.aa_cache.outputs.cache-matched-key == '' && steps.aa_file.outputs.exists == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/opencode-go-model-optimizer/aa-benchmarks.json
+          key: aa-benchmarks-v1-${{ hashFiles('src/opencode_go_model_optimizer/ingest/artificial_analysis.py') }}-${{ steps.aa_slot.outputs.slot }}-${{ github.run_id }}
+
+      # Run BOTH calculation methods against the same snapshot without fallback
+      # so any Artificial Analysis failure is immediately obvious.
+      - name: Run optimizer (Pareto & Allowance, no fallback)
+        id: optimizer
+        continue-on-error: true
+        env:
+          AA_AVAILABLE: ${{ steps.opgate.outputs.available }}
+        run: |
+          mkdir -p out
+          pareto_status=0
+          allowance_status=0
+
+          uv run opencode-go-model-optimizer select --plan go --mode pareto --snapshot out/snapshot.json \
+            --format table --explain --allow-global-region --allow-free-training \
+            > out/pareto.txt 2> out/pareto.err || pareto_status=$?
+
+          uv run opencode-go-model-optimizer select --plan go --mode allowance --snapshot out/snapshot.json \
+            --format table --explain --allow-global-region --allow-free-training \
+            > out/allowance.txt 2> out/allowance.err || allowance_status=$?
+
+          cp out/pareto.txt out/pareto_combined.txt
+          if [[ -s out/pareto.err ]]; then
+            printf '\n--- stderr ---\n' >> out/pareto_combined.txt
+            cat out/pareto.err >> out/pareto_combined.txt
+          fi
+
+          cp out/allowance.txt out/allowance_combined.txt
+          if [[ -s out/allowance.err ]]; then
+            printf '\n--- stderr ---\n' >> out/allowance_combined.txt
+            cat out/allowance.err >> out/allowance_combined.txt
+          fi
+
+          echo "pareto_status=$pareto_status" >> "$GITHUB_OUTPUT"
+          echo "allowance_status=$allowance_status" >> "$GITHUB_OUTPUT"
+          cat out/pareto.txt out/allowance.txt
+          cat out/pareto.err out/allowance.err >&2
+
+          if [[ "$allowance_status" -ne 0 ]]; then
+            exit "$allowance_status"
+          fi
+          if [[ "$AA_AVAILABLE" == "true" && "$pareto_status" -ne 0 ]]; then
+            exit "$pareto_status"
+          fi
 
       - name: Render optimizer output comment
         if: always()
@@ -94,24 +174,26 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           AA_AVAILABLE: ${{ steps.opgate.outputs.available }}
-          OPTIMIZER_STATUS: ${{ steps.optimizer.outputs.status }}
+          BENCH_SOURCE: ${{ steps.fetch.outputs.benchmark_source }}
+          PARETO_STATUS: ${{ steps.optimizer.outputs.pareto_status }}
+          ALLOWANCE_STATUS: ${{ steps.optimizer.outputs.allowance_status }}
         run: |
           run_url="${SERVER_URL}/${GH_REPO}/actions/runs/${RUN_ID}"
-          if [[ -s out/optimizer.err ]]; then
-            printf '\n--- stderr ---\n' >> out/optimizer.txt
-            cat out/optimizer.err >> out/optimizer.txt
-          fi
-          if [[ "$AA_AVAILABLE" == "true" ]]; then
-            benchmarks=live
-          else
+          if [[ "$AA_AVAILABLE" != "true" ]]; then
             benchmarks=unavailable
+          elif [[ "$BENCH_SOURCE" == "aa_cache" ]]; then
+            benchmarks=cache
+          else
+            benchmarks=live
           fi
           uv run python scripts/render_optimizer_issue.py \
-            --optimizer-output out/optimizer.txt \
+            --pareto-output out/pareto_combined.txt \
+            --pareto-status "$PARETO_STATUS" \
+            --allowance-output out/allowance_combined.txt \
+            --allowance-status "$ALLOWANCE_STATUS" \
+            --fetch-log out/fetch.log \
             --run-url "$run_url" \
             --sha "$COMMIT_SHA" \
-            --status "$OPTIMIZER_STATUS" \
-            --command "uv run opencode-go-model-optimizer select --plan go --mode pareto --format table --explain --allow-global-region --allow-free-training" \
             --benchmarks "$benchmarks" \
             --output out/comment.md
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY"
@@ -151,5 +233,5 @@ jobs:
       - name: Fail if the optimizer run failed
         if: steps.optimizer.outcome == 'failure'
         run: |
-          echo "::error::The optimizer run failed; its output was posted as a PR comment."
+          echo "::error::The optimizer run failed (check Pareto/Allowance output in PR comment)."
           exit 1

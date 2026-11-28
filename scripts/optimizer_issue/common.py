@@ -111,6 +111,10 @@ def _render_report_header(
     """Render the common metadata header shared by issue and analysis pages."""
     plan = payload.get("plan", "go")
     mode = payload.get("mode", default_mode)
+    method = payload.get("method") or mode
+    fell_back = bool(payload.get("fallback"))
+    requested_mode = payload.get("requested_mode") or "pareto"
+    method_label = f"{method} (FALLBACK from {requested_mode})" if fell_back else str(method)
     evaluated_at = payload.get("evaluated_at", "-")
     snapshot = payload.get("snapshot") or {}
     snap_source = snapshot.get("source", "-")
@@ -121,8 +125,19 @@ def _render_report_header(
         heading,
         "",
         f"- **Updated**: `{evaluated_at}`",
-        f"- **Plan**: `{plan}` | **Mode**: `{mode}` | **Snapshot**: `{snap_source}` (`{fetched_at}`) | **Benchmarks**: `{benchmark_source}`",
+        f"- **Plan**: `{plan}` | **Mode**: `{mode}` | **Method**: `{method_label}` | **Snapshot**: `{snap_source}` (`{fetched_at}`) | **Benchmarks**: `{benchmark_source}`",
     ]
+    if fell_back:
+        err_detail = snapshot.get("benchmark_error")
+        suffix = f" ({err_detail})" if err_detail else ""
+        lines.extend(
+            [
+                "",
+                "> [!WARNING]",
+                f"> **Fallback active**: requested `{requested_mode}`, calculated with `{method}` "
+                f"because Artificial Analysis benchmarks were unavailable{suffix}.",
+            ]
+        )
     if run_url:
         lines.append(f"- **Workflow Run**: {run_url}")
     if site_base:

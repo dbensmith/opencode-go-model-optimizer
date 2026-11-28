@@ -14,7 +14,9 @@ import httpx
 
 from opencode_go_model_optimizer.ingest.artificial_analysis import (
     fetch_aa_benchmarks,
+    load_cached_aa_benchmarks,
     lookup_aa_benchmark,
+    save_cached_aa_benchmarks,
 )
 from opencode_go_model_optimizer.ingest.catalogue import (
     DEFAULT_MODELS_HTTP_URL,
@@ -226,6 +228,7 @@ def create_snapshot(
     source_docs: str = "live",
     models_dev_metadata: dict[str, dict[str, Any]] | None = None,
     benchmark_source: str = "none",
+    benchmark_error: str | None = None,
     warnings: list[str] | None = None,
     privacy: dict[str, dict[str, Any]] | None = None,
     sources: dict[str, dict[str, Any]] | None = None,
@@ -258,6 +261,7 @@ def create_snapshot(
             source_docs=source_docs,
             catalogue_count=len(models),
             benchmark_source=benchmark_source,
+            benchmark_error=benchmark_error,
             sources=dict(sources or {}),
         ),
         warnings=all_warnings,
@@ -372,11 +376,13 @@ def fetch_and_build_snapshot(
     plan: str = "go",
     client: httpx.Client | None = None,
     use_aa: bool = True,
+    aa_cache_ttl: float = 0,
 ) -> Snapshot:
     """Fetch live data from catalogue and docs and build a Snapshot.
 
-    Benchmarks come only from a live Artificial Analysis fetch (needs ``AA_API_KEY`` and
-    ``use_aa``); otherwise ``benchmark_source`` is ``"none"``.
+    Benchmarks come from Artificial Analysis when ``AA_API_KEY`` and ``use_aa`` are set
+    (using cached benchmarks when ``aa_cache_ttl > 0`` and fresh, otherwise fetching live);
+    otherwise ``benchmark_source`` is ``"none"``.
     """
     recorder = _SourceRecorder()
     with client_scope(client) as active_client:
@@ -385,7 +391,9 @@ def fetch_and_build_snapshot(
         hooks["response"] = [*original_hooks, recorder]
         active_client.event_hooks = hooks
         try:
-            return _fetch_and_build(plan, active_client, use_aa, recorder)
+            return _fetch_and_build(
+                plan, active_client, use_aa, recorder, aa_cache_ttl=aa_cache_ttl
+            )
         finally:
             hooks = active_client.event_hooks
             hooks["response"] = original_hooks
@@ -398,9 +406,17 @@ def _format_error_detail(errors: list[str]) -> str:
 
 
 def _fetch_and_build(
-    plan: str, active_client: httpx.Client, use_aa: bool, recorder: _SourceRecorder
+    plan: str,
+    active_client: httpx.Client,
+    use_aa: bool,
+    recorder: _SourceRecorder,
+    *,
+    aa_cache_ttl: float = 0,
 ) -> Snapshot:
     aa_key = os.environ.get("AA_API_KEY") if use_aa else None
+    cached_aa = (
+        load_cached_aa_benchmarks(ttl_seconds=aa_cache_ttl) if aa_key and aa_cache_ttl > 0 else None
+    )
     aa_errors: list[str] = []
     console_errors: list[str] = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -412,7 +428,7 @@ def _fetch_and_build(
         )
         fut_aa = (
             executor.submit(fetch_aa_benchmarks, aa_key, client=active_client, errors=aa_errors)
-            if aa_key
+            if aa_key and cached_aa is None
             else None
         )
 
@@ -420,7 +436,7 @@ def _fetch_and_build(
         docs_text = fut_docs.result()
         models_dev_metadata = fut_models_dev.result()
         console_profiles = fut_console.result()
-        aa_benchmarks = fut_aa.result() if fut_aa is not None else None
+        fetched_aa = fut_aa.result() if fut_aa is not None else None
 
     apply_request_estimates(models, console_profiles)
 
@@ -431,12 +447,25 @@ def _fetch_and_build(
             "could not read the console request profiles; models without "
             f"go.requests have no request estimates{detail}; quota burn falls back to tokens"
         )
-    if aa_key and not aa_benchmarks:
-        detail = _format_error_detail(aa_errors)
-        warnings.append(
-            "AA_API_KEY is set but no Artificial Analysis benchmarks could be fetched"
-            f"{detail}; falling back to allowance ranking"
-        )
+
+    aa_benchmarks: dict[str, dict[str, Any]] | None = None
+    benchmark_source = "none"
+    benchmark_error: str | None = None
+    if cached_aa is not None:
+        aa_benchmarks = cached_aa
+        benchmark_source = "aa_cache"
+    elif aa_key:
+        if fetched_aa:
+            aa_benchmarks = fetched_aa
+            save_cached_aa_benchmarks(aa_benchmarks)
+            benchmark_source = "aa_live"
+        else:
+            benchmark_error = (
+                "; ".join(aa_errors) if aa_errors else "no Artificial Analysis benchmarks returned"
+            )
+            warnings.append(
+                f"AA_API_KEY is set but no Artificial Analysis benchmarks could be fetched ({benchmark_error})"
+            )
 
     return create_snapshot(
         models,
@@ -444,7 +473,8 @@ def _fetch_and_build(
         aa_benchmarks=aa_benchmarks,
         models_dev_metadata=models_dev_metadata,
         privacy=parse_privacy(docs_text),
-        benchmark_source="aa_live" if aa_benchmarks else "none",
+        benchmark_source=benchmark_source,
+        benchmark_error=benchmark_error,
         warnings=warnings,
         sources=recorder.sources,
     )

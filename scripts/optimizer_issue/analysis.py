@@ -17,6 +17,7 @@ from opencode_go_model_optimizer.formatters.markdown import (
     format_cost_value,
     format_float,
     is_number,
+    render_details_block,
     render_markdown_table,
     render_mermaid_flowchart,
     render_mermaid_xychart,
@@ -130,6 +131,9 @@ def _render_free_matrix_section(free_matrix: list[dict[str, Any]]) -> list[str]:
 def _render_multi_plan_section(
     plan_payloads: dict[str, dict[str, Any]],
     generated_svgs: list[str],
+    *,
+    heading: str = "### 3. Multi-Plan Tier Selections & Top-3 Fallbacks",
+    include_chart_image: bool = True,
 ) -> list[str]:
     table_rows: list[list[str]] = []
     nodes: list[tuple[str, str]] = []
@@ -175,7 +179,7 @@ def _render_multi_plan_section(
         "",
         "---",
         "",
-        "### 3. Multi-Plan Tier Selections & Top-3 Fallbacks",
+        heading,
         "",
         *render_markdown_table(
             ["Plan", "Tier", "Pick", "Fallbacks", "Allowance", "Output Cost", "Burn %"],
@@ -198,7 +202,7 @@ def _render_multi_plan_section(
             ]
         )
 
-    if "multi-plan-comparison.svg" in generated_svgs:
+    if include_chart_image and "multi-plan-comparison.svg" in generated_svgs:
         lines.extend(["", "![Multi-Plan Comparison](charts/multi-plan-comparison.svg)"])
     return lines
 
@@ -272,8 +276,13 @@ def render_analysis_markdown(
     run_url: str | None = None,
     charts_dir: str | Path | None = None,
     site_url: str | None = None,
+    *,
+    pareto_error: str = "",
+    allowance_select_payload: dict[str, Any] | None = None,
+    allowance_rank_models: list[dict[str, Any]] | None = None,
+    allowance_plan_payloads: dict[str, dict[str, Any]] | None = None,
 ) -> str:
-    """Render comprehensive live Pareto analysis and catalog markdown (analysis.md)."""
+    """Render comprehensive live Pareto and Allowance analysis markdown (analysis.md)."""
     site_base = _normalize_site_url(site_url)
 
     lines = _render_report_header(
@@ -287,12 +296,13 @@ def render_analysis_markdown(
     lines.extend(["", "---", "", "### 1. Live Pareto Frontier & Quality/Value Bands", ""])
 
     pareto_models, has_aa = _collect_pareto_models(rank_models)
+    pareto_failed = bool(pareto_error) or (not has_aa and allowance_select_payload is not None)
     top_quality = _model_quality(pareto_models[0]) if pareto_models else 0.0
     heavy_cutoff = HEAVY_QUALITY_RATIO * top_quality
     balanced_cutoff = BALANCED_QUALITY_RATIO * top_quality
 
     generated_svgs: list[str] = []
-    if charts_dir:
+    if charts_dir and not pareto_failed:
         generated_svgs = generate_analysis_svgs(
             charts_dir=Path(charts_dir),
             pareto_models=pareto_models,
@@ -302,53 +312,99 @@ def render_analysis_markdown(
             heavy_cutoff=heavy_cutoff,
             balanced_cutoff=balanced_cutoff,
         )
+    elif charts_dir and allowance_plan_payloads:
+        generated_svgs = generate_analysis_svgs(
+            charts_dir=Path(charts_dir),
+            pareto_models=[],
+            rank_models=allowance_rank_models or [],
+            plan_payloads=allowance_plan_payloads,
+            top_quality=0.0,
+            heavy_cutoff=0.0,
+            balanced_cutoff=0.0,
+        )
 
-    lines.extend(
-        [
-            f"- **Top Frontier Quality**: `{top_quality:.1f}`",
-            f"- **Heavy Band Cutoff (≥ {HEAVY_QUALITY_RATIO:.0%})**: `{heavy_cutoff:.1f}`",
-            f"- **Balanced Band Cutoff (≥ {BALANCED_QUALITY_RATIO:.0%})**: `{balanced_cutoff:.1f}`",
-            "",
-            *render_markdown_table(
-                [
-                    "Model ID",
-                    "AA IQ",
-                    "Engineering",
-                    "Quality",
-                    "Burn %",
-                    "Allowance",
-                    "Value",
-                    "Eligible Bands",
-                ],
-                _pareto_rows(pareto_models, heavy_cutoff, balanced_cutoff),
-            ),
-        ]
-    )
+    if pareto_failed:
+        lines.extend(
+            [
+                "> [!CAUTION]",
+                "> **Artificial Analysis / Pareto frontier analysis failed (no fallback used).**",
+                "",
+                *render_details_block(
+                    "Pareto error output",
+                    pareto_error or "Artificial Analysis benchmarks unavailable.",
+                    open_by_default=True,
+                ),
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- **Top Frontier Quality**: `{top_quality:.1f}`",
+                f"- **Heavy Band Cutoff (≥ {HEAVY_QUALITY_RATIO:.0%})**: `{heavy_cutoff:.1f}`",
+                f"- **Balanced Band Cutoff (≥ {BALANCED_QUALITY_RATIO:.0%})**: `{balanced_cutoff:.1f}`",
+                "",
+                *render_markdown_table(
+                    [
+                        "Model ID",
+                        "AA IQ",
+                        "Engineering",
+                        "Quality",
+                        "Burn %",
+                        "Allowance",
+                        "Value",
+                        "Eligible Bands",
+                    ],
+                    _pareto_rows(pareto_models, heavy_cutoff, balanced_cutoff),
+                ),
+            ]
+        )
 
-    lines.extend(_render_pareto_charts(pareto_models, rank_models))
+        lines.extend(_render_pareto_charts(pareto_models, rank_models))
 
-    if "pareto-frontier.svg" in generated_svgs:
-        lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
+        if "pareto-frontier.svg" in generated_svgs:
+            lines.extend(["", "![Live Pareto Frontier Curve](charts/pareto-frontier.svg)"])
 
     if free_matrix:
         lines.extend(_render_free_matrix_section(free_matrix))
 
-    if plan_payloads:
+    if plan_payloads and not pareto_failed:
         lines.extend(_render_multi_plan_section(plan_payloads, generated_svgs))
 
-    lines.extend(
-        [
-            "",
-            "---",
-            "",
-            "### 4. Full Ranked Catalog (`rank --mode pareto`)",
-            "",
-            *_render_ranked_catalog_rows(rank_models),
-        ]
-    )
+    if allowance_plan_payloads:
+        lines.extend(
+            _render_multi_plan_section(
+                allowance_plan_payloads,
+                generated_svgs,
+                heading="### Allowance Method: Multi-Plan Tier Selections & Top-3 Fallbacks",
+                include_chart_image=pareto_failed,
+            )
+        )
 
-    if "catalog-ranking.svg" in generated_svgs:
-        lines.extend(["", "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)"])
+    if rank_models and not pareto_failed:
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "### 4. Full Ranked Catalog (`rank --mode pareto`)",
+                "",
+                *_render_ranked_catalog_rows(rank_models),
+            ]
+        )
+        if "catalog-ranking.svg" in generated_svgs:
+            lines.extend(["", "![Catalog Ranking Breakdown](charts/catalog-ranking.svg)"])
+
+    if allowance_rank_models:
+        lines.extend(
+            [
+                "",
+                "---",
+                "",
+                "### Allowance Method: Full Ranked Catalog (`rank --mode allowance`)",
+                "",
+                *_render_ranked_catalog_rows(allowance_rank_models),
+            ]
+        )
 
     if has_aa:
         lines.extend(["", "---", "*Source: Artificial Analysis (artificialanalysis.ai)*"])

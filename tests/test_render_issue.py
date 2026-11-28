@@ -953,3 +953,319 @@ def test_main_requires_primary_mode(capsys: pytest.CaptureFixture[str]) -> None:
     assert args.plan_json == []
     assert _MOD.main([]) == 1
     assert "must be specified" in capsys.readouterr().err
+
+
+def test_render_dual_optimizer_output_comment_success_and_aa_failure(tmp_path: Path) -> None:
+    pareto_ok_file = tmp_path / "pareto_ok.txt"
+    pareto_ok_file.write_text(
+        "Calculation method: PARETO (Artificial Analysis benchmarks + quota burn)\n"
+        "+-------+---------------------+\n"
+        "| Tier  | Model ID            |\n"
+        "| heavy | opencode-go/model-a |\n"
+        "+-------+---------------------+\n"
+        "\n--- stderr ---\n"
+        "opencode-go-model-optimizer: calculated with METHOD=PARETO\n",
+        encoding="utf-8",
+    )
+    allowance_ok_file = tmp_path / "allowance_ok.txt"
+    allowance_ok_file.write_text(
+        "Calculation method: ALLOWANCE (plan allowance & pricing heuristic; no benchmarks)\n"
+        "+-------+---------------------+\n"
+        "| Tier  | Model ID            |\n"
+        "| heavy | opencode-go/model-b |\n"
+        "+-------+---------------------+\n",
+        encoding="utf-8",
+    )
+    fetch_log = tmp_path / "fetch.log"
+    fetch_log.write_text("saved snapshot\n", encoding="utf-8")
+
+    # 1. Both methods pass with live AA benchmarks
+    comment_ok = _MOD.render_dual_optimizer_output_comment(
+        pareto_output=pareto_ok_file,
+        allowance_output=allowance_ok_file,
+        pareto_status=0,
+        allowance_status=0,
+        run_url="https://github.com/example/repo/actions/runs/100",
+        sha="deadbeef",
+        benchmarks="live",
+        fetch_log=fetch_log,
+    )
+    assert "### Pareto Method (`--mode pareto`, no fallback)" in comment_ok
+    assert "### Allowance Method (`--mode allowance`)" in comment_ok
+    assert (
+        "- **Calculation method**: `PARETO (Artificial Analysis benchmarks + quota burn)`"
+        in comment_ok
+    )
+    assert (
+        "- **Calculation method**: `ALLOWANCE (plan allowance & pricing heuristic; no benchmarks)`"
+        in comment_ok
+    )
+    assert "Additional Pareto output" not in comment_ok
+    assert "> [!CAUTION]" not in comment_ok
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in comment_ok
+
+    # 2. Pareto fails (e.g. HTTP 429) on same-repo PR while Allowance passes -> loud caution & no AA attribution
+    pareto_fail_file = tmp_path / "pareto_fail.txt"
+    pareto_fail_file.write_text(
+        "\n--- stderr ---\nopencode-go-model-optimizer: error: BenchmarksUnavailableError: HTTP 429\n",
+        encoding="utf-8",
+    )
+    out_md = tmp_path / "comment.md"
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--pareto-output",
+            str(pareto_fail_file),
+            "--pareto-status",
+            "1",
+            "--allowance-output",
+            str(allowance_ok_file),
+            "--allowance-status",
+            "0",
+            "--fetch-log",
+            str(fetch_log),
+            "--benchmarks",
+            "live",
+            "--sha",
+            "cafebabe",
+            "--output",
+            str(out_md),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res.returncode == 0
+    comment_fail = out_md.read_text(encoding="utf-8")
+    assert "> [!CAUTION]" in comment_fail
+    assert "**FAILED** (exit `1` — no fallback used)" in comment_fail
+    assert "BenchmarksUnavailableError: HTTP 429" in comment_fail
+    assert "| **heavy** | `opencode-go/model-b` |" in comment_fail
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in comment_fail
+
+    # 3. Fork PR without secrets marks Pareto UNAVAILABLE without CAUTION
+    comment_fork = _MOD.render_dual_optimizer_output_comment(
+        pareto_output=pareto_fail_file,
+        allowance_output=allowance_ok_file,
+        pareto_status=1,
+        allowance_status=0,
+        benchmarks="unavailable",
+    )
+    assert "UNAVAILABLE (1Password secrets absent on fork PR; no fallback used)" in comment_fork
+    assert "> [!CAUTION]" not in comment_fork
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in comment_fork
+
+
+def test_render_dual_issue_site_and_pareto_failure(tmp_path: Path) -> None:
+    allowance_select = {
+        "plan": "go",
+        "mode": "allowance",
+        "method": "allowance",
+        "fallback": False,
+        "evaluated_at": "2026-11-28T00:00:00+00:00",
+        "snapshot": {
+            "source": "file",
+            "fetched_at": "2026-11-28T00:00:00+00:00",
+            "benchmark_source": "none",
+            "benchmark_error": "Artificial Analysis returned HTTP 429",
+        },
+        "settings": {
+            "mode": "allowance",
+            "allow_fallback": False,
+            "top_n": 1,
+            "profile": "general",
+            "price_basis": "blended",
+            "burn_basis": "auto",
+            "allow_global_region": True,
+            "allow_paid_training": False,
+            "allow_free_training": True,
+        },
+        "tiers": {
+            "heavy": "opencode-go/model-b",
+            "balanced": "opencode-go/model-b",
+            "light": "opencode-go/model-c",
+            "free": "opencode-go/model-free",
+        },
+        "explanations": {
+            "heavy": {
+                "model_id": "opencode-go/model-b",
+                "monthly_allowance": 60.0,
+                "output_cost_per_1m": 10.0,
+                "quota_burn_pct": 25.0,
+                "context": 128000,
+            },
+            "free": {
+                "model_id": "opencode-go/model-free",
+                "output_cost_per_1m": 0.0,
+                "quota_burn_pct": 0.0,
+                "context": 128000,
+            },
+        },
+    }
+    pareto_select = {
+        **allowance_select,
+        "mode": "pareto",
+        "method": "pareto",
+        "snapshot": {
+            "source": "file",
+            "fetched_at": "2026-11-28T00:00:00+00:00",
+            "benchmark_source": "aa_live",
+        },
+        "tiers": {
+            "heavy": "opencode-go/model-a",
+            "balanced": "opencode-go/model-b",
+            "light": "opencode-go/model-c",
+            "free": "opencode-go/model-free",
+        },
+        "explanations": {
+            "heavy": {
+                "model_id": "opencode-go/model-a",
+                "monthly_allowance": 60.0,
+                "output_cost_per_1m": 10.0,
+                "aa_iq": 85.0,
+                "aa_coding": 80.0,
+                "speed_tps": 90.0,
+                "bpe": 1.0,
+                "is_pareto": True,
+                "quota_burn_pct": 20.0,
+                "context": 128000,
+            },
+            "free": allowance_select["explanations"]["free"],
+        },
+    }
+    allowance_rank = [
+        {
+            "full_id": "opencode-go/model-b",
+            "tier": "heavy",
+            "monthly_allowance": 60.0,
+            "cost": {"output": 10.0},
+            "limit": {"context": 128000},
+            "rank": 1,
+        }
+    ]
+    pareto_rank = [
+        {
+            **allowance_rank[0],
+            "full_id": "opencode-go/model-a",
+            "aa_iq": 85.0,
+            "aa_coding": 80.0,
+            "effective_quality": 83.5,
+            "composite_burn_pct": 20.0,
+            "is_pareto": True,
+        }
+    ]
+
+    a_sel_p = tmp_path / "a_select.json"
+    a_sel_p.write_text(json.dumps(allowance_select), encoding="utf-8")
+    p_sel_p = tmp_path / "p_select.json"
+    p_sel_p.write_text(json.dumps(pareto_select), encoding="utf-8")
+    a_rank_p = tmp_path / "a_rank.json"
+    a_rank_p.write_text(json.dumps(allowance_rank), encoding="utf-8")
+    p_rank_p = tmp_path / "p_rank.json"
+    p_rank_p.write_text(json.dumps(pareto_rank), encoding="utf-8")
+    snap_p = tmp_path / "snapshot.json"
+    snap_p.write_text(
+        json.dumps(
+            {
+                "fetched_at": "2026-11-28T00:00:00+00:00",
+                "metadata": {"benchmark_source": "none", "benchmark_error": "HTTP 429"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    err_p = tmp_path / "pareto_err.txt"
+    err_p.write_text("BenchmarksUnavailableError: HTTP 429\n", encoding="utf-8")
+
+    # Failure run via CLI
+    issue_fail = tmp_path / "issue_fail.md"
+    analysis_fail = tmp_path / "analysis_fail.md"
+    data_fail = tmp_path / "data_fail.md"
+    charts_fail = tmp_path / "charts_fail"
+    res_fail = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--allowance-json",
+            str(a_sel_p),
+            "--allowance-rank-json",
+            str(a_rank_p),
+            "--allowance-plan-json",
+            f"go={a_sel_p}",
+            "--pareto-error",
+            str(err_p),
+            "--snapshot-json",
+            str(snap_p),
+            "--site-url",
+            "https://example.github.io/repo/",
+            "--charts-dir",
+            str(charts_fail),
+            "--output",
+            str(issue_fail),
+            "--analysis-output",
+            str(analysis_fail),
+            "--data-output",
+            str(data_fail),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res_fail.returncode == 0
+    md_fail = issue_fail.read_text(encoding="utf-8")
+    assert "> [!CAUTION]" in md_fail
+    assert "**FAILED** (no fallback used)" in md_fail
+    assert "### Method Comparison" in md_fail
+    assert "| **heavy** | FAILED (no fallback) | `opencode-go/model-b` | - |" in md_fail
+    assert "pareto/error.txt" in md_fail
+    assert "allowance/select.json" in md_fail
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" not in md_fail
+    assert "> [!CAUTION]" in analysis_fail.read_text(encoding="utf-8")
+    assert "pareto/error.txt" in data_fail.read_text(encoding="utf-8")
+    assert "allowance/rank.json" in data_fail.read_text(encoding="utf-8")
+
+    # Success run via CLI
+    issue_ok = tmp_path / "issue_ok.md"
+    analysis_ok = tmp_path / "analysis_ok.md"
+    data_ok = tmp_path / "data_ok.md"
+    charts_ok = tmp_path / "charts_ok"
+    res_ok = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT_PATH),
+            "--pareto-json",
+            str(p_sel_p),
+            "--pareto-rank-json",
+            str(p_rank_p),
+            "--pareto-plan-json",
+            f"go={p_sel_p}",
+            "--allowance-json",
+            str(a_sel_p),
+            "--allowance-rank-json",
+            str(a_rank_p),
+            "--allowance-plan-json",
+            f"go={a_sel_p}",
+            "--site-url",
+            "https://example.github.io/repo/",
+            "--charts-dir",
+            str(charts_ok),
+            "--output",
+            str(issue_ok),
+            "--analysis-output",
+            str(analysis_ok),
+            "--data-output",
+            str(data_ok),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert res_ok.returncode == 0
+    md_ok = issue_ok.read_text(encoding="utf-8")
+    assert "**SUCCEEDED**" in md_ok
+    assert "| **heavy** | `opencode-go/model-a` | `opencode-go/model-b` | Different |" in md_ok
+    assert "pareto/select.json" in md_ok
+    assert "allowance/select.json" in md_ok
+    assert "*Source: Artificial Analysis (artificialanalysis.ai)*" in md_ok
+    assert "Allowance Method: Full Ranked Catalog" in analysis_ok.read_text(encoding="utf-8")
+    assert "pareto/rank.json" in data_ok.read_text(encoding="utf-8")

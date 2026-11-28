@@ -2,14 +2,20 @@
 - [Live Pareto Analysis & Plans](analysis.md)
 - [All Data & Other Choices](data.md)
 - [Documentation & CLI Usage](usage.md)
-- **Other Choices (JSON)**
-  - [Go top-3 choices](plans/go.json ':ignore')
-  - [Go Plus top-3 choices](plans/go-plus.json ':ignore')
-  - [Go Teams top-3 choices](plans/go-teams.json ':ignore')
-  - [Free-tier matrix](free-matrix.json ':ignore')
+- **Pareto Method (JSON)**
+  - [Pareto Selection](pareto/select.json ':ignore')
+  - [Pareto Rank](pareto/rank.json ':ignore')
+  - [Go top-3](pareto/plans/go.json ':ignore')
+  - [Go Plus top-3](pareto/plans/go-plus.json ':ignore')
+  - [Go Teams top-3](pareto/plans/go-teams.json ':ignore')
+- **Allowance Method (JSON)**
+  - [Allowance Selection](allowance/select.json ':ignore')
+  - [Allowance Rank](allowance/rank.json ':ignore')
+  - [Go top-3](allowance/plans/go.json ':ignore')
+  - [Go Plus top-3](allowance/plans/go-plus.json ':ignore')
+  - [Go Teams top-3](allowance/plans/go-teams.json ':ignore')
 - **Raw Artifacts**
-  - [Raw Selection JSON](select.json ':ignore')
-  - [Raw Rank JSON](rank.json ':ignore')
+  - [Free-tier matrix](free-matrix.json ':ignore')
   - [Normalized Snapshot](snapshot.json ':ignore')
   - [Full Output](full-output.txt ':ignore')
   - [GitHub Issue]({{ISSUES_URL}})

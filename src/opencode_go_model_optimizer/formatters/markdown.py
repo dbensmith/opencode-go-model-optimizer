@@ -266,6 +266,7 @@ def render_run_settings_lines(
         heading,
         "",
         f"- **Mode**: `{settings.get('mode', default_mode)}` "
+        f"| **Fallback**: {'allowed' if settings.get('allow_fallback') else 'disabled'} "
         f"| **Profile**: `{settings.get('profile', 'general')}` "
         f"| **Price basis**: `{settings.get('price_basis', '-')}` "
         f"| **Burn basis**: `{settings.get('burn_basis', '-')}` "

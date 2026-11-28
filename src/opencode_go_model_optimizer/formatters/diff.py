@@ -30,8 +30,11 @@ def _format_diff_value(value: Any) -> str:
 
 def format_diff_table(diff: SnapshotDiff) -> str:
     """Format a snapshot diff as human-readable ASCII table sections."""
+    method_label = (
+        f"{diff.mode.upper()} [FALLBACK from PARETO]" if diff.fallback else diff.mode.upper()
+    )
     header = (
-        f"Snapshot diff (plan: {diff.plan})\n"
+        f"Snapshot diff (plan: {diff.plan}, method: {method_label})\n"
         f"  old: {diff.old_fetched_at or '-'}\n"
         f"  new: {diff.new_fetched_at or '-'}"
     )

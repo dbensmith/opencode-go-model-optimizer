@@ -18,6 +18,7 @@ class SelectionCriteria:
     """
 
     mode: str = "allowance"
+    allow_fallback: bool = False
     top_n: int = 1
     preferred_tiers: dict[str, str] = field(default_factory=dict)
     skip_models: frozenset[str] = frozenset()

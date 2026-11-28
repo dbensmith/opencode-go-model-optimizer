@@ -113,10 +113,12 @@ def test_benchmark_source_live_and_none():
     assert all(m.aa_iq is None for m in snap.models)
 
 
-def test_aa_key_set_but_fetch_empty_warns_and_resolves_allowance():
+def test_aa_key_set_but_fetch_empty_warns_and_records_error():
     snap = _build({"AA_API_KEY": "k"}, {})
     assert snap.metadata.benchmark_source == "none"
+    assert snap.metadata.benchmark_error is not None
     assert any("no Artificial Analysis benchmarks" in w for w in snap.warnings)
+    assert all("falling back to allowance" not in w for w in snap.warnings)
     assert resolve_mode("auto", snap.models) == "allowance"
 
 
@@ -140,6 +142,7 @@ def test_aa_fetch_error_detail_is_included_in_warning():
         snap = fetch_and_build_snapshot(plan="go")
 
     assert any("HTTP 401" in w for w in snap.warnings)
+    assert snap.metadata.benchmark_error == "Artificial Analysis returned HTTP 401"
 
 
 def test_fetch_prints_warnings_to_stderr(tmp_path, capsys):

@@ -41,6 +41,33 @@ def resolve_mode(mode: str, models: list[NormalizedModel]) -> str:
     return "allowance"
 
 
+class BenchmarksUnavailableError(ValueError):
+    """Raised when Pareto calculation is requested without benchmarked paid models and fallback is disabled."""
+
+
+def resolve_calculation_method(
+    models: list[NormalizedModel],
+    c: SelectionCriteria,
+    *,
+    benchmark_error: str | None = None,
+) -> tuple[str, bool]:
+    """Resolve actual calculation method (``pareto`` or ``allowance``) and fallback status."""
+    if c.mode == "allowance":
+        return "allowance", False
+    if c.mode == "pareto":
+        if filter_benchmarked_models(models, c.skip_models):
+            return "pareto", False
+        if c.allow_fallback:
+            return "allowance", True
+        detail = f" ({benchmark_error})" if benchmark_error else ""
+        raise BenchmarksUnavailableError(
+            "Pareto mode requires Artificial Analysis benchmarks, but no eligible paid models "
+            f"have benchmark data{detail}; pass --allow-fallback to fall back to allowance mode, "
+            "or use --mode allowance"
+        )
+    raise ValueError(f"unknown mode {c.mode!r}")
+
+
 def _apply_filters(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
     """Apply privacy/region, context, output, output-cost, and quota-burn constraints."""
     skips = c.skip_models
@@ -75,6 +102,8 @@ class TierSelection:
     candidates: dict[str, list[str]]
     models: list[NormalizedModel]
     clusters: dict[str, list[NormalizedModel]] = field(default_factory=dict)
+    method: str = "allowance"
+    fell_back: bool = False
 
 
 def _is_unused(m: NormalizedModel, used: set[str]) -> bool:
@@ -273,23 +302,12 @@ def _allocate_pareto(
     """Pareto allocation over already-filtered, already-evaluated models.
 
     Tiers are allowed to share a model: each tier ranks the same Pareto frontier by its own
-    objective, so one model can be the best pick for more than one tier. If there is no
-    benchmarked/Pareto model at all, fall back to allowance allocation.
+    objective, so one model can be the best pick for more than one tier.
     """
     free_ranked = rank_free_models(evaluated, skip_models=c.skip_models)
     clusters = _pareto_clusters(evaluated, c)
     selected, used = _seed_selection(models, c.preferred_tiers, free_ranked)
     _pick_paid_tiers(selected, used, clusters)
-
-    # No benchmarked/Pareto model at all: fall back to allowance allocation.
-    if not any(selected.get(t) for t in PAID_TIERS):
-        picks, _, _, _ = _allocate_allowance(
-            models,
-            replace(c, preferred_tiers={**c.preferred_tiers, **selected}),
-            free_ranked=free_ranked,
-        )
-        for t in STANDARD_TIERS:
-            selected.setdefault(t, picks.get(t, ""))
     for t in STANDARD_TIERS:
         selected.setdefault(t, "")
     return selected, clusters, free_ranked
@@ -306,13 +324,15 @@ def _prepare_models(
 def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSelection:
     """Pick one model per tier plus up to ``c.top_n`` ordered candidates, evaluating once."""
     filtered = _prepare_models(models, c)
-    if c.mode == "pareto":
+    actual_method, fell_back = resolve_calculation_method(filtered, c)
+    if actual_method == "pareto":
         pool = _evaluate(filtered, c)
         selected, clusters, free_ranked = _allocate_pareto(filtered, c, pool)
         general_paid = None
     else:
         pool = filtered
-        selected, clusters, free_ranked, general_paid = _allocate_allowance(filtered, c)
+        effective_c = replace(c, mode="allowance") if c.mode != "allowance" else c
+        selected, clusters, free_ranked, general_paid = _allocate_allowance(filtered, effective_c)
     primary = {k: selected.get(k, "") for k in STANDARD_TIERS}
 
     if c.top_n <= 1:
@@ -321,6 +341,8 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
             {t: ([primary[t]] if primary[t] else []) for t in STANDARD_TIERS},
             pool,
             clusters,
+            method=actual_method,
+            fell_back=fell_back,
         )
 
     if general_paid is None:
@@ -343,20 +365,31 @@ def select_tiers(models: list[NormalizedModel], c: SelectionCriteria) -> TierSel
     fallbacks = {"free": fill("free", [free_ranked])}
     for tier in PAID_TIERS:
         fallbacks[tier] = fill(tier, [clusters[tier], general_paid])
-    return TierSelection(primary, {t: fallbacks[t] for t in STANDARD_TIERS}, pool, clusters)
+    return TierSelection(
+        primary,
+        {t: fallbacks[t] for t in STANDARD_TIERS},
+        pool,
+        clusters,
+        method=actual_method,
+        fell_back=fell_back,
+    )
 
 
-def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
-    """Produce a full ranked catalog of active models as copies carrying rank, tier and metrics."""
+def rank_catalog_with_method(
+    models: list[NormalizedModel], c: SelectionCriteria
+) -> tuple[list[NormalizedModel], str, bool]:
+    """Rank active models and return ``(ranked_models, actual_method, fell_back)``."""
     active_models = _prepare_models(models, c, active_only=True)
+    actual_method, fell_back = resolve_calculation_method(active_models, c)
 
-    if c.mode == "pareto":
+    if actual_method == "pareto":
         evaluated = _evaluate(active_models, c)
         # Sort by BPE desc, effective_quality desc, composite_burn asc, tie_break_key
         ranked = sorted(evaluated, key=lambda m: _pareto_rank_key(m))
         tiers_map, _, _ = _allocate_pareto(evaluated, c, evaluated)
     else:
-        tiers_map, _, free, paid = _allocate_allowance(active_models, c)
+        effective_c = replace(c, mode="allowance") if c.mode != "allowance" else c
+        tiers_map, _, free, paid = _allocate_allowance(active_models, effective_c)
         seen = {m.full_id for m in paid} | {m.full_id for m in free}
         remaining = sorted(
             [m for m in active_models if m.full_id not in seen],
@@ -368,7 +401,7 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
         if full_id and full_id not in tier_by_full_id:
             tier_by_full_id[full_id] = tier_name
 
-    return [
+    result = [
         m.model_copy(
             update={
                 "rank": idx,
@@ -382,3 +415,9 @@ def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[No
         )
         for idx, m in enumerate(ranked, start=1)
     ]
+    return result, actual_method, fell_back
+
+
+def rank_catalog(models: list[NormalizedModel], c: SelectionCriteria) -> list[NormalizedModel]:
+    """Produce a full ranked catalog of active models as copies carrying rank, tier and metrics."""
+    return rank_catalog_with_method(models, c)[0]

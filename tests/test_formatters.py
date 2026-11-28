@@ -32,7 +32,11 @@ from opencode_go_model_optimizer.formatters.select import (
     settings_payload,
     tier_display_names,
 )
-from opencode_go_model_optimizer.formatters.table import _append_column, render_table
+from opencode_go_model_optimizer.formatters.table import (
+    _append_column,
+    format_method_banner,
+    render_table,
+)
 from opencode_go_model_optimizer.ingest.models import (
     PriceMultiplier,
     Privacy,
@@ -406,7 +410,7 @@ def test_format_diff_json_and_table():
     assert parsed["tier_changes"]["heavy"]["new"] == "new-model"
 
     table = format_diff_table(diff)
-    assert "Snapshot diff (plan: go)" in table
+    assert "Snapshot diff (plan: go, method: ALLOWANCE)" in table
     assert "old: 2026-01-01T00:00:00Z" in table
     assert "Added models:" in table
     assert "Removed models:" in table
@@ -481,6 +485,7 @@ def test_explain_tiers_next_change_none():
 
 def test_formatters_package_all():
     expected_exports = {
+        "format_method_banner": format_method_banner,
         "render_table": render_table,
         "settings_payload": settings_payload,
         "explain_tiers": explain_tiers,
@@ -681,3 +686,39 @@ def test_markdown_shared_helpers():
         format_multiplier(1.0, {"at": "2026-12-01T00:00+00:00", "multiplier": 2.0})
         == "x1 (-> x2 @ 2026-12-01T00:00+00:00)"
     )
+
+
+def test_method_announcements_across_formatters():
+    assert "PARETO" in format_method_banner("pareto")
+    assert "ALLOWANCE" in format_method_banner("allowance")
+    assert "FALLBACK from PARETO" in format_method_banner("allowance", fell_back=True)
+
+    tiers = {"heavy": "opencode-go/m1"}
+    models = [make_model("m1", name="M1", monthly_allowance=20.0, output=1.0)]
+
+    tbl = format_select_table(tiers, models, mode="allowance", fell_back=True)
+    assert tbl.startswith("Calculation method: ALLOWANCE [FALLBACK from PARETO")
+
+    rank_tbl = format_rank_table(models, mode="pareto")
+    assert rank_tbl.startswith("Calculation method: PARETO")
+
+    js = json.loads(
+        format_select_json(tiers, mode="allowance", requested_mode="pareto", fell_back=True)
+    )
+    assert js["mode"] == "allowance"
+    assert js["method"] == "allowance"
+    assert js["fallback"] is True
+    assert js["requested_mode"] == "pareto"
+
+    env_s = format_select_env(tiers, mode="allowance", fell_back=True)
+    assert 'OPENCODE_MODEL_METHOD="allowance"' in env_s
+    assert 'OPENCODE_MODEL_FALLBACK="true"' in env_s
+
+    gh_s = format_select_github_output(tiers, mode="pareto", fell_back=False)
+    assert "method=pareto" in gh_s
+    assert "fallback=false" in gh_s
+
+    diff_fb = SnapshotDiff(plan="go", mode="allowance", fallback=True)
+    assert "method: ALLOWANCE [FALLBACK from PARETO]" in format_diff_table(diff_fb)
+
+    assert settings_payload(SelectionCriteria(allow_fallback=True))["allow_fallback"] is True
