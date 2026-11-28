@@ -56,10 +56,10 @@ from opencode_go_model_optimizer.ingest.models import (
     ensure_utc,
 )
 from opencode_go_model_optimizer.ingest.snapshot import (
-    apply_plan,
     fetch_and_build_snapshot,
     load_cached_snapshot,
     load_snapshot,
+    plan_models,
     save_cached_snapshot,
     save_snapshot,
 )
@@ -221,17 +221,6 @@ def _load_or_fetch_snapshot(
     _print_aa_telemetry(snap)
     save_cached_snapshot(snap)
     return LoadedSnapshot(snap, "live")
-
-
-def _load_or_fetch_models(
-    snapshot_path: str | None = None,
-    plan: str = "go",
-    cache_ttl: int = 0,
-) -> tuple[list[NormalizedModel], str]:
-    """Retrieve models from snapshot file if provided, otherwise fetch live."""
-    snap = _load_or_fetch_snapshot(snapshot_path, plan=plan, cache_ttl=cache_ttl).snapshot
-    plan_name = effective_plan(snap.plan, plan, snap.models)
-    return apply_plan(snap.models, plan_name), plan_name
 
 
 def _write_output(content: str, out_path: str | None = None) -> None:
@@ -421,7 +410,7 @@ def _prepare_selection_context(
     )
     snap = loaded.snapshot
     plan = effective_plan(snap.plan, args.plan, snap.models)
-    models = apply_plan(snap.models, plan)
+    models = plan_models(snap.models, plan)
     if args.mode == "auto" and snap.metadata.benchmark_error:
         mode = "pareto"
     else:

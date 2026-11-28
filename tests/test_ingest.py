@@ -552,7 +552,7 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
 
         # OSError during save_cached_snapshot
         with patch(
-            "opencode_go_model_optimizer.ingest.snapshot.save_snapshot",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("Disk full"),
         ):
             assert save_cached_snapshot(snap) is None
@@ -1675,22 +1675,22 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
 
     from opencode_go_model_optimizer.ingest.artificial_analysis import (
         get_aa_cache_path,
-        load_cached_aa_benchmarks,
         load_cached_aa_benchmarks_with_age,
         save_cached_aa_benchmarks,
     )
 
     with patch.dict(os.environ, {"XDG_CACHE_HOME": str(tmp_path)}):
         assert save_cached_aa_benchmarks({}) is None
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+        assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
 
         data = {"glm5": {"iq": 88.0, "coding": 82.0, "tps": 90.0}}
         saved = save_cached_aa_benchmarks(data)
         assert saved == get_aa_cache_path()
         assert saved is not None and saved.exists()
 
-        assert load_cached_aa_benchmarks(ttl_seconds=0) is None
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) == data
+        assert load_cached_aa_benchmarks_with_age(ttl_seconds=0) is None
+        loaded = load_cached_aa_benchmarks_with_age(ttl_seconds=3600)
+        assert loaded is not None and loaded[0] == data
 
         # Age is computed from payload fetched_at even when mtime is brand new (CI restore).
         old_ts = datetime.fromtimestamp(time.time() - 7200, tz=UTC).isoformat(timespec="seconds")
@@ -1698,7 +1698,7 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
             json.dumps({"schema_version": 1, "fetched_at": old_ts, "benchmarks": data}),
             encoding="utf-8",
         )
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+        assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
         loaded_age = load_cached_aa_benchmarks_with_age(ttl_seconds=86400)
         assert loaded_age is not None
         assert loaded_age[0] == data
@@ -1709,18 +1709,19 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
             json.dumps({"schema_version": 1, "fetched_at": "bad-ts", "benchmarks": data}),
             encoding="utf-8",
         )
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) == data
+        loaded = load_cached_aa_benchmarks_with_age(ttl_seconds=3600)
+        assert loaded is not None and loaded[0] == data
         with patch("time.time", return_value=time.time() + 4000):
-            assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+            assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
 
         saved.write_text('{"schema_version": 99, "benchmarks": {}}', encoding="utf-8")
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+        assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
 
         saved.write_text("{corrupt", encoding="utf-8")
-        assert load_cached_aa_benchmarks(ttl_seconds=3600) is None
+        assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
 
         with patch(
-            "opencode_go_model_optimizer.ingest.artificial_analysis.atomic_write_text",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("disk full"),
         ):
             assert save_cached_aa_benchmarks(data) is None
@@ -1823,7 +1824,7 @@ def test_aa_rate_limit_cooldown_lifecycle_and_zero_request_short_circuit(tmp_pat
         rl_path.write_text('{"schema_version": 2}', encoding="utf-8")
         assert load_aa_rate_limit() is None
         with patch(
-            "opencode_go_model_optimizer.ingest.artificial_analysis.atomic_write_text",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("full"),
         ):
             assert save_aa_rate_limit(int(time.time()) + 60) is None

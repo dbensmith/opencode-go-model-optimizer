@@ -2,10 +2,10 @@
 
 import concurrent.futures
 import hashlib
-import json
 import os
 import threading
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,11 @@ from opencode_go_model_optimizer.ingest.artificial_analysis import (
     load_cached_aa_benchmarks_with_age,
     lookup_aa_benchmark,
     save_cached_aa_benchmarks,
+)
+from opencode_go_model_optimizer.ingest.cache import (
+    get_cache_dir,
+    read_json_object,
+    write_cache_text,
 )
 from opencode_go_model_optimizer.ingest.catalogue import (
     DEFAULT_MODELS_HTTP_URL,
@@ -51,6 +56,7 @@ __all__ = [
     "load_snapshot",
     "merge_catalogue_metadata",
     "merge_privacy",
+    "plan_models",
     "save_cached_snapshot",
     "save_snapshot",
 ]
@@ -66,6 +72,11 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
             m.monthly_allowance = None
         m.request_estimate = m.request_estimates.get(plan)
     return models
+
+
+def plan_models(models: Sequence[NormalizedModel], plan: str) -> list[NormalizedModel]:
+    """Return deep-copied models with the requested plan applied."""
+    return apply_plan([m.model_copy(deep=True) for m in models], plan)
 
 
 def _lookup_named_row(
@@ -285,20 +296,7 @@ def load_snapshot(path: str | Path) -> Snapshot:
 
 def get_cache_snapshot_path(plan: str = "go") -> Path:
     """Return filesystem path for the local cached snapshot."""
-    base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
-    return base / "opencode-go-model-optimizer" / f"snapshot-{plan}.json"
-
-
-def _try_load_fresh_snapshot(path: Path, ttl_seconds: float, now: float) -> Snapshot | None:
-    """Load a snapshot from ``path`` if it exists and is within ``ttl_seconds``."""
-    if not path.exists():
-        return None
-    try:
-        if now - path.stat().st_mtime <= ttl_seconds:
-            return load_snapshot(path)
-    except OSError, ValueError, json.JSONDecodeError:
-        return None
-    return None
+    return get_cache_dir() / f"snapshot-{plan}.json"
 
 
 def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapshot | None:
@@ -312,8 +310,18 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     now = time.time()
     candidates = [plan, *(p for p in PLANS if p != plan)]
     for candidate in candidates:
-        snap = _try_load_fresh_snapshot(get_cache_snapshot_path(plan=candidate), ttl_seconds, now)
-        if snap is None:
+        path = get_cache_snapshot_path(plan=candidate)
+        try:
+            if now - path.stat().st_mtime > ttl_seconds:
+                continue
+        except OSError:
+            continue
+        payload = read_json_object(path)
+        if payload is None:
+            continue
+        try:
+            snap = Snapshot.model_validate(payload)
+        except ValueError:
             continue
         if candidate == plan:
             apply_plan(snap.models, plan)
@@ -328,12 +336,9 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
 
 def save_cached_snapshot(snapshot: Snapshot) -> Path | None:
     """Write snapshot to local cache directory and return the path."""
-    target_path = get_cache_snapshot_path(plan=snapshot.plan)
-    try:
-        save_snapshot(snapshot, target_path)
-        return target_path
-    except OSError:
-        return None
+    return write_cache_text(
+        get_cache_snapshot_path(plan=snapshot.plan), snapshot.model_dump_json(indent=2)
+    )
 
 
 _SOURCE_LABELS: dict[str, str] = {

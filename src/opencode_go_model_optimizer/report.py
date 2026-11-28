@@ -20,7 +20,7 @@ from opencode_go_model_optimizer.engine.tiers import (
 from opencode_go_model_optimizer.formatters import explain_tiers, settings_payload
 from opencode_go_model_optimizer.ingest.http import atomic_write_text, package_version
 from opencode_go_model_optimizer.ingest.models import PLANS, NormalizedModel, Snapshot
-from opencode_go_model_optimizer.ingest.snapshot import apply_plan, fetch_and_build_snapshot
+from opencode_go_model_optimizer.ingest.snapshot import fetch_and_build_snapshot, plan_models
 from opencode_go_model_optimizer.numbers import json_allowance, json_multiplier
 from opencode_go_model_optimizer.report_markdown import render_markdown
 
@@ -98,7 +98,7 @@ def _candidate_row(m: NormalizedModel) -> dict[str, Any]:
 
 def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, Any], list[str]]:
     """Run default allowance-mode selection (top 3) for a plan and explain the outcome."""
-    models = apply_plan([m.model_copy(deep=True) for m in snap.models], plan)
+    models = plan_models(snap.models, plan)
     criteria = SelectionCriteria(mode="allowance", top_n=TOP_N, at=now)
     selection = select_tiers(models, criteria)
     pool = selection.models

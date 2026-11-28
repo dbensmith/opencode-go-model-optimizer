@@ -51,7 +51,7 @@ from opencode_go_model_optimizer.ingest.console import (
     RequestProfiles,
     fetch_console_profiles,
 )
-from opencode_go_model_optimizer.ingest.snapshot import apply_plan
+from opencode_go_model_optimizer.ingest.snapshot import plan_models
 
 # The #limits anchor deep-links to the full model table: every API model row renders
 # immediately at hydration, bypassing the featured subset and its count-labelled
@@ -341,10 +341,7 @@ def _lim_ok(displayed: float, allowance: float | None) -> bool:
 
 def _compare(rows: list[dict[str, Any]], min_rows: int, profiles: RequestProfiles) -> int:
     models = apply_request_estimates(fetch_catalogue(), profiles)
-    by_plan = {
-        plan: {m.id: m for m in apply_plan([m.model_copy(deep=True) for m in models], plan)}
-        for plan in ("go", "go-plus")
-    }
+    by_plan = {plan: {m.id: m for m in plan_models(models, plan)} for plan in ("go", "go-plus")}
     expected = {m.id for m in models if m.status == "active" and m.model_type == "chat"}
     rendered = {str(row["model"]) for row in rows}
 
