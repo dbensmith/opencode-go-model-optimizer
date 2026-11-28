@@ -340,7 +340,7 @@ def test_compute_burn_pct_uses_request_estimate():
         "estimated",
         input=1.0,
         output=1.0,
-        monthly_allowance=15.0,
+        plan_allowances={"go": 15.0},
         request_estimates={"go": RequestEstimate(per_5h=1000, per_week=2500, per_month=5000)},
     )
     apply_plan([m], "go")

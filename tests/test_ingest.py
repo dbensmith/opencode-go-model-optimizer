@@ -634,11 +634,6 @@ def test_plan_allowances_and_apply_plan():
     apply_plan([go_only], "go-plus")
     assert go_only.monthly_allowance is None
 
-    # Legacy snapshots without per-plan allowances keep their existing allowance.
-    legacy = make_model("legacy", monthly_allowance=12.0)
-    apply_plan([legacy], "go-plus")
-    assert legacy.monthly_allowance == 12.0
-
 
 def test_apply_plan_matches_plan_names_exactly():
     m = make_model(

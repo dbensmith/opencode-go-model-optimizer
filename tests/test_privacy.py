@@ -102,6 +102,7 @@ def _m(mid, privacy=None, out=0.0, allowance=None, release_date=""):
         input=out,
         output=out,
         monthly_allowance=allowance,
+        plan_allowances={"go": allowance} if allowance is not None else {},
         privacy=privacy,
         release_date=release_date,
     )

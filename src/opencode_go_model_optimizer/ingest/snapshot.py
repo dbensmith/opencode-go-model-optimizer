@@ -65,11 +65,7 @@ __all__ = [
 def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel]:
     """Apply plan-specific monthly allowances and request estimates to models."""
     for m in models:
-        allowance = plan_allowance_for(m, plan)
-        if allowance is not None:
-            m.monthly_allowance = allowance
-        elif m.plan_allowances:
-            m.monthly_allowance = None
+        m.monthly_allowance = plan_allowance_for(m, plan)
         m.request_estimate = m.request_estimates.get(plan)
     return models
 
