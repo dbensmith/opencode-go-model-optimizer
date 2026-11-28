@@ -1,6 +1,7 @@
 """Ingestor and matching helpers for Artificial Analysis benchmarks."""
 
 import contextlib
+import json
 import re
 import time
 from datetime import UTC, datetime
@@ -9,13 +10,13 @@ from typing import Any
 
 import httpx
 
-from opencode_go_model_optimizer.ingest.docs import norm_name
-from opencode_go_model_optimizer.ingest.http import (
-    client_scope,
+from opencode_go_model_optimizer.ingest.cache import (
     get_cache_dir,
-    load_json,
-    write_json,
+    read_json_object,
+    write_cache_text,
 )
+from opencode_go_model_optimizer.ingest.docs import norm_name
+from opencode_go_model_optimizer.ingest.http import client_scope
 from opencode_go_model_optimizer.ingest.models import NormalizedModel, ensure_utc
 from opencode_go_model_optimizer.numbers import finite_float
 
@@ -200,15 +201,22 @@ def load_cached_aa_benchmarks_with_age(
     ttl_seconds: float = 0,
 ) -> tuple[dict[str, dict[str, Any]], float] | None:
     """Load cached AA benchmarks and their age in seconds if within ``ttl_seconds``."""
-    loaded = load_json(get_aa_cache_path(), ttl_seconds, age=_cache_age_seconds)
-    if loaded is None:
+    if ttl_seconds <= 0:
         return None
-    payload, age = loaded
+    path = get_aa_cache_path()
+    payload = read_json_object(path)
     if (
-        payload.get("schema_version") != 1
+        payload is None
+        or payload.get("schema_version") != 1
         or not isinstance(payload.get("benchmarks"), dict)
         or not payload["benchmarks"]
     ):
+        return None
+    try:
+        age = _cache_age_seconds(path, payload, time.time())
+    except OSError:
+        return None
+    if age > ttl_seconds:
         return None
     return payload["benchmarks"], age
 
@@ -222,7 +230,7 @@ def save_cached_aa_benchmarks(benchmarks: dict[str, dict[str, Any]]) -> Path | N
         "fetched_at": datetime.fromtimestamp(time.time(), tz=UTC).isoformat(timespec="seconds"),
         "benchmarks": benchmarks,
     }
-    return write_json(get_aa_cache_path(), payload)
+    return write_cache_text(get_aa_cache_path(), json.dumps(payload))
 
 
 def _parse_int_header(headers: httpx.Headers, name: str) -> int | None:
@@ -257,10 +265,9 @@ def _parse_rate_limit_headers(response: httpx.Response) -> dict[str, int | None]
 
 def load_aa_rate_limit() -> dict[str, Any] | None:
     """Return active local AA cooldown metadata when still within its reset window."""
-    loaded = load_json(get_aa_ratelimit_path())
-    if loaded is None or loaded[0].get("schema_version") != 1:
+    payload = read_json_object(get_aa_ratelimit_path())
+    if payload is None or payload.get("schema_version") != 1:
         return None
-    payload = loaded[0]
     reset_at = payload.get("reset_at")
     if isinstance(reset_at, bool) or not isinstance(reset_at, int) or reset_at <= time.time():
         return None
@@ -297,7 +304,7 @@ def save_aa_rate_limit(
         "remaining": remaining,
         "message": message,
     }
-    return write_json(get_aa_ratelimit_path(), payload)
+    return write_cache_text(get_aa_ratelimit_path(), json.dumps(payload))
 
 
 def clear_aa_rate_limit() -> None:

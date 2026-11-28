@@ -410,7 +410,7 @@ def _prepare_selection_context(
     )
     snap = loaded.snapshot
     plan = effective_plan(snap.plan, args.plan, snap.models)
-    models = plan_models(snap, plan)
+    models = plan_models(snap.models, plan)
     if args.mode == "auto" and snap.metadata.benchmark_error:
         mode = "pareto"
     else:

@@ -98,7 +98,7 @@ def _candidate_row(m: NormalizedModel) -> dict[str, Any]:
 
 def _plan_section(snap: Snapshot, plan: str, now: datetime) -> tuple[dict[str, Any], list[str]]:
     """Run default allowance-mode selection (top 3) for a plan and explain the outcome."""
-    models = plan_models(snap, plan)
+    models = plan_models(snap.models, plan)
     criteria = SelectionCriteria(mode="allowance", top_n=TOP_N, at=now)
     selection = select_tiers(models, criteria)
     pool = selection.models

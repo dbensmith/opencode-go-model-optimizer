@@ -538,7 +538,7 @@ def test_load_or_fetch_snapshot_cache_and_plan_models(tmp_path):
         patch("opencode_go_model_optimizer.cli.save_cached_snapshot") as mock_save,
     ):
         loaded = _load_or_fetch_snapshot(plan="go-plus", cache_ttl=3600)
-        models = plan_models(loaded.snapshot, loaded.snapshot.plan)
+        models = plan_models(loaded.snapshot.models, loaded.snapshot.plan)
         assert len(models) == 1
         mock_save.assert_called_once_with(dummy_snap)
 
@@ -554,7 +554,7 @@ def test_load_or_fetch_snapshot_cache_and_plan_models(tmp_path):
     save_snapshot(snap_multi, multi_path)
     loaded = _load_or_fetch_snapshot(str(multi_path), plan="go-plus")
     plan = effective_plan(loaded.snapshot.plan, "go-plus", loaded.snapshot.models)
-    models = plan_models(loaded.snapshot, plan)
+    models = plan_models(loaded.snapshot.models, plan)
     assert plan == "go-plus"
 
     # Live fetch fails with a network error: the consumer cache (any age) is used
@@ -577,7 +577,7 @@ def test_load_or_fetch_snapshot_cache_and_plan_models(tmp_path):
     ):
         loaded = _load_or_fetch_snapshot(plan="go-plus")
         plan = effective_plan(loaded.snapshot.plan, "go-plus", loaded.snapshot.models)
-        models = plan_models(loaded.snapshot, plan)
+        models = plan_models(loaded.snapshot.models, plan)
         assert plan == "go-plus"
         assert models[0].monthly_allowance == 100.0
         mock_stale.assert_called_once_with(plan="go-plus", ttl_seconds=math.inf)

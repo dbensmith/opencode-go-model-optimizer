@@ -51,7 +51,7 @@ def test_active_models_get_allowance_and_privacy(live_snapshot):
 
 @pytest.mark.parametrize("plan", PLANS)
 def test_request_estimates_are_positive(live_snapshot, plan):
-    models = plan_models(live_snapshot, plan)
+    models = plan_models(live_snapshot.models, plan)
     for m in models:
         if m.status != "active" or m.model_type != "chat" or m.is_zero_cost:
             continue
@@ -75,7 +75,7 @@ def test_multipliers_parse_without_unknown_conditions(live_snapshot):
 
 @pytest.mark.parametrize("plan", PLANS)
 def test_select_yields_paid_tiers(live_snapshot, plan):
-    models = plan_models(live_snapshot, plan)
+    models = plan_models(live_snapshot.models, plan)
     tiers = select_tiers(models, SelectionCriteria(mode="allowance")).primary
     for tier in ("heavy", "balanced", "light"):
         assert tiers[tier], f"{plan}: empty {tier} tier"

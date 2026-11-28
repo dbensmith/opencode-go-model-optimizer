@@ -18,6 +18,11 @@ from opencode_go_model_optimizer.ingest.artificial_analysis import (
     lookup_aa_benchmark,
     save_cached_aa_benchmarks,
 )
+from opencode_go_model_optimizer.ingest.cache import (
+    get_cache_dir,
+    read_json_object,
+    write_cache_text,
+)
 from opencode_go_model_optimizer.ingest.catalogue import (
     DEFAULT_MODELS_HTTP_URL,
     apply_request_estimates,
@@ -30,13 +35,7 @@ from opencode_go_model_optimizer.ingest.docs import (
     norm_name,
     parse_privacy,
 )
-from opencode_go_model_optimizer.ingest.http import (
-    atomic_write_text,
-    client_scope,
-    get_cache_dir,
-    load_json,
-    write_json,
-)
+from opencode_go_model_optimizer.ingest.http import atomic_write_text, client_scope
 from opencode_go_model_optimizer.ingest.models import (
     PLANS,
     NormalizedModel,
@@ -75,15 +74,8 @@ def apply_plan(models: list[NormalizedModel], plan: str) -> list[NormalizedModel
     return models
 
 
-def plan_models(
-    snapshot_or_models: Snapshot | Sequence[NormalizedModel], plan: str
-) -> list[NormalizedModel]:
+def plan_models(models: Sequence[NormalizedModel], plan: str) -> list[NormalizedModel]:
     """Return deep-copied models with the requested plan applied."""
-    models = (
-        snapshot_or_models.models
-        if isinstance(snapshot_or_models, Snapshot)
-        else snapshot_or_models
-    )
     return apply_plan([m.model_copy(deep=True) for m in models], plan)
 
 
@@ -318,11 +310,17 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
     now = time.time()
     candidates = [plan, *(p for p in PLANS if p != plan)]
     for candidate in candidates:
-        loaded = load_json(get_cache_snapshot_path(plan=candidate), ttl_seconds, now=now)
-        if loaded is None:
+        path = get_cache_snapshot_path(plan=candidate)
+        try:
+            if now - path.stat().st_mtime > ttl_seconds:
+                continue
+        except OSError:
+            continue
+        payload = read_json_object(path)
+        if payload is None:
             continue
         try:
-            snap = Snapshot.model_validate(loaded[0])
+            snap = Snapshot.model_validate(payload)
         except ValueError:
             continue
         if candidate == plan:
@@ -338,7 +336,9 @@ def load_cached_snapshot(plan: str = "go", ttl_seconds: float = 3600) -> Snapsho
 
 def save_cached_snapshot(snapshot: Snapshot) -> Path | None:
     """Write snapshot to local cache directory and return the path."""
-    return write_json(get_cache_snapshot_path(plan=snapshot.plan), snapshot, indent=2)
+    return write_cache_text(
+        get_cache_snapshot_path(plan=snapshot.plan), snapshot.model_dump_json(indent=2)
+    )
 
 
 _SOURCE_LABELS: dict[str, str] = {

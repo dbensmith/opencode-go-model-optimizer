@@ -552,7 +552,7 @@ def test_cache_snapshot_paths_and_operations(tmp_path):
 
         # OSError during save_cached_snapshot
         with patch(
-            "opencode_go_model_optimizer.ingest.http.atomic_write_text",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("Disk full"),
         ):
             assert save_cached_snapshot(snap) is None
@@ -1721,7 +1721,7 @@ def test_aa_benchmark_cache_lifecycle(tmp_path):
         assert load_cached_aa_benchmarks_with_age(ttl_seconds=3600) is None
 
         with patch(
-            "opencode_go_model_optimizer.ingest.http.atomic_write_text",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("disk full"),
         ):
             assert save_cached_aa_benchmarks(data) is None
@@ -1824,7 +1824,7 @@ def test_aa_rate_limit_cooldown_lifecycle_and_zero_request_short_circuit(tmp_pat
         rl_path.write_text('{"schema_version": 2}', encoding="utf-8")
         assert load_aa_rate_limit() is None
         with patch(
-            "opencode_go_model_optimizer.ingest.http.atomic_write_text",
+            "opencode_go_model_optimizer.ingest.cache.atomic_write_text",
             side_effect=OSError("full"),
         ):
             assert save_aa_rate_limit(int(time.time()) + 60) is None

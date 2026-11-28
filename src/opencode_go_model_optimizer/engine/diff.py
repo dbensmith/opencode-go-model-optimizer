@@ -137,8 +137,8 @@ def diff_snapshots(
     allow_fallback: bool = False,
 ) -> SnapshotDiff:
     """Compute catalog, pricing, status, and tier-assignment drift between snapshots."""
-    old_models = plan_models(old_snap, plan)
-    new_models = plan_models(new_snap, plan)
+    old_models = plan_models(old_snap.models, plan)
+    new_models = plan_models(new_snap.models, plan)
     old_by_id = {m.id: m for m in old_models}
     new_by_id = {m.id: m for m in new_models}
 
